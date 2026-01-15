@@ -1,0 +1,57 @@
+[project]
+name = "comfyui-braindead"
+version = "1.0.0"
+description = "BrainDead custom nodes for ComfyUI - Cache, Character, and Prompt tools"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "BizaNator", email = "bizanator@braindeadguild.com"}
+]
+maintainers = [
+    {name = "BizaNator", email = "bizanator@braindeadguild.com"}
+]
+keywords = [
+    "comfyui",
+    "stable-diffusion",
+    "ai",
+    "image-generation",
+    "caching",
+    "qwen",
+    "character-consistency",
+    "prompt-iterator"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "numpy",
+    "Pillow",
+    "transformers",
+]
+
+[project.optional-dependencies]
+audio = ["torchaudio"]
+mesh = ["trimesh"]
+all = ["torchaudio", "trimesh", "safetensors"]
+
+[project.urls]
+Homepage = "https://github.com/BizaNator/ComfyUI-BrainDead"
+Repository = "https://github.com/BizaNator/ComfyUI-BrainDead"
+Issues = "https://github.com/BizaNator/ComfyUI-BrainDead/issues"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["comfyui_braindead", "comfyui_braindead.nodes", "comfyui_braindead.nodes.cache", "comfyui_braindead.nodes.character", "comfyui_braindead.nodes.prompt", "comfyui_braindead.utils"]
