@@ -1,9 +1,24 @@
 # ComfyUI-BrainDead
 
+
 A comprehensive collection of ComfyUI custom nodes for caching, character consistency, and prompt iteration.
 
-**Created by BizaNator for [BrainDeadGuild.com](https://braindeadguild.com)**
-*A Biloxi Studios Inc. Production*
+
+<div align="center">
+
+  **🧠 BrainDeadGuild**
+
+  *Don't Be BrAIn Dead Alone*
+
+  *Games | AI | Community*
+
+  [![BrainDeadGuild](https://img.shields.io/badge/BrainDeadGuild-Community-purple)](https://BrainDeadGuild.com/Discord)
+  [![BrainDead.TV](https://img.shields.io/badge/BrainDead.TV-Lore-red)](https://BrainDead.TV)
+
+</div>
+
+## 🎯 About BrainDead Nodes
+AN interanlly used node pack for Biloxi Studios designed to help with character, story, 3d and audio generation for next generation UGC game and TV pipelines.
 
 ## Features
 
@@ -160,19 +175,6 @@ BrainDead/
 - Use `workflow_id` to maintain separate iteration states
 
 
-
-## Credits
-
-- **Author**: BizaNator
-- **Organization**: BrainDeadGuild.com
-- **Studio**: Biloxi Studios Inc.
-
-## Support
-
-- GitHub Issues: [Report bugs](https://github.com/BizaNator/ComfyUI-BrainDead/issues)
-- Discord: [BrainDeadGuild](https://discord.gg/braindeadguild)
-
-  
 ---
 
 <div align="center">
@@ -183,7 +185,7 @@ BrainDead/
 
 Created by **BizaNator**
 
-[BrainDeadGuild.com](https://BrainDeadGuild.com) | [BrainDead.TV](https://BrainDead.TV) | [GitHub](https://github.com/BrainDeadGuild)
+[BrainDeadGuild.com](https://BrainDeadGuild.com) | [BrainDead.TV](https://BrainDead.TV) | [GitHub](https://github.com/BrainDeadGuild) | [Discord](https://braindeadguild.com/discord)
 
 ### Other BrainDead ComfyUI Nodes
 - BD - Image Descriptor (Coming Soon)
@@ -199,3 +201,8 @@ Created by **BizaNator**
 © 2024 Biloxi Studios Inc. - All Rights Reserved
 
 </div>
+
+## Support
+
+- GitHub Issues: [Report bugs](https://github.com/BizaNator/ComfyUI-BrainDead/issues)
+- Discord: [BrainDeadGuild](https://BrainDeadGuild.com/Discord)
