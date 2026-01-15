@@ -159,9 +159,7 @@ BrainDead/
 - Connect `seed` output to sampler for different seeds per prompt
 - Use `workflow_id` to maintain separate iteration states
 
-## License
 
-MIT License - see LICENSE file for details.
 
 ## Credits
 
@@ -173,3 +171,31 @@ MIT License - see LICENSE file for details.
 
 - GitHub Issues: [Report bugs](https://github.com/BizaNator/ComfyUI-BrainDead/issues)
 - Discord: [BrainDeadGuild](https://discord.gg/braindeadguild)
+
+  
+---
+
+<div align="center">
+
+## 🧠 BrainDeadGuild
+
+**Professional AI Tools for Creative Production**
+
+Created by **BizaNator**
+
+[BrainDeadGuild.com](https://BrainDeadGuild.com) | [BrainDead.TV](https://BrainDead.TV) | [GitHub](https://github.com/BrainDeadGuild)
+
+### Other BrainDead ComfyUI Nodes
+- BD - Image Descriptor (Coming Soon)
+- BD - Prompt Iterator Enhanced (Coming Soon)
+- BD - Character Consistency Suite (Coming Soon)
+
+*Building tools for the BrainDeadGuild community*
+
+---
+
+**A Biloxi Studios Inc. Production**
+
+© 2024 Biloxi Studios Inc. - All Rights Reserved
+
+</div>
