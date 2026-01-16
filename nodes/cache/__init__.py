@@ -1660,6 +1660,316 @@ to be available when loading from cache.
 
 
 # =============================================================================
+# BD_TransferPointcloudColors
+# =============================================================================
+
+class BD_TransferPointcloudColors:
+    """
+    Transfer colors from a pointcloud to mesh vertices using nearest-neighbor lookup.
+
+    This bypasses the TRELLIS2 UV/texture pipeline entirely by directly transferring
+    the PBR colors from the pointcloud to vertex colors on the mesh.
+
+    Perfect for: Preparing meshes for vertex-color workflows and decimation.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+                "pointcloud": ("TRIMESH",),  # pbr_pointcloud from TRELLIS2
+            },
+            "optional": {
+                "max_distance": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.001,
+                                           "tooltip": "Max distance for color transfer (0 = unlimited)"}),
+                "default_color": ("STRING", {"default": "0.5,0.5,0.5,1.0",
+                                             "tooltip": "RGBA color for vertices with no nearby points"}),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH", "STRING")
+    RETURN_NAMES = ("mesh", "status")
+    FUNCTION = "transfer_colors"
+    CATEGORY = "BrainDead/Mesh"
+    DESCRIPTION = """
+Transfer colors from pointcloud to mesh vertices.
+
+Use this to bypass TRELLIS2's UV/texture pipeline:
+1. Connect 'trimesh' output to mesh input
+2. Connect 'pbr_pointcloud' output to pointcloud input
+3. Output mesh has vertex colors ready for export/decimation
+
+The node uses KD-tree nearest-neighbor search for fast color transfer,
+even on 14M+ polygon meshes (typically <1 minute).
+
+Inputs:
+- mesh: Geometry mesh from TRELLIS2 (or any TRIMESH)
+- pointcloud: pbr_pointcloud from TRELLIS2 (has colors)
+- max_distance: Skip vertices farther than this from any point (0=unlimited)
+- default_color: RGBA for vertices with no nearby points
+
+Output mesh can be:
+- Exported directly with vertex colors (GLB/PLY)
+- Passed to Blender decimation with color preservation
+- Cached with BD_CacheMesh
+"""
+
+    def transfer_colors(self, mesh, pointcloud, max_distance=0.0, default_color="0.5,0.5,0.5,1.0"):
+        import numpy as np
+        import time
+
+        if not HAS_TRIMESH:
+            return (mesh, "ERROR: trimesh not installed")
+
+        if mesh is None:
+            return (None, "ERROR: mesh is None")
+
+        if pointcloud is None:
+            return (mesh, "ERROR: pointcloud is None - no colors to transfer")
+
+        # Parse default color
+        try:
+            default_rgba = [float(x.strip()) for x in default_color.split(",")]
+            if len(default_rgba) == 3:
+                default_rgba.append(1.0)
+            default_rgba = np.array(default_rgba[:4], dtype=np.float64)
+        except:
+            default_rgba = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float64)
+
+        start_time = time.time()
+
+        # Get mesh vertices
+        mesh_verts = np.array(mesh.vertices)
+        num_verts = len(mesh_verts)
+        print(f"[BD Transfer Colors] Mesh: {num_verts} vertices")
+
+        # Get pointcloud data
+        if hasattr(pointcloud, 'vertices'):
+            pc_verts = np.array(pointcloud.vertices)
+        else:
+            return (mesh, "ERROR: pointcloud has no vertices")
+
+        # Get pointcloud colors
+        pc_colors = None
+        if hasattr(pointcloud, 'colors') and pointcloud.colors is not None:
+            pc_colors = np.array(pointcloud.colors)
+            # Normalize to 0-1 if uint8
+            if pc_colors.dtype == np.uint8:
+                pc_colors = pc_colors.astype(np.float64) / 255.0
+
+        if pc_colors is None or len(pc_colors) == 0:
+            return (mesh, "ERROR: pointcloud has no colors")
+
+        print(f"[BD Transfer Colors] Pointcloud: {len(pc_verts)} points with colors")
+
+        # Build KD-tree for fast nearest-neighbor lookup
+        print(f"[BD Transfer Colors] Building KD-tree...")
+        tree_start = time.time()
+
+        try:
+            from scipy.spatial import cKDTree
+            tree = cKDTree(pc_verts)
+            print(f"[BD Transfer Colors] KD-tree built in {time.time() - tree_start:.2f}s (scipy)")
+        except ImportError:
+            # Fallback to numpy-based approach (slower but works)
+            print(f"[BD Transfer Colors] scipy not available, using numpy fallback (slower)")
+            tree = None
+
+        # Query nearest neighbors for all mesh vertices
+        print(f"[BD Transfer Colors] Finding nearest neighbors for {num_verts} vertices...")
+        query_start = time.time()
+
+        if tree is not None:
+            # Fast scipy query
+            if max_distance > 0:
+                distances, indices = tree.query(mesh_verts, k=1, distance_upper_bound=max_distance)
+            else:
+                distances, indices = tree.query(mesh_verts, k=1)
+        else:
+            # Numpy fallback - process in batches to avoid memory issues
+            batch_size = 10000
+            indices = np.zeros(num_verts, dtype=np.int64)
+            distances = np.zeros(num_verts, dtype=np.float64)
+
+            for i in range(0, num_verts, batch_size):
+                end_idx = min(i + batch_size, num_verts)
+                batch_verts = mesh_verts[i:end_idx]
+
+                # Compute distances to all pointcloud vertices
+                dists = np.linalg.norm(pc_verts[np.newaxis, :, :] - batch_verts[:, np.newaxis, :], axis=2)
+                batch_indices = np.argmin(dists, axis=1)
+                batch_distances = dists[np.arange(len(batch_indices)), batch_indices]
+
+                indices[i:end_idx] = batch_indices
+                distances[i:end_idx] = batch_distances
+
+                if (i // batch_size) % 10 == 0:
+                    print(f"[BD Transfer Colors] Progress: {end_idx}/{num_verts}")
+
+        print(f"[BD Transfer Colors] Nearest neighbor query: {time.time() - query_start:.2f}s")
+
+        # Transfer colors
+        print(f"[BD Transfer Colors] Transferring colors...")
+
+        # Initialize vertex colors array
+        vertex_colors = np.zeros((num_verts, 4), dtype=np.float64)
+
+        # Handle valid indices (scipy returns len(pc_verts) for out-of-range)
+        valid_mask = indices < len(pc_verts)
+        if max_distance > 0:
+            valid_mask &= distances <= max_distance
+
+        # Copy colors for valid vertices
+        valid_indices = indices[valid_mask]
+        vertex_colors[valid_mask] = pc_colors[valid_indices]
+
+        # Set default color for invalid vertices
+        invalid_count = np.sum(~valid_mask)
+        if invalid_count > 0:
+            vertex_colors[~valid_mask] = default_rgba
+            print(f"[BD Transfer Colors] {invalid_count} vertices used default color (no nearby points)")
+
+        # Ensure RGBA (add alpha if needed)
+        if vertex_colors.shape[1] == 3:
+            alpha = np.ones((num_verts, 1), dtype=np.float64)
+            vertex_colors = np.concatenate([vertex_colors, alpha], axis=1)
+
+        # Convert to uint8 for trimesh (0-255)
+        vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
+
+        # Create new mesh with vertex colors
+        # We need to copy the mesh and add vertex colors
+        try:
+            new_mesh = trimesh.Trimesh(
+                vertices=mesh.vertices.copy(),
+                faces=mesh.faces.copy() if hasattr(mesh, 'faces') and mesh.faces is not None else None,
+                vertex_colors=vertex_colors_uint8,
+                process=False  # Don't modify the mesh
+            )
+
+            # Copy other attributes if present
+            if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
+                new_mesh.vertex_normals = mesh.vertex_normals.copy()
+
+            total_time = time.time() - start_time
+
+            # Calculate color statistics
+            unique_colors = len(np.unique(vertex_colors_uint8.view(np.uint32)))
+            avg_dist = np.mean(distances[valid_mask]) if np.any(valid_mask) else 0
+
+            status = f"Transferred colors to {num_verts} vertices ({unique_colors} unique colors, avg_dist={avg_dist:.4f}) in {total_time:.1f}s"
+            print(f"[BD Transfer Colors] ✓ {status}")
+
+            return (new_mesh, status)
+
+        except Exception as e:
+            return (mesh, f"ERROR creating colored mesh: {e}")
+
+
+# =============================================================================
+# BD_ExportMeshWithColors
+# =============================================================================
+
+class BD_ExportMeshWithColors:
+    """
+    Export a mesh with vertex colors to file (GLB, PLY, OBJ).
+
+    Designed to work with BD_TransferPointcloudColors output.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+                "filename": ("STRING", {"default": "mesh_colored"}),
+                "format": (["glb", "ply", "obj"], {"default": "glb"}),
+            },
+            "optional": {
+                "output_dir": ("STRING", {"default": "", "tooltip": "Leave empty for default output folder"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("file_path", "status")
+    FUNCTION = "export_mesh"
+    CATEGORY = "BrainDead/Mesh"
+    OUTPUT_NODE = True
+    DESCRIPTION = """
+Export mesh with vertex colors to file.
+
+Formats:
+- GLB: Best for game engines, preserves vertex colors
+- PLY: Good for Blender import, preserves vertex colors
+- OBJ: Basic format, vertex colors may not be preserved
+
+Use after BD_TransferPointcloudColors to export colored mesh
+for decimation in Blender.
+"""
+
+    def export_mesh(self, mesh, filename, format="glb", output_dir=""):
+        import os
+
+        if not HAS_TRIMESH:
+            return ("", "ERROR: trimesh not installed")
+
+        if mesh is None:
+            return ("", "ERROR: mesh is None")
+
+        # Determine output directory
+        if not output_dir:
+            import folder_paths
+            output_dir = folder_paths.get_output_directory()
+
+        # Ensure directory exists
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Build filename
+        if not filename.endswith(f".{format}"):
+            filename = f"{filename}.{format}"
+
+        file_path = os.path.join(output_dir, filename)
+
+        try:
+            # Check if mesh has vertex colors
+            has_colors = hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors')
+            color_info = ""
+            if has_colors and mesh.visual.vertex_colors is not None:
+                color_info = f" with {len(mesh.visual.vertex_colors)} vertex colors"
+            elif hasattr(mesh, 'vertex_colors') and mesh.vertex_colors is not None:
+                color_info = f" with {len(mesh.vertex_colors)} vertex colors"
+
+            print(f"[BD Export Mesh] Exporting to {file_path}{color_info}...")
+
+            # Export based on format
+            if format == "glb":
+                # GLB export - best for vertex colors
+                mesh.export(file_path, file_type='glb')
+            elif format == "ply":
+                # PLY export - preserves vertex colors well
+                mesh.export(file_path, file_type='ply')
+            elif format == "obj":
+                # OBJ export - basic
+                mesh.export(file_path, file_type='obj')
+
+            # Get file size
+            file_size = os.path.getsize(file_path)
+            size_str = f"{file_size / 1024 / 1024:.1f}MB" if file_size > 1024*1024 else f"{file_size / 1024:.1f}KB"
+
+            vert_count = len(mesh.vertices) if hasattr(mesh, 'vertices') else 0
+            face_count = len(mesh.faces) if hasattr(mesh, 'faces') and mesh.faces is not None else 0
+
+            status = f"Exported {format.upper()}: {vert_count} verts, {face_count} faces ({size_str})"
+            print(f"[BD Export Mesh] ✓ {status}")
+
+            return (file_path, status)
+
+        except Exception as e:
+            return ("", f"ERROR: {e}")
+
+
+# =============================================================================
 # Node Mappings
 # =============================================================================
 
@@ -1681,6 +1991,9 @@ NODE_CLASS_MAPPINGS = {
     "BD_CacheTrellis2Conditioning": BD_CacheTrellis2Conditioning,
     "BD_CacheTrellis2Shape": BD_CacheTrellis2Shape,
     "BD_CacheTrellis2Texture": BD_CacheTrellis2Texture,
+    # Mesh Processing Nodes
+    "BD_TransferPointcloudColors": BD_TransferPointcloudColors,
+    "BD_ExportMeshWithColors": BD_ExportMeshWithColors,
     # Workflow Version Nodes
     "BD_WorkflowVersionCache": BD_WorkflowVersionCache,
     "BD_WorkflowVersionList": BD_WorkflowVersionList,
@@ -1706,6 +2019,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BD_CacheTrellis2Conditioning": "BD Cache Trellis2 Conditioning",
     "BD_CacheTrellis2Shape": "BD Cache Trellis2 Shape",
     "BD_CacheTrellis2Texture": "BD Cache Trellis2 Texture",
+    # Mesh Processing Nodes
+    "BD_TransferPointcloudColors": "BD Transfer Pointcloud Colors",
+    "BD_ExportMeshWithColors": "BD Export Mesh With Colors",
     # Workflow Version Nodes
     "BD_WorkflowVersionCache": "BD Workflow Version Cache",
     "BD_WorkflowVersionList": "BD Workflow Version List",
