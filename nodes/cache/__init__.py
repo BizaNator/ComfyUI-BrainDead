@@ -87,6 +87,15 @@ class BD_CacheImage:
                 return ["image"]
         return ["image"]
 
+    @classmethod
+    def IS_CHANGED(cls, cache_name, seed, force_refresh, image=None, name_prefix=""):
+        # When force_refresh is True, always return a unique value to force re-execution
+        if force_refresh:
+            import time
+            return f"force_{time.time()}"
+        # Otherwise return a stable hash based on cache parameters
+        return f"{name_prefix}_{cache_name}_{seed}"
+
     def cache_image(self, image, cache_name, seed, force_refresh, name_prefix=""):
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
@@ -149,6 +158,13 @@ class BD_CacheMask:
             except:
                 return ["mask"]
         return ["mask"]
+
+    @classmethod
+    def IS_CHANGED(cls, cache_name, seed, force_refresh, mask=None, name_prefix=""):
+        if force_refresh:
+            import time
+            return f"force_{time.time()}"
+        return f"{name_prefix}_{cache_name}_{seed}"
 
     def cache_mask(self, mask, cache_name, seed, force_refresh, name_prefix=""):
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
@@ -213,6 +229,13 @@ class BD_CacheLatent:
                 return ["latent"]
         return ["latent"]
 
+    @classmethod
+    def IS_CHANGED(cls, cache_name, seed, force_refresh, latent=None, name_prefix=""):
+        if force_refresh:
+            import time
+            return f"force_{time.time()}"
+        return f"{name_prefix}_{cache_name}_{seed}"
+
     def cache_latent(self, latent, cache_name, seed, force_refresh, name_prefix=""):
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
@@ -276,6 +299,13 @@ class BD_CacheAudio:
                 return ["audio"]
         return ["audio"]
 
+    @classmethod
+    def IS_CHANGED(cls, cache_name, seed, force_refresh, audio=None, name_prefix=""):
+        if force_refresh:
+            import time
+            return f"force_{time.time()}"
+        return f"{name_prefix}_{cache_name}_{seed}"
+
     def cache_audio(self, audio, cache_name, seed, force_refresh, name_prefix=""):
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
@@ -338,6 +368,13 @@ class BD_CacheString:
             except:
                 return ["text"]
         return ["text"]
+
+    @classmethod
+    def IS_CHANGED(cls, cache_name, seed, force_refresh, text=None, name_prefix=""):
+        if force_refresh:
+            import time
+            return f"force_{time.time()}"
+        return f"{name_prefix}_{cache_name}_{seed}"
 
     def cache_string(self, text, cache_name, seed, force_refresh, name_prefix=""):
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
@@ -414,6 +451,13 @@ class BD_CacheAny:
             except:
                 return ["data"]
         return ["data"]
+
+    @classmethod
+    def IS_CHANGED(cls, cache_name, seed, force_refresh, data=None, name_prefix="", extension=".pkl"):
+        if force_refresh:
+            import time
+            return f"force_{time.time()}"
+        return f"{name_prefix}_{cache_name}_{seed}"
 
     def cache_any(self, data, cache_name, seed, force_refresh, name_prefix="", extension=".pkl"):
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
@@ -492,6 +536,13 @@ class BD_CacheMesh:
             except:
                 return ["mesh"]
         return ["mesh"]
+
+    @classmethod
+    def IS_CHANGED(cls, cache_name, seed, force_refresh, mesh=None, name_prefix=""):
+        if force_refresh:
+            import time
+            return f"force_{time.time()}"
+        return f"{name_prefix}_{cache_name}_{seed}"
 
     def cache_mesh(self, mesh, cache_name, seed, force_refresh, name_prefix=""):
         if not HAS_TRIMESH:
