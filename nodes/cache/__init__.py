@@ -1401,11 +1401,18 @@ Place AFTER Trellis2GetConditioning node.
 
         if check_cache_exists(cache_path, min_size=100) and not force_refresh:
             try:
+                print(f"[BD Trellis2 Conditioning] Loading from cache: {cache_path}")
                 cached_data = PickleSerializer.load(cache_path)
                 if cached_data is not None:
+                    print(f"[BD Trellis2 Conditioning] ✓ Using cached conditioning (skipping upstream)")
                     return (cached_data, f"Cache HIT: {os.path.basename(cache_path)}")
-            except:
+            except Exception as e:
+                print(f"[BD Trellis2 Conditioning] Cache load failed: {e}")
                 return ["conditioning"]
+        if force_refresh:
+            print(f"[BD Trellis2 Conditioning] Force refresh - regenerating conditioning")
+        else:
+            print(f"[BD Trellis2 Conditioning] No cache found - generating new conditioning")
         return ["conditioning"]
 
     def cache_conditioning(self, conditioning, cache_name, seed, force_refresh, name_prefix=""):
@@ -1424,10 +1431,13 @@ Place AFTER Trellis2GetConditioning node.
         if conditioning is None:
             return (conditioning, "Input is None - cannot cache")
 
+        print(f"[BD Trellis2 Conditioning] Saving new cache: {cache_path}")
         if save_to_cache(cache_path, conditioning, PickleSerializer):
             status = f"SAVED: {os.path.basename(cache_path)}"
+            print(f"[BD Trellis2 Conditioning] ✓ Cache saved successfully")
         else:
             status = "Save failed"
+            print(f"[BD Trellis2 Conditioning] ✗ Cache save failed")
         return (conditioning, status)
 
 
@@ -1488,12 +1498,20 @@ Caches both shape_result (PKL) and mesh (PLY) together.
         if (check_cache_exists(cache_path_pkl, min_size=100) and
             check_cache_exists(cache_path_ply, min_size=100) and not force_refresh):
             try:
+                print(f"[BD Trellis2 Shape] Loading from cache: {cache_path_pkl}")
                 shape_data = PickleSerializer.load(cache_path_pkl)
                 mesh_data = trimesh.load(cache_path_ply)
                 if shape_data is not None and mesh_data is not None:
+                    vert_count = len(mesh_data.vertices) if hasattr(mesh_data, 'vertices') else 'unknown'
+                    print(f"[BD Trellis2 Shape] ✓ Using cached shape + mesh ({vert_count} verts) - skipping upstream generation")
                     return (shape_data, mesh_data, f"Cache HIT: shape + mesh")
-            except:
+            except Exception as e:
+                print(f"[BD Trellis2 Shape] Cache load failed: {e}")
                 return ["shape_result", "mesh"]
+        if force_refresh:
+            print(f"[BD Trellis2 Shape] Force refresh - regenerating shape + mesh")
+        else:
+            print(f"[BD Trellis2 Shape] No cache found - generating new shape + mesh")
         return ["shape_result", "mesh"]
 
     def cache_shape(self, shape_result, mesh, cache_name, seed, force_refresh, name_prefix=""):
@@ -1519,13 +1537,17 @@ Caches both shape_result (PKL) and mesh (PLY) together.
             return (shape_result, mesh, "Input is None - cannot cache")
 
         try:
+            print(f"[BD Trellis2 Shape] Saving new cache...")
             # Save shape_result as pickle
             PickleSerializer.save(cache_path_pkl, shape_result)
             # Save mesh as PLY
             trimesh.exchange.export.export_mesh(mesh, cache_path_ply, file_type='ply')
-            status = f"SAVED: shape + mesh"
+            vert_count = len(mesh.vertices) if hasattr(mesh, 'vertices') else 'unknown'
+            status = f"SAVED: shape + mesh ({vert_count} verts)"
+            print(f"[BD Trellis2 Shape] ✓ Cache saved: {cache_path_pkl}")
         except Exception as e:
             status = f"Save failed: {e}"
+            print(f"[BD Trellis2 Shape] ✗ Cache save failed: {e}")
 
         return (shape_result, mesh, status)
 
@@ -1583,12 +1605,19 @@ to be available when loading from cache.
 
         if check_cache_exists(cache_path, min_size=100) and not force_refresh:
             try:
+                print(f"[BD Trellis2 Texture] Loading from cache: {cache_path}")
                 cached_data = PickleSerializer.load(cache_path)
                 if cached_data and 'trimesh' in cached_data and 'voxelgrid' in cached_data:
+                    print(f"[BD Trellis2 Texture] ✓ Using cached texture data (trimesh + voxelgrid + pointcloud) - skipping upstream")
                     return (cached_data['trimesh'], cached_data['voxelgrid'],
                            cached_data['pointcloud'], f"Cache HIT: texture data")
-            except:
+            except Exception as e:
+                print(f"[BD Trellis2 Texture] Cache load failed: {e}")
                 return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
+        if force_refresh:
+            print(f"[BD Trellis2 Texture] Force refresh - regenerating texture data")
+        else:
+            print(f"[BD Trellis2 Texture] No cache found - generating new texture data")
         return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
 
     def cache_texture(self, trimesh_out, voxelgrid, pbr_pointcloud, cache_name, seed, force_refresh, name_prefix=""):
@@ -1609,15 +1638,23 @@ to be available when loading from cache.
             return (trimesh_out, voxelgrid, pbr_pointcloud, "Input is None - cannot cache")
 
         try:
+            print(f"[BD Trellis2 Texture] Saving new cache...")
             cache_data = {
                 'trimesh': trimesh_out,
                 'voxelgrid': voxelgrid,
                 'pointcloud': pbr_pointcloud
             }
             PickleSerializer.save(cache_path, cache_data)
-            status = f"SAVED: texture data"
+            # Get voxelgrid info if available
+            voxel_info = ""
+            if isinstance(voxelgrid, dict):
+                if 'coords' in voxelgrid:
+                    voxel_info = f" ({len(voxelgrid['coords'])} voxels)"
+            status = f"SAVED: texture data{voxel_info}"
+            print(f"[BD Trellis2 Texture] ✓ Cache saved: {cache_path}")
         except Exception as e:
             status = f"Save failed: {e}"
+            print(f"[BD Trellis2 Texture] ✗ Cache save failed: {e}")
 
         return (trimesh_out, voxelgrid, pbr_pointcloud, status)
 
