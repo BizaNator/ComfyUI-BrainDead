@@ -979,6 +979,29 @@ class BD_WorkflowVersionCache:
     FUNCTION = "cache_workflow_version"
     CATEGORY = "BrainDead/Cache"
     OUTPUT_NODE = True
+    DESCRIPTION = """
+Automatically save workflow versions for backup and recovery.
+
+RECOMMENDED: Set a manual workflow_id (e.g., "my_project") to track
+your workflow's evolution over time. Auto-generated IDs change when
+you add/remove nodes, starting fresh at v1.
+
+Inputs:
+- workflow_id: Name for this workflow (leave empty for auto-detect)
+- max_versions: How many versions to keep (0 = unlimited)
+- save_on_any_change: Currently uses structure detection
+- enabled: Toggle versioning on/off
+- trigger: Optional input to control execution order
+- description: Note to attach to saved version
+
+Outputs:
+- status: "Saved vN" or "No changes (vN current)"
+- workflow_id: The effective ID being used
+- version_count: Total saved versions
+
+Storage: output/BrainDead_Cache/workflow_versions/
+Files are clean ComfyUI JSON - drag & drop to restore.
+"""
 
     @classmethod
     def IS_CHANGED(cls, workflow_id, max_versions, save_on_any_change, enabled,
@@ -1086,6 +1109,23 @@ class BD_WorkflowVersionList:
     RETURN_NAMES = ("version_list", "diff_result", "total_versions")
     FUNCTION = "list_versions"
     CATEGORY = "BrainDead/Cache"
+    DESCRIPTION = """
+List all saved versions for a workflow.
+
+Inputs:
+- workflow_id: Connect from BD Workflow Version Cache output
+- show_hashes: Include hash in output table
+- max_display: Limit number of versions shown
+- compare_version_a/b: Compare two versions (shows diff)
+
+Outputs:
+- version_list: Formatted table of versions
+- diff_result: Node differences between compared versions
+- total_versions: Count of saved versions
+
+Tip: Connect workflow_id output from BD Workflow Version Cache
+to automatically use the same ID.
+"""
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
@@ -1169,6 +1209,23 @@ class BD_WorkflowVersionRestore:
     FUNCTION = "restore_version"
     CATEGORY = "BrainDead/Cache"
     OUTPUT_NODE = True
+    DESCRIPTION = """
+Restore a saved workflow version.
+
+Inputs:
+- workflow_id: Connect from BD Workflow Version Cache output
+- version_number: Which version to restore (0 = latest)
+- save_to_file: Export to output/ folder for download
+- output_filename: Custom filename (optional)
+
+Outputs:
+- workflow_json: Full workflow as JSON string
+- file_path: Path to exported file (if save_to_file=True)
+- status: Result message
+
+To restore: Drag the exported JSON file into ComfyUI,
+or copy workflow_json into a .json file manually.
+"""
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
@@ -1260,6 +1317,19 @@ class BD_WorkflowVersionClear:
     FUNCTION = "clear_versions"
     CATEGORY = "BrainDead/Cache"
     OUTPUT_NODE = True
+    DESCRIPTION = """
+Delete saved workflow versions to free disk space.
+
+Inputs:
+- workflow_id: Connect from BD Workflow Version Cache output
+- keep_latest: Keep N most recent versions (0 = delete all)
+- confirm_clear: Must be True to actually delete
+
+Safety: First shows what would be deleted. Set confirm_clear=True
+only when ready to delete.
+
+Example: keep_latest=5 deletes all but the 5 newest versions.
+"""
 
     def clear_versions(self, workflow_id, keep_latest, confirm_clear):
         if not workflow_id or not workflow_id.strip():
