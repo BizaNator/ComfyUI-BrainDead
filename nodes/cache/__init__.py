@@ -1022,14 +1022,15 @@ class BD_WorkflowVersionCache:
             status = f"No changes (v{existing_versions[0]['version']} current)"
             return (status, effective_id, len(existing_versions))
 
-        # Check if the latest version has the same hash (avoid duplicate saves on restart)
+        # Check if the latest version has the same structure (avoid duplicate saves)
+        # Use structure hash for comparison since full hash includes volatile execution data
         if existing_versions:
-            latest_hash = existing_versions[0].get('workflow_hash', '')  # 8 chars (truncated)
-            full_current_hash = hash_workflow_full(workflow_data)
-            # Compare truncated hashes (list_workflow_versions returns 8-char hashes)
-            if latest_hash == full_current_hash[:8]:
+            latest_struct_hash = existing_versions[0].get('structure_hash', '')  # 8 chars (truncated)
+            current_struct_hash = hash_workflow_structure(workflow_data)
+            # Compare structure hashes - this ignores widget values that change during execution
+            if latest_struct_hash == current_struct_hash[:8]:
                 _WORKFLOW_HASH_CACHE[cache_key] = current_hash
-                status = f"Already saved (v{existing_versions[0]['version']})"
+                status = f"No changes (v{existing_versions[0]['version']} current)"
                 return (status, effective_id, len(existing_versions))
 
         # Save new version
