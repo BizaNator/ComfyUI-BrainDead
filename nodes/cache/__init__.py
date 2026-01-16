@@ -34,6 +34,7 @@ from ...utils.shared import (
     WORKFLOW_VERSIONS_DIR,
     hash_workflow_structure,
     hash_workflow_full,
+    auto_workflow_id,
     list_workflow_versions,
     save_workflow_version,
     load_workflow_version,
@@ -938,9 +939,15 @@ class BD_WorkflowVersionCache:
 
     USAGE:
     1. Add this node anywhere in your workflow
-    2. Set a workflow_id (or leave default to use auto-generated ID)
+    2. Set a workflow_id or leave empty for auto-generated ID based on structure
     3. Configure max_versions to control how many versions are kept
     4. Workflow is auto-saved on first run and whenever changes are detected
+
+    Auto-ID: When workflow_id is empty, generates ID from workflow structure hash.
+    This means structurally identical workflows share version history.
+
+    Storage: Workflow files are saved as clean JSON (drag-and-drop compatible
+    with any ComfyUI instance). Metadata stored separately in .meta.json files.
 
     Ideal for:
     - Crash recovery
@@ -952,7 +959,7 @@ class BD_WorkflowVersionCache:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "workflow_id": ("STRING", {"default": "my_workflow"}),
+                "workflow_id": ("STRING", {"default": "", "placeholder": "Leave empty for auto-detect"}),
                 "max_versions": ("INT", {"default": 50, "min": 0, "max": 999}),
                 "save_on_any_change": ("BOOLEAN", {"default": True}),
                 "enabled": ("BOOLEAN", {"default": True}),
@@ -985,8 +992,11 @@ class BD_WorkflowVersionCache:
             workflow_data = extra_pnginfo.get('workflow')
 
         if workflow_data:
+            # Auto-detect workflow_id if not provided
+            effective_id = workflow_id.strip() if workflow_id else auto_workflow_id(workflow_data)
+
             current_hash = hash_workflow_full(workflow_data) if save_on_any_change else hash_workflow_structure(workflow_data)
-            cache_key = f"{workflow_id}_{'full' if save_on_any_change else 'struct'}"
+            cache_key = f"{effective_id}_{'full' if save_on_any_change else 'struct'}"
             last_hash = _WORKFLOW_HASH_CACHE.get(cache_key)
 
             if last_hash != current_hash:
@@ -996,17 +1006,20 @@ class BD_WorkflowVersionCache:
 
     def cache_workflow_version(self, workflow_id, max_versions, save_on_any_change, enabled,
                                 trigger=None, description="", extra_pnginfo=None, prompt=None):
-        if not enabled:
-            versions = list_workflow_versions(workflow_id)
-            return ("Disabled", workflow_id, len(versions))
-
         # Get workflow data from ComfyUI's extra_pnginfo
         workflow_data = None
         if extra_pnginfo and isinstance(extra_pnginfo, dict):
             workflow_data = extra_pnginfo.get('workflow')
 
         if not workflow_data:
-            return ("No workflow data available", workflow_id, 0)
+            return ("No workflow data available", workflow_id or "unknown", 0)
+
+        # Auto-detect workflow_id if not provided
+        effective_id = workflow_id.strip() if workflow_id else auto_workflow_id(workflow_data)
+
+        if not enabled:
+            versions = list_workflow_versions(effective_id)
+            return ("Disabled", effective_id, len(versions))
 
         # Calculate current hash
         if save_on_any_change:
@@ -1014,16 +1027,16 @@ class BD_WorkflowVersionCache:
         else:
             current_hash = hash_workflow_structure(workflow_data)
 
-        cache_key = f"{workflow_id}_{'full' if save_on_any_change else 'struct'}"
+        cache_key = f"{effective_id}_{'full' if save_on_any_change else 'struct'}"
         last_hash = _WORKFLOW_HASH_CACHE.get(cache_key)
 
         # Check if we need to save a new version
-        existing_versions = list_workflow_versions(workflow_id)
+        existing_versions = list_workflow_versions(effective_id)
 
         if last_hash == current_hash and existing_versions:
             # No change detected, skip saving
             status = f"No changes (v{existing_versions[0]['version']} current)"
-            return (status, workflow_id, len(existing_versions))
+            return (status, effective_id, len(existing_versions))
 
         # Check if the latest version has the same hash (avoid duplicate saves on restart)
         if existing_versions:
@@ -1032,25 +1045,25 @@ class BD_WorkflowVersionCache:
             if latest_hash == full_current_hash:
                 _WORKFLOW_HASH_CACHE[cache_key] = current_hash
                 status = f"Already saved (v{existing_versions[0]['version']})"
-                return (status, workflow_id, len(existing_versions))
+                return (status, effective_id, len(existing_versions))
 
         # Save new version
         desc = description if description else "auto-saved"
         success, message, version_num = save_workflow_version(
-            workflow_id, workflow_data, desc, max_versions
+            effective_id, workflow_data, desc, max_versions
         )
 
         if success:
             _WORKFLOW_HASH_CACHE[cache_key] = current_hash
             status = f"Saved v{version_num}"
-            print(f"[BD Workflow Version] {status} for '{workflow_id}'")
+            print(f"[BD Workflow Version] {status} for '{effective_id}'")
         else:
             status = f"Error: {message}"
             print(f"[BD Workflow Version] {status}")
 
         # Get updated count
-        updated_versions = list_workflow_versions(workflow_id)
-        return (status, workflow_id, len(updated_versions))
+        updated_versions = list_workflow_versions(effective_id)
+        return (status, effective_id, len(updated_versions))
 
 
 # =============================================================================
@@ -1064,13 +1077,16 @@ class BD_WorkflowVersionList:
     Outputs a formatted list showing version number, timestamp, node count,
     and hash for each saved version. Useful for reviewing history without
     filesystem access.
+
+    Tip: Connect the workflow_id output from BD Workflow Version Cache
+    to this node's workflow_id input for seamless integration.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "workflow_id": ("STRING", {"default": "my_workflow"}),
+                "workflow_id": ("STRING", {"default": ""}),
                 "show_hashes": ("BOOLEAN", {"default": True}),
                 "max_display": ("INT", {"default": 20, "min": 1, "max": 100}),
             },
@@ -1093,10 +1109,14 @@ class BD_WorkflowVersionList:
 
     def list_versions(self, workflow_id, show_hashes=True, max_display=20,
                       compare_version_a=0, compare_version_b=0):
+        if not workflow_id or not workflow_id.strip():
+            return ("Error: workflow_id is required. Connect from BD Workflow Version Cache or enter manually.", "", 0)
+
+        workflow_id = workflow_id.strip()
         versions = list_workflow_versions(workflow_id)
 
         if not versions:
-            return ("No versions found", "", 0)
+            return (f"No versions found for '{workflow_id}'", "", 0)
 
         # Build formatted list
         lines = [f"Workflow: {workflow_id}", f"Total versions: {len(versions)}", ""]
@@ -1137,13 +1157,19 @@ class BD_WorkflowVersionRestore:
     Outputs the workflow JSON string for manual import or the file path
     for download. Use version_number to select which version to restore.
     Set version_number to 0 to restore the latest version.
+
+    Output files are clean ComfyUI workflow JSON - drag and drop into
+    any ComfyUI instance (no special nodes required to load).
+
+    Tip: Connect the workflow_id output from BD Workflow Version Cache
+    to this node's workflow_id input for seamless integration.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "workflow_id": ("STRING", {"default": "my_workflow"}),
+                "workflow_id": ("STRING", {"default": ""}),
                 "version_number": ("INT", {"default": 0, "min": 0, "max": 9999}),
                 "save_to_file": ("BOOLEAN", {"default": True}),
             },
@@ -1167,6 +1193,10 @@ class BD_WorkflowVersionRestore:
     def restore_version(self, workflow_id, version_number, save_to_file, output_filename=""):
         import json
 
+        if not workflow_id or not workflow_id.strip():
+            return ("", "", "Error: workflow_id is required. Connect from BD Workflow Version Cache or enter manually.")
+
+        workflow_id = workflow_id.strip()
         versions = list_workflow_versions(workflow_id)
 
         if not versions:
@@ -1224,13 +1254,16 @@ class BD_WorkflowVersionClear:
 
     Can delete all versions or keep the N most recent ones.
     Requires confirm_clear=True to actually delete files.
+
+    Tip: Connect the workflow_id output from BD Workflow Version Cache
+    to this node's workflow_id input for seamless integration.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "workflow_id": ("STRING", {"default": "my_workflow"}),
+                "workflow_id": ("STRING", {"default": ""}),
                 "keep_latest": ("INT", {"default": 0, "min": 0, "max": 999}),
                 "confirm_clear": ("BOOLEAN", {"default": False}),
             },
@@ -1243,6 +1276,10 @@ class BD_WorkflowVersionClear:
     OUTPUT_NODE = True
 
     def clear_versions(self, workflow_id, keep_latest, confirm_clear):
+        if not workflow_id or not workflow_id.strip():
+            return ("Error: workflow_id is required. Connect from BD Workflow Version Cache or enter manually.",)
+
+        workflow_id = workflow_id.strip()
         versions = list_workflow_versions(workflow_id)
 
         if not versions:

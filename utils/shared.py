@@ -408,6 +408,42 @@ def ensure_workflow_versions_dir():
     return WORKFLOW_VERSIONS_DIR
 
 
+def _sanitize_workflow_id(workflow_id):
+    """Sanitize workflow_id for filesystem use."""
+    return "".join(c if c.isalnum() or c in '-_' else '_' for c in str(workflow_id))
+
+
+def _get_meta_path(workflow_id):
+    """Get the path for a workflow's metadata file."""
+    ensure_workflow_versions_dir()
+    safe_id = _sanitize_workflow_id(workflow_id)
+    return os.path.join(WORKFLOW_VERSIONS_DIR, f"{safe_id}.meta.json")
+
+
+def _load_meta(workflow_id):
+    """Load metadata for a workflow. Returns empty structure if not found."""
+    meta_path = _get_meta_path(workflow_id)
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[BrainDead] Warning: Could not load meta file: {e}")
+    return {"workflow_id": workflow_id, "versions": {}}
+
+
+def _save_meta(workflow_id, meta_data):
+    """Save metadata for a workflow."""
+    meta_path = _get_meta_path(workflow_id)
+    try:
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(meta_data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"[BrainDead] Error saving meta file: {e}")
+        return False
+
+
 def hash_workflow_structure(workflow_data):
     """
     Generate a hash of the workflow structure.
@@ -466,11 +502,24 @@ def hash_workflow_full(workflow_data):
         return "unhashable"
 
 
+def auto_workflow_id(workflow_data):
+    """
+    Generate an automatic workflow ID from the workflow structure.
+
+    Uses the first 12 characters of the structure hash prefixed with 'wf_'.
+    This provides a stable ID that changes only when the workflow structure changes.
+    """
+    if not workflow_data:
+        return "wf_unknown"
+
+    struct_hash = hash_workflow_structure(workflow_data)
+    return f"wf_{struct_hash[:12]}"
+
+
 def get_workflow_version_path(workflow_id, version_num):
-    """Get the path for a specific workflow version file."""
+    """Get the path for a specific workflow version file (clean JSON)."""
     ensure_workflow_versions_dir()
-    # Sanitize workflow_id for filesystem
-    safe_id = "".join(c if c.isalnum() or c in '-_' else '_' for c in str(workflow_id))
+    safe_id = _sanitize_workflow_id(workflow_id)
     return os.path.join(WORKFLOW_VERSIONS_DIR, f"{safe_id}_v{version_num:04d}.json")
 
 
@@ -480,34 +529,26 @@ def list_workflow_versions(workflow_id):
 
     Returns list of dicts with version metadata, sorted by version number descending.
     """
-    ensure_workflow_versions_dir()
-    safe_id = "".join(c if c.isalnum() or c in '-_' else '_' for c in str(workflow_id))
-
+    meta = _load_meta(workflow_id)
     versions = []
-    pattern = f"{safe_id}_v"
 
-    try:
-        for filename in os.listdir(WORKFLOW_VERSIONS_DIR):
-            if filename.startswith(pattern) and filename.endswith('.json'):
-                filepath = os.path.join(WORKFLOW_VERSIONS_DIR, filename)
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
+    for version_str, version_info in meta.get('versions', {}).items():
+        try:
+            version_num = int(version_str)
+            filepath = get_workflow_version_path(workflow_id, version_num)
 
-                    versions.append({
-                        'version': data.get('version', 0),
-                        'timestamp': data.get('timestamp', ''),
-                        'workflow_hash': data.get('workflow_hash', '')[:8],
-                        'structure_hash': data.get('structure_hash', '')[:8],
-                        'node_count': data.get('node_count', 0),
-                        'description': data.get('description', ''),
-                        'filepath': filepath,
-                        'filename': filename,
-                    })
-                except Exception as e:
-                    print(f"[BrainDead] Warning: Could not read version file {filename}: {e}")
-    except Exception as e:
-        print(f"[BrainDead] Error listing workflow versions: {e}")
+            versions.append({
+                'version': version_num,
+                'timestamp': version_info.get('timestamp', ''),
+                'workflow_hash': version_info.get('workflow_hash', '')[:8],
+                'structure_hash': version_info.get('structure_hash', '')[:8],
+                'node_count': version_info.get('node_count', 0),
+                'description': version_info.get('description', ''),
+                'filepath': filepath,
+                'filename': os.path.basename(filepath),
+            })
+        except (ValueError, TypeError):
+            continue
 
     # Sort by version number descending (newest first)
     versions.sort(key=lambda x: x['version'], reverse=True)
@@ -518,6 +559,7 @@ def save_workflow_version(workflow_id, workflow_data, description="auto-saved", 
     """
     Save a new workflow version.
 
+    Stores clean workflow JSON (ComfyUI-compatible) and metadata separately.
     Returns tuple of (success, message, version_number).
     Automatically prunes old versions if max_versions is exceeded.
     """
@@ -526,38 +568,61 @@ def save_workflow_version(workflow_id, workflow_data, description="auto-saved", 
     if not workflow_data:
         return False, "No workflow data to save", 0
 
-    # Get existing versions to determine next version number
-    existing = list_workflow_versions(workflow_id)
-    next_version = (existing[0]['version'] + 1) if existing else 1
+    # Load existing metadata
+    meta = _load_meta(workflow_id)
+    existing_versions = list(meta.get('versions', {}).keys())
 
-    # Build version metadata
+    # Determine next version number
+    if existing_versions:
+        next_version = max(int(v) for v in existing_versions) + 1
+    else:
+        next_version = 1
+
+    # Calculate hashes
     from datetime import datetime
-    version_data = {
-        'version': next_version,
-        'timestamp': datetime.now().isoformat(),
-        'workflow_hash': hash_workflow_full(workflow_data),
-        'structure_hash': hash_workflow_structure(workflow_data),
-        'node_count': len(workflow_data.get('nodes', [])) if isinstance(workflow_data, dict) else 0,
-        'description': description,
-        'workflow': workflow_data,
-    }
+    workflow_hash = hash_workflow_full(workflow_data)
+    structure_hash = hash_workflow_structure(workflow_data)
+    node_count = len(workflow_data.get('nodes', [])) if isinstance(workflow_data, dict) else 0
 
-    # Save the version
+    # Save clean workflow JSON (directly compatible with ComfyUI)
     version_path = get_workflow_version_path(workflow_id, next_version)
     try:
         with open(version_path, 'w', encoding='utf-8') as f:
-            json.dump(version_data, f, indent=2, default=str)
+            json.dump(workflow_data, f, indent=2, default=str)
     except Exception as e:
-        return False, f"Failed to save version: {e}", 0
+        return False, f"Failed to save workflow: {e}", 0
+
+    # Update metadata
+    if 'versions' not in meta:
+        meta['versions'] = {}
+
+    meta['versions'][str(next_version)] = {
+        'timestamp': datetime.now().isoformat(),
+        'workflow_hash': workflow_hash,
+        'structure_hash': structure_hash,
+        'node_count': node_count,
+        'description': description,
+    }
+
+    # Save metadata
+    if not _save_meta(workflow_id, meta):
+        # Metadata save failed, but workflow was saved - not critical
+        print(f"[BrainDead] Warning: Workflow saved but metadata update failed")
 
     # Prune old versions if needed
-    if max_versions > 0 and len(existing) >= max_versions:
-        versions_to_delete = existing[max_versions - 1:]  # Keep max_versions - 1 (new one makes max_versions)
-        for v in versions_to_delete:
-            try:
-                os.remove(v['filepath'])
-            except Exception as e:
-                print(f"[BrainDead] Warning: Could not delete old version {v['filename']}: {e}")
+    if max_versions > 0:
+        current_versions = sorted([int(v) for v in meta['versions'].keys()], reverse=True)
+        if len(current_versions) > max_versions:
+            versions_to_delete = current_versions[max_versions:]
+            for v in versions_to_delete:
+                try:
+                    old_path = get_workflow_version_path(workflow_id, v)
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+                    del meta['versions'][str(v)]
+                except Exception as e:
+                    print(f"[BrainDead] Warning: Could not delete old version {v}: {e}")
+            _save_meta(workflow_id, meta)
 
     return True, f"Saved version {next_version}", next_version
 
@@ -567,6 +632,7 @@ def load_workflow_version(workflow_id, version_num):
     Load a specific workflow version.
 
     Returns tuple of (workflow_data, metadata) or (None, error_message).
+    The workflow_data is clean JSON that can be directly loaded into ComfyUI.
     """
     version_path = get_workflow_version_path(workflow_id, version_num)
 
@@ -574,12 +640,15 @@ def load_workflow_version(workflow_id, version_num):
         return None, f"Version {version_num} not found"
 
     try:
+        # Load clean workflow JSON
         with open(version_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+            workflow_data = json.load(f)
 
-        workflow = data.get('workflow')
-        metadata = {k: v for k, v in data.items() if k != 'workflow'}
-        return workflow, metadata
+        # Load metadata separately
+        meta = _load_meta(workflow_id)
+        version_meta = meta.get('versions', {}).get(str(version_num), {})
+
+        return workflow_data, version_meta
     except Exception as e:
         return None, f"Failed to load version: {e}"
 
@@ -666,7 +735,8 @@ def clear_workflow_versions(workflow_id, keep_latest=0):
 
     Returns tuple of (deleted_count, message).
     """
-    versions = list_workflow_versions(workflow_id)
+    meta = _load_meta(workflow_id)
+    versions = sorted([int(v) for v in meta.get('versions', {}).keys()], reverse=True)
 
     if not versions:
         return 0, "No versions found"
@@ -676,9 +746,25 @@ def clear_workflow_versions(workflow_id, keep_latest=0):
 
     for v in to_delete:
         try:
-            os.remove(v['filepath'])
+            filepath = get_workflow_version_path(workflow_id, v)
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            if str(v) in meta.get('versions', {}):
+                del meta['versions'][str(v)]
             deleted += 1
         except Exception as e:
-            print(f"[BrainDead] Warning: Could not delete {v['filename']}: {e}")
+            print(f"[BrainDead] Warning: Could not delete version {v}: {e}")
+
+    # Save updated metadata
+    _save_meta(workflow_id, meta)
+
+    # If all versions deleted, remove the meta file too
+    if not meta.get('versions'):
+        try:
+            meta_path = _get_meta_path(workflow_id)
+            if os.path.exists(meta_path):
+                os.remove(meta_path)
+        except Exception:
+            pass
 
     return deleted, f"Deleted {deleted} version(s)"
