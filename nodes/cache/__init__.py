@@ -1681,6 +1681,9 @@ class BD_TransferPointcloudColors:
                 "pointcloud": ("TRIMESH",),  # pbr_pointcloud from TRELLIS2
             },
             "optional": {
+                "coordinate_fix": (["auto", "none", "mesh_to_zup", "pointcloud_to_yup"], {
+                    "default": "auto",
+                    "tooltip": "Fix coordinate mismatch between mesh and pointcloud"}),
                 "max_distance": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.001,
                                            "tooltip": "Max distance for color transfer (0 = unlimited)"}),
                 "default_color": ("STRING", {"default": "0.5,0.5,0.5,1.0",
@@ -1706,8 +1709,16 @@ even on 14M+ polygon meshes (typically <1 minute).
 Inputs:
 - mesh: Geometry mesh from TRELLIS2 (or any TRIMESH)
 - pointcloud: pbr_pointcloud from TRELLIS2 (has colors)
+- coordinate_fix: Handle TRELLIS2 coordinate mismatch
+  - auto: Auto-detect and fix (recommended)
+  - none: No conversion
+  - mesh_to_zup: Convert mesh Y-up to Z-up
+  - pointcloud_to_yup: Convert pointcloud Z-up back to Y-up
 - max_distance: Skip vertices farther than this from any point (0=unlimited)
 - default_color: RGBA for vertices with no nearby points
+
+Note: TRELLIS2 outputs mesh in Y-up but pointcloud in Z-up coordinates.
+The 'auto' setting detects and fixes this automatically.
 
 Output mesh can be:
 - Exported directly with vertex colors (GLB/PLY)
@@ -1715,7 +1726,7 @@ Output mesh can be:
 - Cached with BD_CacheMesh
 """
 
-    def transfer_colors(self, mesh, pointcloud, max_distance=0.0, default_color="0.5,0.5,0.5,1.0"):
+    def transfer_colors(self, mesh, pointcloud, coordinate_fix="auto", max_distance=0.0, default_color="0.5,0.5,0.5,1.0"):
         import numpy as np
         import time
 
@@ -1740,15 +1751,107 @@ Output mesh can be:
         start_time = time.time()
 
         # Get mesh vertices
-        mesh_verts = np.array(mesh.vertices)
+        mesh_verts = np.array(mesh.vertices, dtype=np.float64)
         num_verts = len(mesh_verts)
         print(f"[BD Transfer Colors] Mesh: {num_verts} vertices")
 
         # Get pointcloud data
         if hasattr(pointcloud, 'vertices'):
-            pc_verts = np.array(pointcloud.vertices)
+            pc_verts = np.array(pointcloud.vertices, dtype=np.float64)
         else:
             return (mesh, "ERROR: pointcloud has no vertices")
+
+        # Debug: Show bounding boxes BEFORE any conversion
+        mesh_min = mesh_verts.min(axis=0)
+        mesh_max = mesh_verts.max(axis=0)
+        pc_min = pc_verts.min(axis=0)
+        pc_max = pc_verts.max(axis=0)
+        print(f"[BD Transfer Colors] Mesh bounds: min={mesh_min}, max={mesh_max}")
+        print(f"[BD Transfer Colors] Pointcloud bounds: min={pc_min}, max={pc_max}")
+
+        # Check for coordinate mismatch and apply fix
+        # TRELLIS2 applies Y-up to Z-up conversion to pointcloud but NOT to mesh
+        # Pointcloud: Y,Z swapped and Z negated
+        # To reverse: swap Y,Z back and negate Z
+
+        def apply_yup_to_zup(verts):
+            """Convert from Y-up to Z-up (swap Y,Z and negate new Z)"""
+            result = verts.copy()
+            result[:, 1], result[:, 2] = verts[:, 2].copy(), -verts[:, 1].copy()
+            return result
+
+        def apply_zup_to_yup(verts):
+            """Convert from Z-up back to Y-up (reverse of yup_to_zup)"""
+            result = verts.copy()
+            result[:, 1], result[:, 2] = -verts[:, 2].copy(), verts[:, 1].copy()
+            return result
+
+        if coordinate_fix == "auto":
+            # Auto-detect: check if bounds overlap
+            # If mesh Y range matches pointcloud Z range (roughly), they're misaligned
+            mesh_y_range = (mesh_min[1], mesh_max[1])
+            mesh_z_range = (mesh_min[2], mesh_max[2])
+            pc_y_range = (pc_min[1], pc_max[1])
+            pc_z_range = (pc_min[2], pc_max[2])
+
+            # Check overlap in current space
+            def ranges_overlap(r1, r2, tolerance=0.5):
+                return not (r1[1] < r2[0] - tolerance or r2[1] < r1[0] - tolerance)
+
+            current_overlap = (
+                ranges_overlap((mesh_min[0], mesh_max[0]), (pc_min[0], pc_max[0])) and
+                ranges_overlap((mesh_min[1], mesh_max[1]), (pc_min[1], pc_max[1])) and
+                ranges_overlap((mesh_min[2], mesh_max[2]), (pc_min[2], pc_max[2]))
+            )
+
+            if current_overlap:
+                print(f"[BD Transfer Colors] Auto-detect: Bounds overlap, no conversion needed")
+                coordinate_fix = "none"
+            else:
+                # Try converting pointcloud back to Y-up
+                pc_verts_yup = apply_zup_to_yup(pc_verts)
+                pc_yup_min = pc_verts_yup.min(axis=0)
+                pc_yup_max = pc_verts_yup.max(axis=0)
+
+                converted_overlap = (
+                    ranges_overlap((mesh_min[0], mesh_max[0]), (pc_yup_min[0], pc_yup_max[0])) and
+                    ranges_overlap((mesh_min[1], mesh_max[1]), (pc_yup_min[1], pc_yup_max[1])) and
+                    ranges_overlap((mesh_min[2], mesh_max[2]), (pc_yup_min[2], pc_yup_max[2]))
+                )
+
+                if converted_overlap:
+                    print(f"[BD Transfer Colors] Auto-detect: Converting pointcloud to Y-up (TRELLIS2 fix)")
+                    coordinate_fix = "pointcloud_to_yup"
+                else:
+                    # Try the other way - convert mesh to Z-up
+                    mesh_verts_zup = apply_yup_to_zup(mesh_verts)
+                    mesh_zup_min = mesh_verts_zup.min(axis=0)
+                    mesh_zup_max = mesh_verts_zup.max(axis=0)
+
+                    mesh_converted_overlap = (
+                        ranges_overlap((mesh_zup_min[0], mesh_zup_max[0]), (pc_min[0], pc_max[0])) and
+                        ranges_overlap((mesh_zup_min[1], mesh_zup_max[1]), (pc_min[1], pc_max[1])) and
+                        ranges_overlap((mesh_zup_min[2], mesh_zup_max[2]), (pc_min[2], pc_max[2]))
+                    )
+
+                    if mesh_converted_overlap:
+                        print(f"[BD Transfer Colors] Auto-detect: Converting mesh to Z-up")
+                        coordinate_fix = "mesh_to_zup"
+                    else:
+                        print(f"[BD Transfer Colors] Auto-detect: Could not find matching coordinate space, trying pointcloud_to_yup")
+                        coordinate_fix = "pointcloud_to_yup"
+
+        # Apply the chosen coordinate fix
+        if coordinate_fix == "pointcloud_to_yup":
+            pc_verts = apply_zup_to_yup(pc_verts)
+            pc_min_new = pc_verts.min(axis=0)
+            pc_max_new = pc_verts.max(axis=0)
+            print(f"[BD Transfer Colors] Converted pointcloud to Y-up: min={pc_min_new}, max={pc_max_new}")
+        elif coordinate_fix == "mesh_to_zup":
+            mesh_verts = apply_yup_to_zup(mesh_verts)
+            mesh_min_new = mesh_verts.min(axis=0)
+            mesh_max_new = mesh_verts.max(axis=0)
+            print(f"[BD Transfer Colors] Converted mesh to Z-up: min={mesh_min_new}, max={mesh_max_new}")
 
         # Get pointcloud colors
         pc_colors = None
