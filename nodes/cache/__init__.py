@@ -1024,9 +1024,10 @@ class BD_WorkflowVersionCache:
 
         # Check if the latest version has the same hash (avoid duplicate saves on restart)
         if existing_versions:
-            latest_hash = existing_versions[0].get('workflow_hash', '')
+            latest_hash = existing_versions[0].get('workflow_hash', '')  # 8 chars (truncated)
             full_current_hash = hash_workflow_full(workflow_data)
-            if latest_hash == full_current_hash:
+            # Compare truncated hashes (list_workflow_versions returns 8-char hashes)
+            if latest_hash == full_current_hash[:8]:
                 _WORKFLOW_HASH_CACHE[cache_key] = current_hash
                 status = f"Already saved (v{existing_versions[0]['version']})"
                 return (status, effective_id, len(existing_versions))
