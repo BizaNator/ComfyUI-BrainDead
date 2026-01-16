@@ -983,26 +983,10 @@ class BD_WorkflowVersionCache:
     @classmethod
     def IS_CHANGED(cls, workflow_id, max_versions, save_on_any_change, enabled,
                    trigger=None, description="", extra_pnginfo=None, prompt=None):
-        # Always check for changes on each execution
-        if not enabled:
-            return False
-
-        workflow_data = None
-        if extra_pnginfo and isinstance(extra_pnginfo, dict):
-            workflow_data = extra_pnginfo.get('workflow')
-
-        if workflow_data:
-            # Auto-detect workflow_id if not provided
-            effective_id = workflow_id.strip() if workflow_id else auto_workflow_id(workflow_data)
-
-            current_hash = hash_workflow_full(workflow_data) if save_on_any_change else hash_workflow_structure(workflow_data)
-            cache_key = f"{effective_id}_{'full' if save_on_any_change else 'struct'}"
-            last_hash = _WORKFLOW_HASH_CACHE.get(cache_key)
-
-            if last_hash != current_hash:
-                return f"changed_{current_hash}"
-
-        return False
+        # Always execute this node on every run so it can check for workflow changes
+        # The main function handles deduplication via hash comparison
+        import time
+        return time.time()
 
     def cache_workflow_version(self, workflow_id, max_versions, save_on_any_change, enabled,
                                 trigger=None, description="", extra_pnginfo=None, prompt=None):
