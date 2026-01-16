@@ -393,3 +393,292 @@ def save_to_cache(cache_path, data, serializer_class):
     except Exception as e:
         print(f"[BrainDead] Error saving cache: {e}")
         return False
+
+
+# =============================================================================
+# Workflow Version Cache Utilities
+# =============================================================================
+
+WORKFLOW_VERSIONS_DIR = os.path.join(CACHE_DIR, "workflow_versions")
+
+
+def ensure_workflow_versions_dir():
+    """Ensure workflow versions directory exists."""
+    os.makedirs(WORKFLOW_VERSIONS_DIR, exist_ok=True)
+    return WORKFLOW_VERSIONS_DIR
+
+
+def hash_workflow_structure(workflow_data):
+    """
+    Generate a hash of the workflow structure.
+
+    Focuses on node types and connections, excludes volatile data like seeds.
+    This allows detecting structural changes while ignoring execution-specific values.
+    """
+    if not workflow_data:
+        return "empty"
+
+    try:
+        # Extract structural elements only
+        structure = {}
+
+        if isinstance(workflow_data, dict):
+            nodes = workflow_data.get('nodes', [])
+            links = workflow_data.get('links', [])
+
+            # Hash node types and their basic configuration
+            node_info = []
+            for node in nodes:
+                if isinstance(node, dict):
+                    node_info.append({
+                        'type': node.get('type', ''),
+                        'id': node.get('id', ''),
+                        # Include widget names but not values (to detect structural changes)
+                        'widgets': [w.get('name', '') if isinstance(w, dict) else str(i)
+                                   for i, w in enumerate(node.get('widgets_values', []))] if 'widgets_values' in node else []
+                    })
+
+            structure['nodes'] = sorted(node_info, key=lambda x: str(x.get('id', '')))
+            structure['links'] = sorted([str(l) for l in links]) if links else []
+            structure['node_count'] = len(nodes)
+
+        structure_str = json.dumps(structure, sort_keys=True, default=str)
+        return hashlib.md5(structure_str.encode()).hexdigest()
+    except Exception as e:
+        print(f"[BrainDead] Warning: Could not hash workflow structure: {e}")
+        return "unhashable"
+
+
+def hash_workflow_full(workflow_data):
+    """
+    Generate a hash of the complete workflow including all values.
+
+    Used for detecting any change whatsoever in the workflow.
+    """
+    if not workflow_data:
+        return "empty"
+
+    try:
+        workflow_str = json.dumps(workflow_data, sort_keys=True, default=str)
+        return hashlib.md5(workflow_str.encode()).hexdigest()
+    except Exception as e:
+        print(f"[BrainDead] Warning: Could not hash workflow: {e}")
+        return "unhashable"
+
+
+def get_workflow_version_path(workflow_id, version_num):
+    """Get the path for a specific workflow version file."""
+    ensure_workflow_versions_dir()
+    # Sanitize workflow_id for filesystem
+    safe_id = "".join(c if c.isalnum() or c in '-_' else '_' for c in str(workflow_id))
+    return os.path.join(WORKFLOW_VERSIONS_DIR, f"{safe_id}_v{version_num:04d}.json")
+
+
+def list_workflow_versions(workflow_id):
+    """
+    List all saved versions for a workflow.
+
+    Returns list of dicts with version metadata, sorted by version number descending.
+    """
+    ensure_workflow_versions_dir()
+    safe_id = "".join(c if c.isalnum() or c in '-_' else '_' for c in str(workflow_id))
+
+    versions = []
+    pattern = f"{safe_id}_v"
+
+    try:
+        for filename in os.listdir(WORKFLOW_VERSIONS_DIR):
+            if filename.startswith(pattern) and filename.endswith('.json'):
+                filepath = os.path.join(WORKFLOW_VERSIONS_DIR, filename)
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    versions.append({
+                        'version': data.get('version', 0),
+                        'timestamp': data.get('timestamp', ''),
+                        'workflow_hash': data.get('workflow_hash', '')[:8],
+                        'structure_hash': data.get('structure_hash', '')[:8],
+                        'node_count': data.get('node_count', 0),
+                        'description': data.get('description', ''),
+                        'filepath': filepath,
+                        'filename': filename,
+                    })
+                except Exception as e:
+                    print(f"[BrainDead] Warning: Could not read version file {filename}: {e}")
+    except Exception as e:
+        print(f"[BrainDead] Error listing workflow versions: {e}")
+
+    # Sort by version number descending (newest first)
+    versions.sort(key=lambda x: x['version'], reverse=True)
+    return versions
+
+
+def save_workflow_version(workflow_id, workflow_data, description="auto-saved", max_versions=50):
+    """
+    Save a new workflow version.
+
+    Returns tuple of (success, message, version_number).
+    Automatically prunes old versions if max_versions is exceeded.
+    """
+    ensure_workflow_versions_dir()
+
+    if not workflow_data:
+        return False, "No workflow data to save", 0
+
+    # Get existing versions to determine next version number
+    existing = list_workflow_versions(workflow_id)
+    next_version = (existing[0]['version'] + 1) if existing else 1
+
+    # Build version metadata
+    from datetime import datetime
+    version_data = {
+        'version': next_version,
+        'timestamp': datetime.now().isoformat(),
+        'workflow_hash': hash_workflow_full(workflow_data),
+        'structure_hash': hash_workflow_structure(workflow_data),
+        'node_count': len(workflow_data.get('nodes', [])) if isinstance(workflow_data, dict) else 0,
+        'description': description,
+        'workflow': workflow_data,
+    }
+
+    # Save the version
+    version_path = get_workflow_version_path(workflow_id, next_version)
+    try:
+        with open(version_path, 'w', encoding='utf-8') as f:
+            json.dump(version_data, f, indent=2, default=str)
+    except Exception as e:
+        return False, f"Failed to save version: {e}", 0
+
+    # Prune old versions if needed
+    if max_versions > 0 and len(existing) >= max_versions:
+        versions_to_delete = existing[max_versions - 1:]  # Keep max_versions - 1 (new one makes max_versions)
+        for v in versions_to_delete:
+            try:
+                os.remove(v['filepath'])
+            except Exception as e:
+                print(f"[BrainDead] Warning: Could not delete old version {v['filename']}: {e}")
+
+    return True, f"Saved version {next_version}", next_version
+
+
+def load_workflow_version(workflow_id, version_num):
+    """
+    Load a specific workflow version.
+
+    Returns tuple of (workflow_data, metadata) or (None, error_message).
+    """
+    version_path = get_workflow_version_path(workflow_id, version_num)
+
+    if not os.path.exists(version_path):
+        return None, f"Version {version_num} not found"
+
+    try:
+        with open(version_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        workflow = data.get('workflow')
+        metadata = {k: v for k, v in data.items() if k != 'workflow'}
+        return workflow, metadata
+    except Exception as e:
+        return None, f"Failed to load version: {e}"
+
+
+def compare_workflow_versions(workflow_id, version_a, version_b):
+    """
+    Compare two workflow versions and return a simple diff.
+
+    Returns a dict with:
+    - added_nodes: list of node types added in version_b
+    - removed_nodes: list of node types removed in version_b
+    - changed_nodes: list of node types that changed
+    - summary: human-readable summary string
+    """
+    workflow_a, meta_a = load_workflow_version(workflow_id, version_a)
+    workflow_b, meta_b = load_workflow_version(workflow_id, version_b)
+
+    if workflow_a is None:
+        return {'error': f"Could not load version {version_a}: {meta_a}"}
+    if workflow_b is None:
+        return {'error': f"Could not load version {version_b}: {meta_b}"}
+
+    # Extract nodes by ID
+    nodes_a = {}
+    nodes_b = {}
+
+    if isinstance(workflow_a, dict):
+        for node in workflow_a.get('nodes', []):
+            if isinstance(node, dict):
+                nodes_a[node.get('id')] = node
+
+    if isinstance(workflow_b, dict):
+        for node in workflow_b.get('nodes', []):
+            if isinstance(node, dict):
+                nodes_b[node.get('id')] = node
+
+    ids_a = set(nodes_a.keys())
+    ids_b = set(nodes_b.keys())
+
+    added_ids = ids_b - ids_a
+    removed_ids = ids_a - ids_b
+    common_ids = ids_a & ids_b
+
+    # Check for changed nodes (same ID but different type)
+    changed_ids = set()
+    for node_id in common_ids:
+        if nodes_a[node_id].get('type') != nodes_b[node_id].get('type'):
+            changed_ids.add(node_id)
+
+    added_nodes = [nodes_b[nid].get('type', 'Unknown') for nid in added_ids]
+    removed_nodes = [nodes_a[nid].get('type', 'Unknown') for nid in removed_ids]
+    changed_nodes = [(nodes_a[nid].get('type', 'Unknown'), nodes_b[nid].get('type', 'Unknown'))
+                     for nid in changed_ids]
+
+    # Build summary
+    summary_parts = []
+    if added_nodes:
+        summary_parts.append(f"Added {len(added_nodes)} node(s): {', '.join(added_nodes[:5])}" +
+                           ("..." if len(added_nodes) > 5 else ""))
+    if removed_nodes:
+        summary_parts.append(f"Removed {len(removed_nodes)} node(s): {', '.join(removed_nodes[:5])}" +
+                           ("..." if len(removed_nodes) > 5 else ""))
+    if changed_nodes:
+        changes = [f"{old}->{new}" for old, new in changed_nodes[:3]]
+        summary_parts.append(f"Changed {len(changed_nodes)} node(s): {', '.join(changes)}" +
+                           ("..." if len(changed_nodes) > 3 else ""))
+
+    if not summary_parts:
+        summary_parts.append("No structural changes detected")
+
+    return {
+        'added_nodes': added_nodes,
+        'removed_nodes': removed_nodes,
+        'changed_nodes': changed_nodes,
+        'summary': "\n".join(summary_parts),
+        'version_a': version_a,
+        'version_b': version_b,
+    }
+
+
+def clear_workflow_versions(workflow_id, keep_latest=0):
+    """
+    Clear workflow versions, optionally keeping the N most recent.
+
+    Returns tuple of (deleted_count, message).
+    """
+    versions = list_workflow_versions(workflow_id)
+
+    if not versions:
+        return 0, "No versions found"
+
+    to_delete = versions[keep_latest:] if keep_latest > 0 else versions
+    deleted = 0
+
+    for v in to_delete:
+        try:
+            os.remove(v['filepath'])
+            deleted += 1
+        except Exception as e:
+            print(f"[BrainDead] Warning: Could not delete {v['filename']}: {e}")
+
+    return deleted, f"Deleted {deleted} version(s)"
