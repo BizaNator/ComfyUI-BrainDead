@@ -1790,7 +1790,9 @@ ensuring proper coordinate alignment.
                 new_mesh.vertex_normals = mesh.vertex_normals.copy()
 
             total_time = time.time() - start_time
-            unique_colors = len(np.unique(vertex_colors_uint8.view(np.uint32)))
+            # Make array contiguous before view() operation
+            vertex_colors_contiguous = np.ascontiguousarray(vertex_colors_uint8)
+            unique_colors = len(np.unique(vertex_colors_contiguous.view(np.uint32)))
 
             status = f"Sampled {num_verts} vertices ({unique_colors} unique colors) in {total_time:.1f}s"
             print(f"[BD Sample Voxelgrid] ✓ {status}")
@@ -1818,9 +1820,12 @@ ensuring proper coordinate alignment.
 
         print(f"[BD Sample Voxelgrid] Building dense volume: {grid_size}")
 
-        # Create dense volume for RGB (3 channels)
         # attrs are in range [-1, 1], convert to [0, 1]
-        attrs_normalized = (attrs + 1.0) * 0.5
+        if hasattr(attrs, 'cpu'):
+            attrs_np = attrs.cpu().numpy()
+        else:
+            attrs_np = np.array(attrs)
+        attrs_normalized = (attrs_np + 1.0) * 0.5
 
         # Initialize volume with default color
         volume = np.full((grid_size[0], grid_size[1], grid_size[2], 4),
@@ -1842,22 +1847,46 @@ ensuring proper coordinate alignment.
 
         rgba = np.column_stack([rgb, alpha])
 
-        for i in range(len(local_coords)):
-            x, y, z = local_coords[i]
-            volume[x, y, z] = rgba[i]
+        # Use advanced indexing for faster filling
+        volume[local_coords[:, 0], local_coords[:, 1], local_coords[:, 2]] = rgba
 
-        print(f"[BD Sample Voxelgrid] Volume created, transferring to GPU")
+        print(f"[BD Sample Voxelgrid] Volume filled, transferring to GPU")
 
         # Convert to torch tensor (D, H, W, C) -> (1, C, D, H, W) for grid_sample
         volume_tensor = torch.from_numpy(volume).permute(3, 0, 1, 2).unsqueeze(0).to(device)
 
-        # Normalize mesh vertices to grid coordinates [-1, 1]
-        # First convert to voxel grid space
-        mesh_verts_voxel = mesh_verts / voxel_size
-        mesh_verts_local = mesh_verts_voxel - coord_min
+        # The mesh vertices and voxel grid are in different coordinate systems:
+        # - Mesh: centered at 0, world coordinates
+        # - Voxel: indices in 3D grid, multiplied by voxel_size gives 0-1 normalized positions
+        #
+        # We need to normalize mesh vertices to match the voxel grid space
+        # First, normalize mesh to 0-1 based on its bounding box
+        mesh_min = mesh_verts.min(axis=0)
+        mesh_max = mesh_verts.max(axis=0)
+        mesh_range = mesh_max - mesh_min
+        mesh_range[mesh_range == 0] = 1  # Avoid division by zero
+
+        # Normalize mesh to 0-1
+        mesh_normalized = (mesh_verts - mesh_min) / mesh_range
+
+        # Get the voxel world positions (coords * voxel_size)
+        voxel_world_min = coord_min * voxel_size
+        voxel_world_max = coord_max * voxel_size
+        voxel_world_range = voxel_world_max - voxel_world_min
+
+        # Map normalized mesh coords to voxel world space
+        mesh_in_voxel_world = mesh_normalized * voxel_world_range + voxel_world_min
+
+        # Convert to voxel grid indices
+        mesh_voxel_indices = mesh_in_voxel_world / voxel_size
+
+        # Convert to local coords (relative to coord_min)
+        mesh_local = mesh_voxel_indices - coord_min
 
         # Normalize to [-1, 1] for grid_sample
-        grid_coords = (mesh_verts_local / (grid_size - 1)) * 2 - 1
+        grid_coords = (mesh_local / (grid_size - 1).astype(np.float32)) * 2 - 1
+
+        print(f"[BD Sample Voxelgrid] Grid coords range: {grid_coords.min(axis=0)} to {grid_coords.max(axis=0)}")
 
         # Reshape for grid_sample: (1, N, 1, 1, 3)
         grid_tensor = torch.from_numpy(grid_coords.astype(np.float32)).unsqueeze(0).unsqueeze(2).unsqueeze(2).to(device)
@@ -1889,7 +1918,11 @@ ensuring proper coordinate alignment.
         alpha_slice = layout.get('alpha', slice(5, 6))
 
         # Normalize attrs from [-1, 1] to [0, 1]
-        attrs_normalized = (attrs + 1.0) * 0.5
+        if hasattr(attrs, 'cpu'):
+            attrs_np = attrs.cpu().numpy()
+        else:
+            attrs_np = np.array(attrs)
+        attrs_normalized = (attrs_np + 1.0) * 0.5
 
         if isinstance(base_color_slice, slice):
             rgb = attrs_normalized[:, base_color_slice]
@@ -1903,14 +1936,36 @@ ensuring proper coordinate alignment.
 
         voxel_colors = np.column_stack([rgb, alpha]).astype(np.float32)
 
-        # Voxel world positions
-        voxel_positions = coords.astype(np.float32) * voxel_size
+        # Voxel world positions (in 0-1 normalized space)
+        coords_np = coords.cpu().numpy() if hasattr(coords, 'cpu') else np.array(coords)
+        voxel_positions = coords_np.astype(np.float32) * voxel_size
+
+        # Transform mesh vertices to voxel world space
+        # Mesh is centered at 0, voxel positions are in 0-1 normalized space
+        mesh_min = mesh_verts.min(axis=0)
+        mesh_max = mesh_verts.max(axis=0)
+        mesh_range = mesh_max - mesh_min
+        mesh_range[mesh_range == 0] = 1
+
+        # Normalize mesh to 0-1
+        mesh_normalized = (mesh_verts - mesh_min) / mesh_range
+
+        # Map to voxel world space
+        voxel_min = voxel_positions.min(axis=0)
+        voxel_max = voxel_positions.max(axis=0)
+        voxel_range = voxel_max - voxel_min
+
+        mesh_in_voxel_space = mesh_normalized * voxel_range + voxel_min
+
+        print(f"[BD Sample Voxelgrid] Mesh transformed to voxel space")
+        print(f"[BD Sample Voxelgrid] Transformed mesh range: {mesh_in_voxel_space.min(axis=0)} to {mesh_in_voxel_space.max(axis=0)}")
+        print(f"[BD Sample Voxelgrid] Voxel positions range: {voxel_min} to {voxel_max}")
 
         print(f"[BD Sample Voxelgrid] Building KD-tree from {len(voxel_positions)} voxels")
         tree = cKDTree(voxel_positions)
 
         print(f"[BD Sample Voxelgrid] Querying {len(mesh_verts)} vertices")
-        distances, indices = tree.query(mesh_verts, k=1, workers=-1)
+        distances, indices = tree.query(mesh_in_voxel_space, k=1, workers=-1)
 
         # Get colors
         vertex_colors = np.zeros((len(mesh_verts), 4), dtype=np.float32)
@@ -1919,7 +1974,7 @@ ensuring proper coordinate alignment.
         vertex_colors[~valid] = default_rgba
 
         avg_dist = np.mean(distances)
-        print(f"[BD Sample Voxelgrid] Average distance: {avg_dist:.4f}")
+        print(f"[BD Sample Voxelgrid] Average distance: {avg_dist:.6f}")
 
         return vertex_colors
 
