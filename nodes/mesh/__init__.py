@@ -15,6 +15,9 @@ Nodes:
 - BD_ExportMeshWithColors - Export mesh with vertex colors
 """
 
+# Import TRIMESH type helpers for re-export
+from .types import TrimeshInput, TrimeshOutput
+
 from .cache import (
     MESH_CACHE_NODES,
     MESH_CACHE_DISPLAY_NAMES,

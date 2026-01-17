@@ -25,6 +25,9 @@ try:
 except ImportError:
     HAS_TRIMESH = False
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from .types import TrimeshInput, TrimeshOutput
+
 
 def split_vertices_by_face(mesh, face_colors):
     """
@@ -92,7 +95,7 @@ class BD_SampleVoxelgridColors(io.ComfyNode):
             category="🧠BrainDead/Mesh",
             description="Sample colors from TRELLIS2 voxelgrid to mesh. Face mode: ONE solid color per face with NO bleeding (splits vertices).",
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
                 io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
                               tooltip="face=per-face no-bleed (RECOMMENDED), sharp=per-vertex k=1, smooth=per-vertex k=4"),
@@ -101,7 +104,7 @@ class BD_SampleVoxelgridColors(io.ComfyNode):
                               tooltip="Max voxels distance before using default color"),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -373,7 +376,7 @@ class BD_SampleVoxelgridPBR(io.ComfyNode):
             category="🧠BrainDead/Mesh",
             description="Sample full PBR (color, metallic, roughness) from TRELLIS2 voxelgrid. Face mode: ONE solid color per face with NO bleeding.",
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
                 io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
                               tooltip="face=per-face no-bleed (RECOMMENDED), sharp=per-vertex k=1, smooth=per-vertex k=4"),
@@ -384,7 +387,7 @@ class BD_SampleVoxelgridPBR(io.ComfyNode):
                               tooltip="Max voxels distance before using default values"),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="metallic_json"),
                 io.String.Output(display_name="roughness_json"),
                 io.String.Output(display_name="status"),

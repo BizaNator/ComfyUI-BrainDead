@@ -16,6 +16,9 @@ try:
 except ImportError:
     HAS_TRIMESH = False
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from .types import TrimeshInput, TrimeshOutput
+
 
 class BD_ExportMeshWithColors(io.ComfyNode):
     """
@@ -33,7 +36,7 @@ class BD_ExportMeshWithColors(io.ComfyNode):
             description="Export mesh with vertex colors to GLB/PLY/OBJ. Use after BD_SampleVoxelgridColors.",
             is_output_node=True,
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.String.Input("filename", default="mesh_colored"),
                 io.Combo.Input("format", options=["glb", "ply", "obj"], default="glb"),
                 io.String.Input("name_prefix", default="", optional=True, tooltip="Prepended to filename. Supports subdirs (e.g., 'Project/Name')"),

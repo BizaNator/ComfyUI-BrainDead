@@ -9,6 +9,9 @@ import tempfile
 
 from comfy_api.latest import io
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from ..mesh.types import TrimeshInput, TrimeshOutput
+
 from .base import BlenderNodeMixin, REMESH_SCRIPT, HAS_TRIMESH
 
 if HAS_TRIMESH:
@@ -33,7 +36,7 @@ class BD_BlenderRemesh(BlenderNodeMixin, io.ComfyNode):
             category="🧠BrainDead/Blender",
             description="Remesh using Blender. Creates clean, uniform topology from any mesh.",
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.Combo.Input(
                     "mode",
                     options=["VOXEL", "QUAD", "SHARP"],
@@ -72,7 +75,7 @@ class BD_BlenderRemesh(BlenderNodeMixin, io.ComfyNode):
                 ),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )

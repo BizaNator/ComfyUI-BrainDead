@@ -9,6 +9,9 @@ import tempfile
 
 from comfy_api.latest import io
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from ..mesh.types import TrimeshInput, TrimeshOutput
+
 from .base import BlenderNodeMixin, TRANSFER_COLORS_SCRIPT, HAS_TRIMESH
 
 if HAS_TRIMESH:
@@ -33,8 +36,8 @@ class BD_BlenderTransferColors(BlenderNodeMixin, io.ComfyNode):
             category="🧠BrainDead/Blender",
             description="Transfer vertex colors from source to target mesh using Blender's data transfer.",
             inputs=[
-                io.Mesh.Input("source_mesh", tooltip="Source mesh with vertex colors"),
-                io.Mesh.Input("target_mesh", tooltip="Target mesh to receive colors"),
+                TrimeshInput("source_mesh", tooltip="Source mesh with vertex colors"),
+                TrimeshInput("target_mesh", tooltip="Target mesh to receive colors"),
                 io.Float.Input(
                     "max_distance",
                     default=0.1,
@@ -53,7 +56,7 @@ class BD_BlenderTransferColors(BlenderNodeMixin, io.ComfyNode):
                 ),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )

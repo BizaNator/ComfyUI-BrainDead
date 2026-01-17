@@ -22,6 +22,9 @@ try:
 except ImportError:
     HAS_TRIMESH = False
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from .types import TrimeshInput, TrimeshOutput
+
 
 class BD_CacheMesh(io.ComfyNode):
     """
@@ -37,14 +40,14 @@ class BD_CacheMesh(io.ComfyNode):
             category="🧠BrainDead/Mesh",
             description="Cache TRIMESH objects to skip expensive mesh generation. Saves as PLY format.",
             inputs=[
-                io.Mesh.Input("mesh", lazy=True),
+                TrimeshInput("mesh", lazy=True),
                 io.String.Input("cache_name", default="cached_mesh"),
                 io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
                 io.Boolean.Input("force_refresh", default=False),
                 io.String.Input("name_prefix", default="", optional=True),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )

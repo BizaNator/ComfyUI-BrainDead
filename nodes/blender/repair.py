@@ -9,6 +9,9 @@ import tempfile
 
 from comfy_api.latest import io
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from ..mesh.types import TrimeshInput, TrimeshOutput
+
 from .base import BlenderNodeMixin, REPAIR_SCRIPT, HAS_TRIMESH
 
 if HAS_TRIMESH:
@@ -34,7 +37,7 @@ class BD_BlenderRepair(BlenderNodeMixin, io.ComfyNode):
             category="🧠BrainDead/Blender",
             description="Advanced mesh repair using Blender. Fixes holes, duplicates, and normals.",
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.Boolean.Input(
                     "fill_holes",
                     default=True,
@@ -73,7 +76,7 @@ class BD_BlenderRepair(BlenderNodeMixin, io.ComfyNode):
                 ),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )

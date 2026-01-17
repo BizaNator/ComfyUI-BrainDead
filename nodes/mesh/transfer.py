@@ -24,6 +24,9 @@ try:
 except ImportError:
     HAS_TRIMESH = False
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from .types import TrimeshInput, TrimeshOutput
+
 
 def split_vertices_by_face(mesh, face_colors):
     """
@@ -100,8 +103,8 @@ Use this to bypass TRELLIS2's UV/texture pipeline:
 Note: TRELLIS2 outputs mesh in Y-up but pointcloud in Z-up coordinates.
 The 'auto' setting detects and fixes this automatically.""",
             inputs=[
-                io.Mesh.Input("mesh"),
-                io.Mesh.Input("pointcloud", tooltip="pbr_pointcloud from TRELLIS2"),
+                TrimeshInput("mesh"),
+                TrimeshInput("pointcloud", tooltip="pbr_pointcloud from TRELLIS2"),
                 io.Combo.Input("coordinate_fix", options=["auto", "none", "mesh_to_zup", "pointcloud_to_yup"],
                               default="auto", optional=True, tooltip="Fix coordinate mismatch between mesh and pointcloud"),
                 io.Float.Input("max_distance", default=0.0, min=0.0, max=10.0, step=0.001, optional=True,
@@ -110,7 +113,7 @@ The 'auto' setting detects and fixes this automatically.""",
                                tooltip="RGBA color for vertices with no nearby points"),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -344,13 +347,13 @@ Connect:
 1. 'trimesh' from TRELLIS.2 Shape to Textured Mesh -> mesh
 2. 'pbr_pointcloud' from TRELLIS.2 Shape to Textured Mesh -> pointcloud""",
             inputs=[
-                io.Mesh.Input("mesh"),
-                io.Mesh.Input("pointcloud", tooltip="pbr_pointcloud from TRELLIS2"),
+                TrimeshInput("mesh"),
+                TrimeshInput("pointcloud", tooltip="pbr_pointcloud from TRELLIS2"),
                 io.Float.Input("max_distance", default=0.0, min=0.0, max=1.0, step=0.001, optional=True,
                               tooltip="Max distance for color transfer. 0 = automatic"),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -491,8 +494,8 @@ Typical workflow:
 2. Decimate mesh (BD_SmartDecimate)
 3. Transfer colors back (BD_TransferVertexColors) with face mode for clean edges""",
             inputs=[
-                io.Mesh.Input("source_mesh", tooltip="High-poly mesh with vertex colors"),
-                io.Mesh.Input("target_mesh", tooltip="Decimated mesh to receive colors"),
+                TrimeshInput("source_mesh", tooltip="High-poly mesh with vertex colors"),
+                TrimeshInput("target_mesh", tooltip="Decimated mesh to receive colors"),
                 io.Combo.Input("transfer_mode", options=["face", "face_center", "vertex_nearest", "barycentric"],
                               default="face", optional=True,
                               tooltip="face=NO bleed (splits verts), face_center=sharp, vertex_nearest=per-vertex, barycentric=smooth"),
@@ -500,7 +503,7 @@ Typical workflow:
                                tooltip="Fallback color (magenta) for missing coverage"),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )

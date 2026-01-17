@@ -17,6 +17,9 @@ try:
 except ImportError:
     HAS_TRIMESH = False
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from .types import TrimeshInput, TrimeshOutput
+
 
 class BD_MeshRepair(io.ComfyNode):
     """
@@ -34,7 +37,7 @@ class BD_MeshRepair(io.ComfyNode):
             category="🧠BrainDead/Mesh",
             description="Repair mesh topology using PyMeshLab. Fixes holes, duplicates, degenerates, and normals.",
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.Boolean.Input("remove_duplicates", default=True, optional=True, tooltip="Merge duplicate/close vertices"),
                 io.Boolean.Input("remove_degenerate", default=True, optional=True, tooltip="Remove zero-area faces and duplicates"),
                 io.Boolean.Input("close_holes", default=True, optional=True, tooltip="Close holes in mesh"),
@@ -43,7 +46,7 @@ class BD_MeshRepair(io.ComfyNode):
                 io.Float.Input("merge_threshold", default=0.0001, min=0.00001, max=0.01, step=0.00001, optional=True, tooltip="Distance threshold for vertex merging"),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -186,7 +189,7 @@ class BD_SmartDecimate(io.ComfyNode):
             category="🧠BrainDead/Mesh",
             description="Edge-preserving mesh decimation using PyMeshLab quadric edge collapse.",
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.Int.Input("target_faces", default=50000, min=100, max=10000000, step=1000),
                 io.Boolean.Input("preserve_boundary", default=True, optional=True, tooltip="Preserve mesh boundary edges"),
                 io.Boolean.Input("preserve_topology", default=True, optional=True, tooltip="Preserve mesh topology"),
@@ -194,7 +197,7 @@ class BD_SmartDecimate(io.ComfyNode):
                 io.Boolean.Input("planar_quadric", default=True, optional=True, tooltip="Use planar simplification for flat regions"),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )

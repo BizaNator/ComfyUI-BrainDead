@@ -14,6 +14,9 @@ import tempfile
 
 from comfy_api.latest import io
 
+# Import custom TRIMESH type (matches TRELLIS2)
+from ..mesh.types import TrimeshInput, TrimeshOutput
+
 from .base import BlenderNodeMixin, HAS_TRIMESH
 
 if HAS_TRIMESH:
@@ -250,7 +253,7 @@ Features:
 
 Best for: Stylized characters, props, game assets with vertex colors.""",
             inputs=[
-                io.Mesh.Input("mesh"),
+                TrimeshInput("mesh"),
                 io.Int.Input(
                     "target_faces",
                     default=5000,
@@ -310,7 +313,7 @@ Best for: Stylized characters, props, game assets with vertex colors.""",
                 ),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )
