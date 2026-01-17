@@ -43,13 +43,19 @@ class CacheNodeMixin:
         return get_cache_path(full_name, cache_hash, cls.serializer.extension)
 
     @classmethod
-    def check_lazy_status(cls, cache_name: str, seed: int, force_refresh: bool,
-                          name_prefix: str = "", **kwargs) -> list[str]:
+    def check_lazy_status(cls, **kwargs) -> list[str]:
         """
         Return [] to skip upstream, [input_name] to evaluate upstream.
 
         This method is called by ComfyUI's lazy evaluation system.
+        Args come in schema order as kwargs.
         """
+        # Extract args - data input comes first but we don't need its value
+        cache_name = kwargs.get('cache_name', '')
+        seed = kwargs.get('seed', 0)
+        force_refresh = kwargs.get('force_refresh', False)
+        name_prefix = kwargs.get('name_prefix', '')
+
         if force_refresh:
             print(f"[{cls.node_label}] Force refresh - will run upstream")
             return [cls.input_name]
@@ -57,19 +63,23 @@ class CacheNodeMixin:
         cache_path = cls._get_cache_path(cache_name, seed, name_prefix)
 
         if check_cache_exists(cache_path, min_size=cls.min_cache_size):
-            print(f"[{cls.node_label}] Cache exists: {os.path.basename(cache_path)} - SKIPPING upstream")
+            print(f"[{cls.node_label}] Cache HIT - SKIPPING upstream")
             return []  # Empty list = don't need input, skip upstream
 
-        print(f"[{cls.node_label}] No cache found - will run upstream")
+        print(f"[{cls.node_label}] No cache - will run upstream")
         return [cls.input_name]
 
     @classmethod
-    def fingerprint_inputs(cls, cache_name: str, seed: int, force_refresh: bool,
-                           name_prefix: str = "", **kwargs) -> str:
+    def fingerprint_inputs(cls, **kwargs) -> str:
         """
         Return a unique value when cache should be invalidated.
         Replaces IS_CHANGED in V3 API.
         """
+        cache_name = kwargs.get('cache_name', '')
+        seed = kwargs.get('seed', 0)
+        force_refresh = kwargs.get('force_refresh', False)
+        name_prefix = kwargs.get('name_prefix', '')
+
         if force_refresh:
             return f"force_{time.time()}"
         return f"{name_prefix}_{cache_name}_{seed}"
