@@ -1757,23 +1757,11 @@ ensuring proper coordinate alignment.
         voxel_max = voxel_positions.max(axis=0)
         print(f"[BD Sample Voxelgrid] Voxel world bounds: {voxel_min} to {voxel_max}")
 
-        # Try to use PyTorch for GPU acceleration
-        try:
-            import torch
-            use_torch = torch.cuda.is_available()
-        except:
-            use_torch = False
-
-        if use_torch:
-            print(f"[BD Sample Voxelgrid] Using PyTorch GPU acceleration")
-            vertex_colors = self._sample_with_torch(
-                mesh_verts, coords, attrs, voxel_size, layout, default_rgba
-            )
-        else:
-            print(f"[BD Sample Voxelgrid] Using numpy (no GPU)")
-            vertex_colors = self._sample_with_numpy(
-                mesh_verts, coords, attrs, voxel_size, layout, default_rgba
-            )
+        # Use KD-tree for sparse voxel sampling (much better than dense volume)
+        print(f"[BD Sample Voxelgrid] Using KD-tree sparse sampling")
+        vertex_colors = self._sample_with_kdtree(
+            mesh_verts, coords, attrs, voxel_size, layout, default_rgba
+        )
 
         # Create new mesh with vertex colors
         try:
@@ -1802,12 +1790,106 @@ ensuring proper coordinate alignment.
         except Exception as e:
             return (mesh, f"ERROR creating colored mesh: {e}")
 
+    def _sample_with_kdtree(self, mesh_verts, coords, attrs, voxel_size, layout, default_rgba):
+        """Sample colors using KD-tree nearest neighbor lookup on sparse voxels."""
+        import numpy as np
+        from scipy.spatial import cKDTree
+
+        # The mesh and voxelgrid have swapped Y/Z axes with negation
+        mesh_verts_transformed = mesh_verts.copy()
+        mesh_verts_transformed[:, 1] = -mesh_verts[:, 2]  # new Y = -old Z
+        mesh_verts_transformed[:, 2] = mesh_verts[:, 1]   # new Z = old Y
+        print(f"[BD Sample Voxelgrid] Applied Y=-Z, Z=Y transform to mesh")
+
+        # Convert coords to world positions (same space as mesh after +0.5 transform)
+        if hasattr(coords, 'cpu'):
+            coords_np = coords.cpu().numpy()
+        else:
+            coords_np = np.array(coords)
+        voxel_world_positions = coords_np.astype(np.float32) * voxel_size
+
+        # Convert mesh to voxel world space
+        mesh_in_voxel_space = mesh_verts_transformed + 0.5
+
+        print(f"[BD Sample Voxelgrid] Building KD-tree from {len(voxel_world_positions)} sparse voxels")
+        print(f"[BD Sample Voxelgrid] Voxel positions: {voxel_world_positions.min(axis=0)} to {voxel_world_positions.max(axis=0)}")
+        print(f"[BD Sample Voxelgrid] Mesh in voxel space: {mesh_in_voxel_space.min(axis=0)} to {mesh_in_voxel_space.max(axis=0)}")
+
+        # Build KD-tree from voxel positions
+        tree = cKDTree(voxel_world_positions)
+
+        # Get attrs and convert to colors
+        if hasattr(attrs, 'cpu'):
+            attrs_np = attrs.cpu().numpy()
+        else:
+            attrs_np = np.array(attrs)
+
+        # Get base color slice
+        base_color_slice = layout.get('base_color', slice(0, 3))
+        alpha_slice = layout.get('alpha', slice(5, 6))
+
+        if isinstance(base_color_slice, slice):
+            rgb_raw = attrs_np[:, base_color_slice]
+        else:
+            rgb_raw = attrs_np[:, :3]
+
+        # Debug: check actual range
+        print(f"[BD Sample Voxelgrid] RGB raw range: R=[{rgb_raw[:,0].min():.3f}, {rgb_raw[:,0].max():.3f}] "
+              f"G=[{rgb_raw[:,1].min():.3f}, {rgb_raw[:,1].max():.3f}] B=[{rgb_raw[:,2].min():.3f}, {rgb_raw[:,2].max():.3f}]")
+
+        # The attrs appear to be roughly in [0, 1] range (not [-1, 1])
+        # Just clip to [0, 1] instead of normalizing from [-1, 1]
+        rgb = np.clip(rgb_raw, 0, 1)
+
+        if isinstance(alpha_slice, slice):
+            alpha_raw = attrs_np[:, alpha_slice].flatten()
+            alpha = np.clip(alpha_raw, 0, 1)
+        else:
+            alpha = np.ones(len(rgb), dtype=np.float32)
+
+        voxel_colors = np.column_stack([rgb, alpha]).astype(np.float32)
+
+        print(f"[BD Sample Voxelgrid] Voxel colors range: R=[{voxel_colors[:,0].min():.3f}, {voxel_colors[:,0].max():.3f}] "
+              f"G=[{voxel_colors[:,1].min():.3f}, {voxel_colors[:,1].max():.3f}] B=[{voxel_colors[:,2].min():.3f}, {voxel_colors[:,2].max():.3f}]")
+
+        # Use k=4 with inverse distance weighting for smoother colors
+        print(f"[BD Sample Voxelgrid] Querying {len(mesh_in_voxel_space)} vertices (k=4 weighted)...")
+        distances, indices = tree.query(mesh_in_voxel_space, k=4, workers=-1)
+
+        print(f"[BD Sample Voxelgrid] Distance stats: min={distances[:,0].min():.6f}, max={distances[:,0].max():.6f}, mean={distances[:,0].mean():.6f}")
+
+        # Inverse distance weighting
+        # Avoid division by zero
+        distances = np.maximum(distances, 1e-10)
+        weights = 1.0 / distances
+        weights = weights / weights.sum(axis=1, keepdims=True)
+
+        # Get colors for all k neighbors and blend
+        vertex_colors = np.zeros((len(mesh_in_voxel_space), 4), dtype=np.float32)
+        for i in range(4):
+            vertex_colors += voxel_colors[indices[:, i]] * weights[:, i:i+1]
+
+        # Use distance threshold for fallback to default (check nearest neighbor distance)
+        max_dist = voxel_size * 3  # Allow up to 3 voxels distance
+        far_vertices = distances[:, 0] > max_dist
+        vertex_colors[far_vertices] = default_rgba
+        print(f"[BD Sample Voxelgrid] Vertices beyond {max_dist:.6f} threshold: {far_vertices.sum()} ({100*far_vertices.sum()/len(far_vertices):.1f}%)")
+
+        return vertex_colors
+
     def _sample_with_torch(self, mesh_verts, coords, attrs, voxel_size, layout, default_rgba):
-        """GPU-accelerated sampling using PyTorch grid_sample."""
+        """GPU-accelerated sampling using PyTorch grid_sample (DEPRECATED - use KD-tree)."""
         import torch
         import numpy as np
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # The mesh and voxelgrid have swapped Y/Z axes with negation
+        mesh_verts_transformed = mesh_verts.copy()
+        mesh_verts_transformed[:, 1] = -mesh_verts[:, 2]  # new Y = -old Z
+        mesh_verts_transformed[:, 2] = mesh_verts[:, 1]   # new Z = old Y
+        print(f"[BD Sample Voxelgrid] Applied Y=-Z, Z=Y transform to mesh")
+        print(f"[BD Sample Voxelgrid] Transformed mesh bounds: {mesh_verts_transformed.min(axis=0)} to {mesh_verts_transformed.max(axis=0)}")
 
         # Get base color channels from layout
         base_color_slice = layout.get('base_color', slice(0, 3))
@@ -1825,6 +1907,13 @@ ensuring proper coordinate alignment.
             attrs_np = attrs.cpu().numpy()
         else:
             attrs_np = np.array(attrs)
+
+        # Debug: show RAW attrs values (before normalization)
+        print(f"[BD Sample Voxelgrid] RAW attrs ([-1,1] range) - base_color channels:")
+        print(f"[BD Sample Voxelgrid]   R: min={attrs_np[:,0].min():.4f}, max={attrs_np[:,0].max():.4f}, mean={attrs_np[:,0].mean():.4f}")
+        print(f"[BD Sample Voxelgrid]   G: min={attrs_np[:,1].min():.4f}, max={attrs_np[:,1].max():.4f}, mean={attrs_np[:,1].mean():.4f}")
+        print(f"[BD Sample Voxelgrid]   B: min={attrs_np[:,2].min():.4f}, max={attrs_np[:,2].max():.4f}, mean={attrs_np[:,2].mean():.4f}")
+
         attrs_normalized = (attrs_np + 1.0) * 0.5
 
         # Initialize volume with default color
@@ -1850,48 +1939,48 @@ ensuring proper coordinate alignment.
         # Use advanced indexing for faster filling
         volume[local_coords[:, 0], local_coords[:, 1], local_coords[:, 2]] = rgba
 
+        # Debug: check volume fill
+        filled_count = np.sum(np.any(volume != default_rgba, axis=-1))
+        total_voxels = np.prod(grid_size)
+        print(f"[BD Sample Voxelgrid] Volume filled: {filled_count}/{total_voxels} voxels ({100*filled_count/total_voxels:.1f}%)")
+        print(f"[BD Sample Voxelgrid] Voxel color range: R=[{rgba[:,0].min():.3f}, {rgba[:,0].max():.3f}] "
+              f"G=[{rgba[:,1].min():.3f}, {rgba[:,1].max():.3f}] B=[{rgba[:,2].min():.3f}, {rgba[:,2].max():.3f}]")
+
         print(f"[BD Sample Voxelgrid] Volume filled, transferring to GPU")
 
         # Convert to torch tensor (D, H, W, C) -> (1, C, D, H, W) for grid_sample
         volume_tensor = torch.from_numpy(volume).permute(3, 0, 1, 2).unsqueeze(0).to(device)
 
-        # The mesh vertices and voxel grid are in different coordinate systems:
-        # - Mesh: centered at 0, world coordinates
-        # - Voxel: indices in 3D grid, multiplied by voxel_size gives 0-1 normalized positions
+        # TRELLIS uses a simple transform: voxel_world_pos = world_pos + 0.5
+        # This maps world space [-0.5, 0.5] to normalized space [0, 1]
         #
-        # We need to normalize mesh vertices to match the voxel grid space
-        # First, normalize mesh to 0-1 based on its bounding box
-        mesh_min = mesh_verts.min(axis=0)
-        mesh_max = mesh_verts.max(axis=0)
-        mesh_range = mesh_max - mesh_min
-        mesh_range[mesh_range == 0] = 1  # Avoid division by zero
+        # To go from mesh vertices to voxel indices:
+        # 1. voxel_world_pos = mesh_pos + 0.5
+        # 2. voxel_index = voxel_world_pos / voxel_size
+        # 3. local_index = voxel_index - coord_min
 
-        # Normalize mesh to 0-1
-        mesh_normalized = (mesh_verts - mesh_min) / mesh_range
+        # Convert mesh vertices to voxel world space (add 0.5)
+        mesh_in_voxel_space = mesh_verts_transformed + 0.5
 
-        # Get the voxel world positions (coords * voxel_size)
-        voxel_world_min = coord_min * voxel_size
-        voxel_world_max = coord_max * voxel_size
-        voxel_world_range = voxel_world_max - voxel_world_min
+        # Convert to voxel indices
+        mesh_voxel_indices = mesh_in_voxel_space / voxel_size
 
-        # Map normalized mesh coords to voxel world space
-        mesh_in_voxel_world = mesh_normalized * voxel_world_range + voxel_world_min
-
-        # Convert to voxel grid indices
-        mesh_voxel_indices = mesh_in_voxel_world / voxel_size
-
-        # Convert to local coords (relative to coord_min)
-        mesh_local = mesh_voxel_indices - coord_min
+        # Convert to local indices (relative to coord_min for our volume)
+        mesh_local_indices = mesh_voxel_indices - coord_min.astype(np.float32)
 
         # Normalize to [-1, 1] for grid_sample
-        grid_coords = (mesh_local / (grid_size - 1).astype(np.float32)) * 2 - 1
+        grid_size_f = (grid_size - 1).astype(np.float32)
+        grid_size_f[grid_size_f == 0] = 1
+        grid_coords = (mesh_local_indices / grid_size_f) * 2 - 1
 
+        print(f"[BD Sample Voxelgrid] Mesh in voxel space: {mesh_in_voxel_space.min(axis=0)} to {mesh_in_voxel_space.max(axis=0)}")
+        print(f"[BD Sample Voxelgrid] Mesh local indices: {mesh_local_indices.min(axis=0)} to {mesh_local_indices.max(axis=0)}")
         print(f"[BD Sample Voxelgrid] Grid coords range: {grid_coords.min(axis=0)} to {grid_coords.max(axis=0)}")
 
         # Reshape for grid_sample: (1, N, 1, 1, 3)
         grid_tensor = torch.from_numpy(grid_coords.astype(np.float32)).unsqueeze(0).unsqueeze(2).unsqueeze(2).to(device)
 
-        print(f"[BD Sample Voxelgrid] Running grid_sample on {len(mesh_verts)} vertices")
+        print(f"[BD Sample Voxelgrid] Running grid_sample on {len(mesh_verts_transformed)} vertices")
 
         # Sample using trilinear interpolation
         with torch.no_grad():
@@ -1906,12 +1995,27 @@ ensuring proper coordinate alignment.
         # Extract colors (1, C, N, 1, 1) -> (N, C)
         vertex_colors = sampled.squeeze().permute(1, 0).cpu().numpy()
 
+        # Debug: show color statistics
+        print(f"[BD Sample Voxelgrid] Sampled color range: R=[{vertex_colors[:,0].min():.3f}, {vertex_colors[:,0].max():.3f}] "
+              f"G=[{vertex_colors[:,1].min():.3f}, {vertex_colors[:,1].max():.3f}] "
+              f"B=[{vertex_colors[:,2].min():.3f}, {vertex_colors[:,2].max():.3f}]")
+
+        # Check how many match default color
+        default_matches = np.all(np.abs(vertex_colors - default_rgba) < 0.01, axis=1).sum()
+        print(f"[BD Sample Voxelgrid] Vertices matching default color: {default_matches}/{len(vertex_colors)} ({100*default_matches/len(vertex_colors):.1f}%)")
+
         return vertex_colors
 
     def _sample_with_numpy(self, mesh_verts, coords, attrs, voxel_size, layout, default_rgba):
         """CPU-based sampling using scipy KD-tree on voxel centers."""
         import numpy as np
         from scipy.spatial import cKDTree
+
+        # The mesh and voxelgrid have swapped Y/Z axes with negation
+        # Transform: new_Y = -old_Z, new_Z = old_Y
+        mesh_verts_transformed = mesh_verts.copy()
+        mesh_verts_transformed[:, 1] = -mesh_verts[:, 2]  # new Y = -old Z
+        mesh_verts_transformed[:, 2] = mesh_verts[:, 1]   # new Z = old Y
 
         # Get base color from attrs
         base_color_slice = layout.get('base_color', slice(0, 3))
@@ -1942,13 +2046,13 @@ ensuring proper coordinate alignment.
 
         # Transform mesh vertices to voxel world space
         # Mesh is centered at 0, voxel positions are in 0-1 normalized space
-        mesh_min = mesh_verts.min(axis=0)
-        mesh_max = mesh_verts.max(axis=0)
+        mesh_min = mesh_verts_transformed.min(axis=0)
+        mesh_max = mesh_verts_transformed.max(axis=0)
         mesh_range = mesh_max - mesh_min
         mesh_range[mesh_range == 0] = 1
 
-        # Normalize mesh to 0-1
-        mesh_normalized = (mesh_verts - mesh_min) / mesh_range
+        # Normalize transformed mesh to 0-1
+        mesh_normalized = (mesh_verts_transformed - mesh_min) / mesh_range
 
         # Map to voxel world space
         voxel_min = voxel_positions.min(axis=0)
@@ -2291,6 +2395,169 @@ Output mesh can be:
 
 
 # =============================================================================
+# BD_TransferColorsPymeshlab - Use pymeshlab for reliable color transfer
+# =============================================================================
+
+class BD_TransferColorsPymeshlab:
+    """
+    Transfer colors from TRELLIS2 pointcloud to mesh using pymeshlab.
+
+    This uses MeshLab's proven point-to-mesh color transfer algorithm,
+    which handles spatial lookups correctly without coordinate mapping issues.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+                "pointcloud": ("TRIMESH",),  # pbr_pointcloud from TRELLIS2
+            },
+            "optional": {
+                "max_distance": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001,
+                                           "tooltip": "Max distance for color transfer. 0 = automatic"}),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH", "STRING")
+    RETURN_NAMES = ("mesh", "status")
+    FUNCTION = "transfer_colors"
+    CATEGORY = "BrainDead/Mesh"
+    DESCRIPTION = """
+Transfer colors from TRELLIS2 pointcloud to mesh using pymeshlab.
+
+This is the RELIABLE approach - uses MeshLab's proven algorithms
+for point cloud to mesh color transfer.
+
+Connect:
+1. 'trimesh' from TRELLIS.2 Shape to Textured Mesh → mesh
+2. 'pbr_pointcloud' from TRELLIS.2 Shape to Textured Mesh → pointcloud
+"""
+
+    def transfer_colors(self, mesh, pointcloud, max_distance=0.0):
+        import numpy as np
+        import time
+        import tempfile
+        import os
+
+        if not HAS_TRIMESH:
+            return (mesh, "ERROR: trimesh not installed")
+
+        try:
+            import pymeshlab
+        except ImportError:
+            return (mesh, "ERROR: pymeshlab not installed")
+
+        if mesh is None:
+            return (None, "ERROR: mesh is None")
+
+        if pointcloud is None:
+            return (mesh, "ERROR: pointcloud is None")
+
+        start_time = time.time()
+
+        print(f"[BD Pymeshlab Transfer] Mesh: {len(mesh.vertices)} vertices, {len(mesh.faces) if mesh.faces is not None else 0} faces")
+        print(f"[BD Pymeshlab Transfer] Pointcloud: {len(pointcloud.vertices)} points")
+
+        # Check if pointcloud has colors
+        pc_colors = None
+        if hasattr(pointcloud, 'colors') and pointcloud.colors is not None:
+            pc_colors = pointcloud.colors
+            print(f"[BD Pymeshlab Transfer] Pointcloud has {len(pc_colors)} colors")
+            print(f"[BD Pymeshlab Transfer] Color sample: {pc_colors[:5]}")
+        elif hasattr(pointcloud, 'visual') and hasattr(pointcloud.visual, 'vertex_colors'):
+            pc_colors = pointcloud.visual.vertex_colors
+            print(f"[BD Pymeshlab Transfer] Pointcloud visual has {len(pc_colors)} vertex colors")
+        else:
+            return (mesh, "ERROR: pointcloud has no colors")
+
+        # Save to temp files for pymeshlab
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pc_path = os.path.join(tmpdir, "pointcloud.ply")
+            mesh_path = os.path.join(tmpdir, "mesh.ply")
+            output_path = os.path.join(tmpdir, "output.ply")
+
+            # Export pointcloud with colors
+            pc_export = trimesh.PointCloud(vertices=pointcloud.vertices, colors=pc_colors)
+            pc_export.export(pc_path)
+            print(f"[BD Pymeshlab Transfer] Exported pointcloud to {pc_path}")
+
+            # Export mesh
+            mesh.export(mesh_path)
+            print(f"[BD Pymeshlab Transfer] Exported mesh to {mesh_path}")
+
+            # Use pymeshlab to transfer colors
+            ms = pymeshlab.MeshSet()
+
+            # Load pointcloud first (will be source, mesh 0)
+            ms.load_new_mesh(pc_path)
+            print(f"[BD Pymeshlab Transfer] Loaded pointcloud as mesh 0")
+
+            # Load target mesh (will be mesh 1, becomes current)
+            ms.load_new_mesh(mesh_path)
+            print(f"[BD Pymeshlab Transfer] Loaded mesh as mesh 1")
+
+            # Transfer vertex colors from pointcloud to mesh
+            # Using transfer_attributes_per_vertex filter
+            try:
+                print(f"[BD Pymeshlab Transfer] Transferring colors...")
+
+                # transfer_attributes_per_vertex transfers colors from source to target
+                # source=0 (pointcloud), target=1 (mesh)
+                if max_distance > 0:
+                    ms.apply_filter('transfer_attributes_per_vertex',
+                                    sourcemesh=0,
+                                    targetmesh=1,
+                                    colortransfer=True,
+                                    maxdist=pymeshlab.PercentageValue(max_distance * 100))
+                else:
+                    ms.apply_filter('transfer_attributes_per_vertex',
+                                    sourcemesh=0,
+                                    targetmesh=1,
+                                    colortransfer=True)
+
+                print(f"[BD Pymeshlab Transfer] Color transfer complete")
+
+            except Exception as e:
+                print(f"[BD Pymeshlab Transfer] Filter error: {e}")
+                # Try alternative approach: vertex_attribute_transfer
+                try:
+                    ms.apply_filter('vertex_attribute_transfer',
+                                    sourcemesh=0,
+                                    targetmesh=1,
+                                    colortransfer=True)
+                    print(f"[BD Pymeshlab Transfer] Used vertex_attribute_transfer instead")
+                except Exception as e2:
+                    return (mesh, f"ERROR: pymeshlab transfer failed: {e2}")
+
+            # Save result
+            ms.save_current_mesh(output_path)
+            print(f"[BD Pymeshlab Transfer] Saved result to {output_path}")
+
+            # Load result back into trimesh
+            result_mesh = trimesh.load(output_path, process=False)
+
+            total_time = time.time() - start_time
+
+            # Count unique colors
+            if hasattr(result_mesh, 'visual') and hasattr(result_mesh.visual, 'vertex_colors'):
+                colors = result_mesh.visual.vertex_colors
+                if colors is not None:
+                    # Use RGBA (4 bytes) for uint32 view
+                    colors_rgba = np.ascontiguousarray(colors[:, :4].astype(np.uint8))
+                    unique_count = len(np.unique(colors_rgba.view(np.uint32)))
+                    status = f"Transferred colors: {len(result_mesh.vertices)} vertices, {unique_count} unique colors in {total_time:.1f}s"
+                else:
+                    status = f"Transferred: {len(result_mesh.vertices)} vertices (no colors detected) in {total_time:.1f}s"
+            else:
+                status = f"Transferred: {len(result_mesh.vertices)} vertices in {total_time:.1f}s"
+
+            print(f"[BD Pymeshlab Transfer] ✓ {status}")
+
+            return (result_mesh, status)
+
+
+# =============================================================================
 # BD_ExportMeshWithColors
 # =============================================================================
 
@@ -2310,7 +2577,7 @@ class BD_ExportMeshWithColors:
                 "format": (["glb", "ply", "obj"], {"default": "glb"}),
             },
             "optional": {
-                "name_prefix": ("STRING", {"default": "", "tooltip": "Prefix for filename (creates subdirectory)"}),
+                "name_prefix": ("STRING", {"default": "", "tooltip": "Prepended to filename: {name_prefix}_{filename}. Supports subdirs (e.g., 'Project/Name')"}),
                 "auto_increment": ("BOOLEAN", {"default": True, "tooltip": "Auto-increment filename to avoid overwriting"}),
             }
         }
@@ -2332,7 +2599,8 @@ Use after BD_SampleVoxelgridColors to export colored mesh
 for decimation in Blender.
 
 Options:
-- name_prefix: Creates subdirectory and prefixes filename
+- name_prefix: Prepended to filename ({prefix}_{filename})
+  Supports subdirs: "Project/Name" + "mesh" = Project/Name_mesh_001.ext
 - auto_increment: Adds _001, _002 etc. to avoid overwriting
 """
 
@@ -2346,23 +2614,24 @@ Options:
         if mesh is None:
             return ("", "ERROR: mesh is None")
 
-        # Determine output directory
         import folder_paths
         base_output_dir = folder_paths.get_output_directory()
 
-        # If name_prefix specified, create subdirectory
-        if name_prefix:
-            output_dir = os.path.join(base_output_dir, name_prefix)
+        # Concatenate name_prefix + filename (same pattern as cache nodes)
+        full_name = f"{name_prefix}_{filename}" if name_prefix else filename
+
+        # Handle subdirectories if full_name contains path separators
+        full_name = full_name.replace('\\', '/')
+        if '/' in full_name:
+            parts = full_name.rsplit('/', 1)
+            subdir, base_filename = parts
+            output_dir = os.path.join(base_output_dir, subdir)
         else:
             output_dir = base_output_dir
+            base_filename = full_name
 
         # Ensure directory exists
         os.makedirs(output_dir, exist_ok=True)
-
-        # Build filename with optional prefix
-        base_filename = filename
-        if name_prefix and not filename.startswith(name_prefix):
-            base_filename = f"{name_prefix}_{filename}"
 
         # Auto-increment to avoid overwriting
         if auto_increment:
@@ -2453,6 +2722,7 @@ NODE_CLASS_MAPPINGS = {
     # Mesh Processing Nodes
     "BD_SampleVoxelgridColors": BD_SampleVoxelgridColors,
     "BD_TransferPointcloudColors": BD_TransferPointcloudColors,
+    "BD_TransferColorsPymeshlab": BD_TransferColorsPymeshlab,
     "BD_ExportMeshWithColors": BD_ExportMeshWithColors,
     # Workflow Version Nodes
     "BD_WorkflowVersionCache": BD_WorkflowVersionCache,
@@ -2482,6 +2752,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Mesh Processing Nodes
     "BD_SampleVoxelgridColors": "BD Sample Voxelgrid Colors",
     "BD_TransferPointcloudColors": "BD Transfer Pointcloud Colors (deprecated)",
+    "BD_TransferColorsPymeshlab": "BD Transfer Colors (Pymeshlab)",
     "BD_ExportMeshWithColors": "BD Export Mesh With Colors",
     # Workflow Version Nodes
     "BD_WorkflowVersionCache": "BD Workflow Version Cache",
