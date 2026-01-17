@@ -71,9 +71,9 @@ class BlenderNodeMixin:
         output_path: str,
         extra_args: Optional[dict] = None,
         timeout: int = 300,
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, list[str]]:
         """
-        Run a Blender Python script headlessly.
+        Run a Blender Python script headlessly with real-time output.
 
         Args:
             script: Python script content to execute in Blender
@@ -83,16 +83,22 @@ class BlenderNodeMixin:
             timeout: Maximum execution time in seconds
 
         Returns:
-            Tuple of (success, message)
+            Tuple of (success, message, log_lines)
         """
+        import time
+        import select
+
         available, blender_path = cls._check_blender()
         if not available:
-            return False, blender_path
+            return False, blender_path, []
 
         # Create temporary script file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(script)
             script_path = f.name
+
+        log_lines = []
+        process = None
 
         try:
             # Build environment with extra args
@@ -103,33 +109,92 @@ class BlenderNodeMixin:
                 for key, value in extra_args.items():
                     env[f'BLENDER_ARG_{key.upper()}'] = str(value)
 
-            # Run Blender headlessly
-            result = subprocess.run(
+            print(f"[BD Blender] Starting Blender: {blender_path}")
+            print(f"[BD Blender] Input: {input_path}")
+            print(f"[BD Blender] Output: {output_path}")
+            print(f"[BD Blender] Timeout: {timeout}s")
+
+            # Run Blender with Popen for real-time output
+            process = subprocess.Popen(
                 [
                     blender_path,
                     '--background',
                     '--python', script_path,
                 ],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Merge stderr into stdout
                 text=True,
-                timeout=timeout,
+                bufsize=1,  # Line buffered
                 env=env,
             )
 
-            if result.returncode != 0:
-                error_msg = result.stderr[-500:] if result.stderr else "Unknown error"
-                return False, f"Blender failed: {error_msg}"
+            start_time = time.time()
+
+            # Read output in real-time with timeout checking
+            while True:
+                # Check timeout
+                elapsed = time.time() - start_time
+                if elapsed > timeout:
+                    process.kill()
+                    process.wait()
+                    return False, f"Blender timed out after {timeout}s", log_lines
+
+                # Check if process finished
+                retcode = process.poll()
+
+                # Read available output (non-blocking)
+                try:
+                    line = process.stdout.readline()
+                    if line:
+                        line = line.rstrip()
+                        log_lines.append(line)
+                        # Print lines that look like progress/status
+                        if line.startswith('[BD') or 'Error' in line or 'faces' in line.lower():
+                            print(line)
+                    elif retcode is not None:
+                        # Process finished and no more output
+                        break
+                    else:
+                        # No output but still running, brief sleep
+                        time.sleep(0.1)
+                except:
+                    if retcode is not None:
+                        break
+                    time.sleep(0.1)
+
+            # Get remaining output
+            remaining = process.stdout.read()
+            if remaining:
+                for line in remaining.strip().split('\n'):
+                    if line:
+                        log_lines.append(line)
+                        if line.startswith('[BD') or 'Error' in line:
+                            print(line)
+
+            if retcode != 0:
+                # Find error in log
+                error_lines = [l for l in log_lines if 'error' in l.lower() or 'Error' in l]
+                error_msg = error_lines[-1] if error_lines else f"Exit code {retcode}"
+                return False, f"Blender failed: {error_msg}", log_lines
 
             if not os.path.exists(output_path):
-                return False, "Blender did not produce output file"
+                return False, "Blender did not produce output file", log_lines
 
-            return True, "Success"
+            # Find final status in log
+            status_lines = [l for l in log_lines if l.startswith('[BD')]
+            final_status = status_lines[-1] if status_lines else "Success"
 
-        except subprocess.TimeoutExpired:
-            return False, f"Blender timed out after {timeout}s"
+            return True, final_status, log_lines
+
         except Exception as e:
-            return False, f"Blender error: {e}"
+            import traceback
+            traceback.print_exc()
+            return False, f"Blender error: {e}", log_lines
         finally:
+            # Kill process if still running
+            if process and process.poll() is None:
+                process.kill()
+                process.wait()
             # Clean up script file
             if os.path.exists(script_path):
                 os.remove(script_path)
@@ -189,6 +254,11 @@ import bpy
 import os
 import sys
 
+def log(msg):
+    """Print with immediate flush for real-time output."""
+    print(msg)
+    sys.stdout.flush()
+
 # Get paths from environment
 input_path = os.environ['BLENDER_INPUT_PATH']
 output_path = os.environ['BLENDER_OUTPUT_PATH']
@@ -243,12 +313,18 @@ elif ext_out in ['.glb', '.gltf']:
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
-print(f"Decimated mesh saved to {output_path}")
+log(f"[BD Decimate] Saved to {output_path}")
 '''
 
 REMESH_SCRIPT = '''
 import bpy
 import os
+import sys
+
+def log(msg):
+    """Print with immediate flush for real-time output."""
+    print(msg)
+    sys.stdout.flush()
 
 # Get paths from environment
 input_path = os.environ['BLENDER_INPUT_PATH']
@@ -310,13 +386,19 @@ elif ext_out in ['.glb', '.gltf']:
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
-print(f"Remeshed mesh saved to {output_path}")
+log(f"[BD Remesh] Saved to {output_path}")
 '''
 
 REPAIR_SCRIPT = '''
 import bpy
 import bmesh
 import os
+import sys
+
+def log(msg):
+    """Print with immediate flush for real-time output."""
+    print(msg)
+    sys.stdout.flush()
 
 # Get paths from environment
 input_path = os.environ['BLENDER_INPUT_PATH']
@@ -391,13 +473,19 @@ elif ext_out in ['.glb', '.gltf']:
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
-print(f"Repaired mesh saved to {output_path}")
+log(f"[BD Repair] Saved to {output_path}")
 '''
 
 TRANSFER_COLORS_SCRIPT = '''
 import bpy
 import os
+import sys
 import numpy as np
+
+def log(msg):
+    """Print with immediate flush for real-time output."""
+    print(msg)
+    sys.stdout.flush()
 
 # Get paths from environment
 source_path = os.environ['BLENDER_INPUT_PATH']  # Source mesh with colors
@@ -484,5 +572,5 @@ elif ext_out in ['.glb', '.gltf']:
 else:
     bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB')
 
-print(f"Color transfer complete: {output_path}")
+log(f"[BD Transfer] Saved to {output_path}")
 '''

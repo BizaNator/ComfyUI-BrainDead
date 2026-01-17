@@ -116,7 +116,7 @@ class BD_BlenderRepair(BlenderNodeMixin, io.ComfyNode):
             os.close(fd)
 
             # Run Blender repair
-            success, message = cls._run_blender_script(
+            success, message, log_lines = cls._run_blender_script(
                 REPAIR_SCRIPT,
                 input_path,
                 output_path,

@@ -97,7 +97,7 @@ class BD_BlenderTransferColors(BlenderNodeMixin, io.ComfyNode):
             os.close(fd)
 
             # Run Blender color transfer
-            success, message = cls._run_blender_script(
+            success, message, log_lines = cls._run_blender_script(
                 TRANSFER_COLORS_SCRIPT,
                 source_path,
                 output_path,

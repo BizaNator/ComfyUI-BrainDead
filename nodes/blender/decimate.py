@@ -28,7 +28,15 @@ ADVANCED_DECIMATE_SCRIPT = '''
 import bpy
 import bmesh
 import os
+import sys
 from mathutils.bvhtree import BVHTree
+
+def log(msg):
+    """Print with immediate flush for real-time output."""
+    print(msg)
+    sys.stdout.flush()
+
+log("[BD Decimate] Script starting...")
 
 # Get paths from environment
 input_path = os.environ['BLENDER_INPUT_PATH']
@@ -69,7 +77,7 @@ bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
 
 original_faces = len(obj.data.polygons)
-print(f"[BD Decimate] Input: {original_faces} faces")
+log(f"[BD Decimate] Input: {original_faces} faces")
 
 # Create reference copy for color transfer if we have colors
 ref_obj = None
@@ -85,7 +93,7 @@ if preserve_colors and has_colors:
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     ref_obj.select_set(False)
-    print(f"[BD Decimate] Created color reference copy")
+    log(f"[BD Decimate] Created color reference copy")
 
 # Step 1: Fill holes if requested
 if fill_holes:
@@ -94,7 +102,7 @@ if fill_holes:
     bpy.ops.mesh.select_non_manifold(extend=False)
     try:
         bpy.ops.mesh.fill_holes(sides=100)
-        print(f"[BD Decimate] Filled holes")
+        log(f"[BD Decimate] Filled holes")
     except:
         pass
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -106,7 +114,7 @@ if remove_internal:
     try:
         bpy.ops.mesh.select_interior_faces()
         bpy.ops.mesh.delete(type='FACE')
-        print(f"[BD Decimate] Removed internal faces")
+        log(f"[BD Decimate] Removed internal faces")
     except:
         pass
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -118,14 +126,14 @@ if use_planar and planar_angle > 0:
     modifier.angle_limit = planar_angle * 3.14159 / 180  # Convert to radians
     modifier.use_dissolve_boundaries = not preserve_boundaries
     bpy.ops.object.modifier_apply(modifier=modifier.name)
-    print(f"[BD Decimate] Planar dissolve at {planar_angle}° - now {len(obj.data.polygons)} faces")
+    log(f"[BD Decimate] Planar dissolve at {planar_angle}° - now {len(obj.data.polygons)} faces")
 
 # Step 4: Calculate target ratio based on target_faces if specified
 current_faces = len(obj.data.polygons)
 if target_faces > 0 and current_faces > target_faces:
     ratio = target_faces / current_faces
     ratio = max(0.01, min(1.0, ratio))
-    print(f"[BD Decimate] Target {target_faces} faces, using ratio {ratio:.3f}")
+    log(f"[BD Decimate] Target {target_faces} faces, using ratio {ratio:.3f}")
 
 # Step 5: Collapse decimation
 if ratio < 1.0:
@@ -135,15 +143,17 @@ if ratio < 1.0:
     modifier.use_collapse_triangulate = True
     modifier.use_symmetry = False
     bpy.ops.object.modifier_apply(modifier=modifier.name)
-    print(f"[BD Decimate] Collapse decimate - now {len(obj.data.polygons)} faces")
+    log(f"[BD Decimate] Collapse decimate - now {len(obj.data.polygons)} faces")
 
 # Step 6: Transfer colors back from reference (face-based, no bleeding)
 if preserve_colors and ref_obj and has_colors:
     ref_mesh = ref_obj.data
+    log(f"[BD Decimate] Extracting colors from {len(ref_mesh.polygons)} source faces...")
 
     # Get source face colors
     source_face_colors = {}
     if ref_mesh.vertex_colors:
+        log(f"[BD Decimate] Using vertex_colors layer")
         color_layer = ref_mesh.vertex_colors.active
         for poly in ref_mesh.polygons:
             # Average color of face loops
@@ -156,6 +166,7 @@ if preserve_colors and ref_obj and has_colors:
                 source_face_colors[poly.index] = tuple(avg)
     elif ref_mesh.color_attributes:
         attr = ref_mesh.color_attributes.active_color
+        log(f"[BD Decimate] Using color_attributes layer: {attr.name if attr else 'None'} (domain: {attr.domain if attr else 'N/A'})")
         if attr and attr.domain == 'CORNER':
             for poly in ref_mesh.polygons:
                 colors = []
@@ -165,12 +176,27 @@ if preserve_colors and ref_obj and has_colors:
                 if colors:
                     avg = [sum(x)/len(colors) for x in zip(*colors)]
                     source_face_colors[poly.index] = tuple(avg)
+        elif attr and attr.domain == 'POINT':
+            # Vertex-based colors - need to look up by vertex index
+            log(f"[BD Decimate] Converting POINT domain colors to face colors")
+            for poly in ref_mesh.polygons:
+                colors = []
+                for vert_idx in poly.vertices:
+                    c = attr.data[vert_idx].color
+                    colors.append((c[0], c[1], c[2], c[3] if len(c) > 3 else 1.0))
+                if colors:
+                    avg = [sum(x)/len(colors) for x in zip(*colors)]
+                    source_face_colors[poly.index] = tuple(avg)
+
+    log(f"[BD Decimate] Extracted {len(source_face_colors)} face colors")
 
     if source_face_colors:
+        log(f"[BD Decimate] Building BVH from {len(ref_mesh.polygons)} source faces...")
         # Build BVH from reference
         vertices = [v.co.copy() for v in ref_mesh.vertices]
         polygons = [tuple(p.vertices) for p in ref_mesh.polygons]
         bvh = BVHTree.FromPolygons(vertices, polygons)
+        log(f"[BD Decimate] BVH built, starting color transfer...")
 
         # Prepare target for color transfer
         bpy.context.view_layer.objects.active = obj
@@ -185,7 +211,12 @@ if preserve_colors and ref_obj and has_colors:
             color_layer = target_bm.loops.layers.color.new("Col")
 
         # Transfer colors face-by-face (NO BLEEDING)
-        for face in target_bm.faces:
+        total_faces = len(target_bm.faces)
+        log_interval = max(1, total_faces // 10)  # Log every 10%
+        for i, face in enumerate(target_bm.faces):
+            if i % log_interval == 0:
+                log(f"[BD Decimate] Transferring colors: {i}/{total_faces} ({100*i//total_faces}%)")
+
             face_center = face.calc_center_median()
             location, normal, face_idx, distance = bvh.find_nearest(face_center)
 
@@ -200,7 +231,7 @@ if preserve_colors and ref_obj and has_colors:
 
         bmesh.update_edit_mesh(obj.data)
         bpy.ops.object.mode_set(mode='OBJECT')
-        print(f"[BD Decimate] Transferred colors (face-based, no bleed)")
+        log(f"[BD Decimate] Transferred colors to {total_faces} faces (face-based, no bleed)")
 
     # Clean up reference
     bpy.data.objects.remove(ref_obj, do_unlink=True)
@@ -208,7 +239,7 @@ if preserve_colors and ref_obj and has_colors:
 # Final stats
 final_faces = len(obj.data.polygons)
 reduction = (1 - final_faces / original_faces) * 100 if original_faces > 0 else 0
-print(f"[BD Decimate] Final: {final_faces} faces ({reduction:.1f}% reduction)")
+log(f"[BD Decimate] Final: {final_faces} faces ({reduction:.1f}% reduction)")
 
 # Export result
 ext_out = os.path.splitext(output_path)[1].lower()
@@ -221,7 +252,7 @@ elif ext_out in ['.glb', '.gltf']:
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
-print(f"[BD Decimate] Saved to {output_path}")
+log(f"[BD Decimate] Saved to {output_path}")
 '''
 
 
@@ -354,8 +385,11 @@ Best for: Stylized characters, props, game assets with vertex colors.""",
             fd, output_path = tempfile.mkstemp(suffix='.ply')
             os.close(fd)
 
+            print(f"[BD Decimate] Input mesh: {orig_verts:,} verts, {orig_faces:,} faces")
+            print(f"[BD Decimate] Target: {target_faces} faces, planar_angle={planar_angle}°")
+
             # Run Blender decimate
-            success, message = cls._run_blender_script(
+            success, message, log_lines = cls._run_blender_script(
                 ADVANCED_DECIMATE_SCRIPT,
                 input_path,
                 output_path,
@@ -372,7 +406,18 @@ Best for: Stylized characters, props, game assets with vertex colors.""",
                 timeout=timeout,
             )
 
+            # Print Blender log summary
+            if log_lines:
+                bd_lines = [l for l in log_lines if l.startswith('[BD')]
+                for line in bd_lines[-5:]:  # Last 5 status lines
+                    print(line)
+
             if not success:
+                # Include relevant log lines in error
+                error_context = '\n'.join(log_lines[-10:]) if log_lines else ''
+                print(f"[BD Decimate] FAILED: {message}")
+                if error_context:
+                    print(f"[BD Decimate] Log tail:\n{error_context}")
                 return io.NodeOutput(mesh, f"ERROR: {message}")
 
             # Load result

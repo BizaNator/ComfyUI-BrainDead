@@ -114,7 +114,7 @@ class BD_BlenderRemesh(BlenderNodeMixin, io.ComfyNode):
             os.close(fd)
 
             # Run Blender remesh
-            success, message = cls._run_blender_script(
+            success, message, log_lines = cls._run_blender_script(
                 REMESH_SCRIPT,
                 input_path,
                 output_path,
