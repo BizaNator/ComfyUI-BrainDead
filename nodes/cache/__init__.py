@@ -1679,7 +1679,15 @@ class BD_SampleVoxelgridColors:
                 "voxelgrid": ("TRELLIS2_VOXELGRID",),
             },
             "optional": {
+                "sampling_mode": (["smooth", "sharp", "face"], {
+                    "default": "smooth",
+                    "tooltip": "smooth=k=4 weighted blend, sharp=k=1 nearest, face=per-face colors"
+                }),
                 "default_color": ("STRING", {"default": "0.5,0.5,0.5,1.0"}),
+                "distance_threshold": ("FLOAT", {
+                    "default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5,
+                    "tooltip": "Max voxels distance before using default color"
+                }),
             }
         }
 
@@ -1690,18 +1698,17 @@ class BD_SampleVoxelgridColors:
     DESCRIPTION = """
 Sample colors from TRELLIS2 voxelgrid to mesh vertices.
 
-This is the CORRECT approach - uses the voxelgrid structure directly
-with proper coordinate alignment and GPU-accelerated sampling.
+Sampling modes:
+- smooth: k=4 inverse distance weighted (blended, anti-aliased)
+- sharp: k=1 nearest neighbor (distinct, pixelated)
+- face: per-face color from face center (cleanest for game assets)
 
 Connect:
 1. 'trimesh' from TRELLIS.2 Shape to Textured Mesh → mesh
 2. 'voxelgrid' from TRELLIS.2 Shape to Textured Mesh → voxelgrid
-
-The voxelgrid contains original_vertices that match the mesh,
-ensuring proper coordinate alignment.
 """
 
-    def sample_colors(self, mesh, voxelgrid, default_color="0.5,0.5,0.5,1.0"):
+    def sample_colors(self, mesh, voxelgrid, sampling_mode="smooth", default_color="0.5,0.5,0.5,1.0", distance_threshold=3.0):
         import numpy as np
         import time
 
@@ -1758,20 +1765,34 @@ ensuring proper coordinate alignment.
         print(f"[BD Sample Voxelgrid] Voxel world bounds: {voxel_min} to {voxel_max}")
 
         # Use KD-tree for sparse voxel sampling (much better than dense volume)
-        print(f"[BD Sample Voxelgrid] Using KD-tree sparse sampling")
+        print(f"[BD Sample Voxelgrid] Using KD-tree sparse sampling, mode={sampling_mode}")
         vertex_colors = self._sample_with_kdtree(
-            mesh_verts, coords, attrs, voxel_size, layout, default_rgba
+            mesh_verts, coords, attrs, voxel_size, layout, default_rgba,
+            mesh_faces=mesh.faces if hasattr(mesh, 'faces') else None,
+            sampling_mode=sampling_mode,
+            distance_threshold=distance_threshold
         )
 
         # Create new mesh with vertex colors
         try:
+            # Ensure RGBA uint8 format for maximum compatibility
             vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
+
+            # Ensure 4 channels (RGBA)
+            if vertex_colors_uint8.shape[1] == 3:
+                alpha = np.full((len(vertex_colors_uint8), 1), 255, dtype=np.uint8)
+                vertex_colors_uint8 = np.hstack([vertex_colors_uint8, alpha])
 
             new_mesh = trimesh.Trimesh(
                 vertices=mesh.vertices.copy(),
                 faces=mesh.faces.copy() if hasattr(mesh, 'faces') and mesh.faces is not None else None,
-                vertex_colors=vertex_colors_uint8,
                 process=False
+            )
+
+            # Set vertex colors through visual for proper GLB export
+            new_mesh.visual = trimesh.visual.ColorVisuals(
+                mesh=new_mesh,
+                vertex_colors=vertex_colors_uint8
             )
 
             if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
@@ -1790,8 +1811,15 @@ ensuring proper coordinate alignment.
         except Exception as e:
             return (mesh, f"ERROR creating colored mesh: {e}")
 
-    def _sample_with_kdtree(self, mesh_verts, coords, attrs, voxel_size, layout, default_rgba):
-        """Sample colors using KD-tree nearest neighbor lookup on sparse voxels."""
+    def _sample_with_kdtree(self, mesh_verts, coords, attrs, voxel_size, layout, default_rgba,
+                             mesh_faces=None, sampling_mode="smooth", distance_threshold=3.0):
+        """Sample colors using KD-tree nearest neighbor lookup on sparse voxels.
+
+        Sampling modes:
+        - smooth: k=4 inverse distance weighted (blended)
+        - sharp: k=1 nearest neighbor (distinct)
+        - face: per-face color from face center (cleanest for game assets)
+        """
         import numpy as np
         from scipy.spatial import cKDTree
 
@@ -1837,8 +1865,7 @@ ensuring proper coordinate alignment.
         print(f"[BD Sample Voxelgrid] RGB raw range: R=[{rgb_raw[:,0].min():.3f}, {rgb_raw[:,0].max():.3f}] "
               f"G=[{rgb_raw[:,1].min():.3f}, {rgb_raw[:,1].max():.3f}] B=[{rgb_raw[:,2].min():.3f}, {rgb_raw[:,2].max():.3f}]")
 
-        # The attrs appear to be roughly in [0, 1] range (not [-1, 1])
-        # Just clip to [0, 1] instead of normalizing from [-1, 1]
+        # Clip to [0, 1]
         rgb = np.clip(rgb_raw, 0, 1)
 
         if isinstance(alpha_slice, slice):
@@ -1852,28 +1879,59 @@ ensuring proper coordinate alignment.
         print(f"[BD Sample Voxelgrid] Voxel colors range: R=[{voxel_colors[:,0].min():.3f}, {voxel_colors[:,0].max():.3f}] "
               f"G=[{voxel_colors[:,1].min():.3f}, {voxel_colors[:,1].max():.3f}] B=[{voxel_colors[:,2].min():.3f}, {voxel_colors[:,2].max():.3f}]")
 
-        # Use k=4 with inverse distance weighting for smoother colors
-        print(f"[BD Sample Voxelgrid] Querying {len(mesh_in_voxel_space)} vertices (k=4 weighted)...")
-        distances, indices = tree.query(mesh_in_voxel_space, k=4, workers=-1)
+        max_dist = voxel_size * distance_threshold
 
-        print(f"[BD Sample Voxelgrid] Distance stats: min={distances[:,0].min():.6f}, max={distances[:,0].max():.6f}, mean={distances[:,0].mean():.6f}")
+        if sampling_mode == "face" and mesh_faces is not None:
+            # Per-face color from face center
+            print(f"[BD Sample Voxelgrid] Face mode: computing {len(mesh_faces)} face centers...")
+            face_centers = mesh_in_voxel_space[mesh_faces].mean(axis=1)
 
-        # Inverse distance weighting
-        # Avoid division by zero
-        distances = np.maximum(distances, 1e-10)
-        weights = 1.0 / distances
-        weights = weights / weights.sum(axis=1, keepdims=True)
+            distances, indices = tree.query(face_centers, k=1, workers=-1)
+            face_colors = voxel_colors[indices]
 
-        # Get colors for all k neighbors and blend
-        vertex_colors = np.zeros((len(mesh_in_voxel_space), 4), dtype=np.float32)
-        for i in range(4):
-            vertex_colors += voxel_colors[indices[:, i]] * weights[:, i:i+1]
+            # Apply to vertices - each vertex gets the color of its first face
+            # Build vertex-to-face mapping
+            vertex_colors = np.full((len(mesh_in_voxel_space), 4), default_rgba, dtype=np.float32)
+            for face_idx, face in enumerate(mesh_faces):
+                for vert_idx in face:
+                    vertex_colors[vert_idx] = face_colors[face_idx]
 
-        # Use distance threshold for fallback to default (check nearest neighbor distance)
-        max_dist = voxel_size * 3  # Allow up to 3 voxels distance
-        far_vertices = distances[:, 0] > max_dist
-        vertex_colors[far_vertices] = default_rgba
-        print(f"[BD Sample Voxelgrid] Vertices beyond {max_dist:.6f} threshold: {far_vertices.sum()} ({100*far_vertices.sum()/len(far_vertices):.1f}%)")
+            far_faces = distances > max_dist
+            print(f"[BD Sample Voxelgrid] Faces beyond {max_dist:.6f} threshold: {far_faces.sum()} ({100*far_faces.sum()/len(far_faces):.1f}%)")
+
+        elif sampling_mode == "sharp":
+            # k=1 nearest neighbor (distinct colors)
+            print(f"[BD Sample Voxelgrid] Sharp mode: k=1 nearest neighbor...")
+            distances, indices = tree.query(mesh_in_voxel_space, k=1, workers=-1)
+
+            print(f"[BD Sample Voxelgrid] Distance stats: min={distances.min():.6f}, max={distances.max():.6f}, mean={distances.mean():.6f}")
+
+            vertex_colors = voxel_colors[indices]
+
+            far_vertices = distances > max_dist
+            vertex_colors[far_vertices] = default_rgba
+            print(f"[BD Sample Voxelgrid] Vertices beyond {max_dist:.6f} threshold: {far_vertices.sum()} ({100*far_vertices.sum()/len(far_vertices):.1f}%)")
+
+        else:  # smooth (default)
+            # k=4 inverse distance weighted
+            print(f"[BD Sample Voxelgrid] Smooth mode: k=4 weighted...")
+            distances, indices = tree.query(mesh_in_voxel_space, k=4, workers=-1)
+
+            print(f"[BD Sample Voxelgrid] Distance stats: min={distances[:,0].min():.6f}, max={distances[:,0].max():.6f}, mean={distances[:,0].mean():.6f}")
+
+            # Inverse distance weighting
+            distances_safe = np.maximum(distances, 1e-10)
+            weights = 1.0 / distances_safe
+            weights = weights / weights.sum(axis=1, keepdims=True)
+
+            # Get colors for all k neighbors and blend
+            vertex_colors = np.zeros((len(mesh_in_voxel_space), 4), dtype=np.float32)
+            for i in range(4):
+                vertex_colors += voxel_colors[indices[:, i]] * weights[:, i:i+1]
+
+            far_vertices = distances[:, 0] > max_dist
+            vertex_colors[far_vertices] = default_rgba
+            print(f"[BD Sample Voxelgrid] Vertices beyond {max_dist:.6f} threshold: {far_vertices.sum()} ({100*far_vertices.sum()/len(far_vertices):.1f}%)")
 
         return vertex_colors
 
