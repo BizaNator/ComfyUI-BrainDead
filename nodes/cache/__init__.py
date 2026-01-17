@@ -81,20 +81,19 @@ class BD_CacheImage:
     CATEGORY = "BrainDead/Cache"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, image=None, name_prefix=""):
+        """Return [] to skip upstream, ["image"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Cache Image] Force refresh - will run upstream")
+            return ["image"]
+
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, ImageSerializer.extension)
 
-        if check_cache_exists(cache_path, min_size=100) and not force_refresh:
-            try:
-                cached_image = ImageSerializer.load(cache_path)
-                if cached_image is not None:
-                    status = f"Cache HIT: {os.path.basename(cache_path)}"
-                    print(f"[BD Cache Image] {status}")
-                    return (cached_image, status)
-            except Exception as e:
-                print(f"[BD Cache Image] Error: {e}")
-                return ["image"]
+        if check_cache_exists(cache_path, min_size=100):
+            print(f"[BD Cache Image] ✓ Cache exists: {os.path.basename(cache_path)} - SKIPPING upstream")
+            return []  # Empty list = don't need input, skip upstream
+        print(f"[BD Cache Image] No cache found - will run upstream")
         return ["image"]
 
     @classmethod
@@ -156,17 +155,19 @@ class BD_CacheMask:
     CATEGORY = "BrainDead/Cache"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, mask=None, name_prefix=""):
+        """Return [] to skip upstream, ["mask"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Cache Mask] Force refresh - will run upstream")
+            return ["mask"]
+
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, MaskSerializer.extension)
 
-        if check_cache_exists(cache_path, min_size=100) and not force_refresh:
-            try:
-                cached_mask = MaskSerializer.load(cache_path)
-                if cached_mask is not None:
-                    return (cached_mask, f"Cache HIT: {os.path.basename(cache_path)}")
-            except:
-                return ["mask"]
+        if check_cache_exists(cache_path, min_size=100):
+            print(f"[BD Cache Mask] ✓ Cache exists: {os.path.basename(cache_path)} - SKIPPING upstream")
+            return []  # Empty list = don't need input, skip upstream
+        print(f"[BD Cache Mask] No cache found - will run upstream")
         return ["mask"]
 
     @classmethod
@@ -226,17 +227,19 @@ class BD_CacheLatent:
     CATEGORY = "BrainDead/Cache"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, latent=None, name_prefix=""):
+        """Return [] to skip upstream, ["latent"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Cache Latent] Force refresh - will run upstream")
+            return ["latent"]
+
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, LatentSerializer.extension)
 
-        if check_cache_exists(cache_path, min_size=100) and not force_refresh:
-            try:
-                cached_latent = LatentSerializer.load(cache_path)
-                if cached_latent is not None:
-                    return (cached_latent, f"Cache HIT: {os.path.basename(cache_path)}")
-            except:
-                return ["latent"]
+        if check_cache_exists(cache_path, min_size=100):
+            print(f"[BD Cache Latent] ✓ Cache exists: {os.path.basename(cache_path)} - SKIPPING upstream")
+            return []
+        print(f"[BD Cache Latent] No cache found - will run upstream")
         return ["latent"]
 
     @classmethod
@@ -296,17 +299,19 @@ class BD_CacheAudio:
     CATEGORY = "BrainDead/Cache"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, audio=None, name_prefix=""):
+        """Return [] to skip upstream, ["audio"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Cache Audio] Force refresh - will run upstream")
+            return ["audio"]
+
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, AudioSerializer.extension)
 
-        if check_cache_exists(cache_path, min_size=100) and not force_refresh:
-            try:
-                cached_audio = AudioSerializer.load(cache_path)
-                if cached_audio is not None:
-                    return (cached_audio, f"Cache HIT: {os.path.basename(cache_path)}")
-            except:
-                return ["audio"]
+        if check_cache_exists(cache_path, min_size=100):
+            print(f"[BD Cache Audio] ✓ Cache exists: {os.path.basename(cache_path)} - SKIPPING upstream")
+            return []
+        print(f"[BD Cache Audio] No cache found - will run upstream")
         return ["audio"]
 
     @classmethod
@@ -366,17 +371,19 @@ class BD_CacheString:
     CATEGORY = "BrainDead/Cache"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, text=None, name_prefix=""):
+        """Return [] to skip upstream, ["text"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Cache String] Force refresh - will run upstream")
+            return ["text"]
+
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, StringSerializer.extension)
 
-        if check_cache_exists(cache_path, min_size=1) and not force_refresh:
-            try:
-                cached_text = StringSerializer.load(cache_path)
-                if cached_text is not None:
-                    return (cached_text, f"Cache HIT: {os.path.basename(cache_path)}")
-            except:
-                return ["text"]
+        if check_cache_exists(cache_path, min_size=1):
+            print(f"[BD Cache String] ✓ Cache exists: {os.path.basename(cache_path)} - SKIPPING upstream")
+            return []
+        print(f"[BD Cache String] No cache found - will run upstream")
         return ["text"]
 
     @classmethod
@@ -462,6 +469,23 @@ class BD_CacheAny:
                 return ["data"]
         return ["data"]
 
+    def check_lazy_status(self, data, cache_name, seed, force_refresh, name_prefix="", extension=".pkl"):
+        """Return [] to skip upstream, ["data"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Cache Any] Force refresh - will run upstream")
+            return ["data"]
+
+        full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
+        cache_hash = hash_from_seed(seed)
+        ext = self._get_extension(extension)
+        cache_path = get_cache_path(full_name, cache_hash, ext)
+
+        if check_cache_exists(cache_path, min_size=10):
+            print(f"[BD Cache Any] ✓ Cache exists - SKIPPING upstream execution")
+            return []  # Empty list = don't need input, skip upstream
+        print(f"[BD Cache Any] No cache found - will run upstream")
+        return ["data"]  # Need input = run upstream
+
     @classmethod
     def IS_CHANGED(cls, cache_name, seed, force_refresh, data=None, name_prefix="", extension=".pkl"):
         if force_refresh:
@@ -531,6 +555,11 @@ class BD_CacheMesh:
     CATEGORY = "BrainDead/Cache"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, mesh=None, name_prefix=""):
+        """Return [] to skip upstream, ["mesh"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Cache Mesh] Force refresh - will run upstream")
+            return ["mesh"]
+
         if not HAS_TRIMESH:
             return ["mesh"]
 
@@ -538,14 +567,11 @@ class BD_CacheMesh:
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, ".ply")
 
-        if check_cache_exists(cache_path, min_size=100) and not force_refresh:
-            try:
-                cached_mesh = trimesh.load(cache_path)
-                if cached_mesh is not None and hasattr(cached_mesh, 'vertices'):
-                    return (cached_mesh, f"Cache HIT: {os.path.basename(cache_path)}")
-            except:
-                return ["mesh"]
-        return ["mesh"]
+        if check_cache_exists(cache_path, min_size=100):
+            print(f"[BD Cache Mesh] ✓ Cache exists - SKIPPING upstream execution")
+            return []  # Empty list = don't need input, skip upstream
+        print(f"[BD Cache Mesh] No cache found - will run upstream")
+        return ["mesh"]  # Need input = run upstream
 
     @classmethod
     def IS_CHANGED(cls, cache_name, seed, force_refresh, mesh=None, name_prefix=""):
@@ -1395,24 +1421,19 @@ Place AFTER Trellis2GetConditioning node.
         return f"{name_prefix}_{cache_name}_{seed}"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, conditioning=None, name_prefix=""):
+        """Return [] to skip upstream, ["conditioning"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Trellis2 Conditioning] Force refresh - will run upstream")
+            return ["conditioning"]
+
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, ".pkl")
 
-        if check_cache_exists(cache_path, min_size=100) and not force_refresh:
-            try:
-                print(f"[BD Trellis2 Conditioning] Loading from cache: {cache_path}")
-                cached_data = PickleSerializer.load(cache_path)
-                if cached_data is not None:
-                    print(f"[BD Trellis2 Conditioning] ✓ Using cached conditioning (skipping upstream)")
-                    return (cached_data, f"Cache HIT: {os.path.basename(cache_path)}")
-            except Exception as e:
-                print(f"[BD Trellis2 Conditioning] Cache load failed: {e}")
-                return ["conditioning"]
-        if force_refresh:
-            print(f"[BD Trellis2 Conditioning] Force refresh - regenerating conditioning")
-        else:
-            print(f"[BD Trellis2 Conditioning] No cache found - generating new conditioning")
+        if check_cache_exists(cache_path, min_size=100):
+            print(f"[BD Trellis2 Conditioning] ✓ Cache exists - SKIPPING upstream execution")
+            return []  # Empty list = don't need input, skip upstream
+        print(f"[BD Trellis2 Conditioning] No cache found - will run upstream")
         return ["conditioning"]
 
     def cache_conditioning(self, conditioning, cache_name, seed, force_refresh, name_prefix=""):
@@ -1487,6 +1508,11 @@ Caches both shape_result (PKL) and mesh (PLY) together.
         return f"{name_prefix}_{cache_name}_{seed}"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, shape_result=None, mesh=None, name_prefix=""):
+        """Return [] to skip upstream, ["shape_result", "mesh"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Trellis2 Shape] Force refresh - will run upstream")
+            return ["shape_result", "mesh"]
+
         if not HAS_TRIMESH:
             return ["shape_result", "mesh"]
 
@@ -1496,22 +1522,10 @@ Caches both shape_result (PKL) and mesh (PLY) together.
         cache_path_ply = get_cache_path(full_name, cache_hash, "_mesh.ply")
 
         if (check_cache_exists(cache_path_pkl, min_size=100) and
-            check_cache_exists(cache_path_ply, min_size=100) and not force_refresh):
-            try:
-                print(f"[BD Trellis2 Shape] Loading from cache: {cache_path_pkl}")
-                shape_data = PickleSerializer.load(cache_path_pkl)
-                mesh_data = trimesh.load(cache_path_ply)
-                if shape_data is not None and mesh_data is not None:
-                    vert_count = len(mesh_data.vertices) if hasattr(mesh_data, 'vertices') else 'unknown'
-                    print(f"[BD Trellis2 Shape] ✓ Using cached shape + mesh ({vert_count} verts) - skipping upstream generation")
-                    return (shape_data, mesh_data, f"Cache HIT: shape + mesh")
-            except Exception as e:
-                print(f"[BD Trellis2 Shape] Cache load failed: {e}")
-                return ["shape_result", "mesh"]
-        if force_refresh:
-            print(f"[BD Trellis2 Shape] Force refresh - regenerating shape + mesh")
-        else:
-            print(f"[BD Trellis2 Shape] No cache found - generating new shape + mesh")
+            check_cache_exists(cache_path_ply, min_size=100)):
+            print(f"[BD Trellis2 Shape] ✓ Cache exists - SKIPPING upstream execution")
+            return []  # Empty list = don't need inputs, skip upstream
+        print(f"[BD Trellis2 Shape] No cache found - will run upstream")
         return ["shape_result", "mesh"]
 
     def cache_shape(self, shape_result, mesh, cache_name, seed, force_refresh, name_prefix=""):
@@ -1599,25 +1613,19 @@ to be available when loading from cache.
         return f"{name_prefix}_{cache_name}_{seed}"
 
     def check_lazy_status(self, cache_name, seed, force_refresh, trimesh_out=None, voxelgrid=None, pbr_pointcloud=None, name_prefix=""):
+        """Return [] to skip upstream, ["trimesh_out", "voxelgrid", "pbr_pointcloud"] to evaluate upstream."""
+        if force_refresh:
+            print(f"[BD Trellis2 Texture] Force refresh - will run upstream")
+            return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
+
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, "_texture.pkl")
 
-        if check_cache_exists(cache_path, min_size=100) and not force_refresh:
-            try:
-                print(f"[BD Trellis2 Texture] Loading from cache: {cache_path}")
-                cached_data = PickleSerializer.load(cache_path)
-                if cached_data and 'trimesh' in cached_data and 'voxelgrid' in cached_data:
-                    print(f"[BD Trellis2 Texture] ✓ Using cached texture data (trimesh + voxelgrid + pointcloud) - skipping upstream")
-                    return (cached_data['trimesh'], cached_data['voxelgrid'],
-                           cached_data['pointcloud'], f"Cache HIT: texture data")
-            except Exception as e:
-                print(f"[BD Trellis2 Texture] Cache load failed: {e}")
-                return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
-        if force_refresh:
-            print(f"[BD Trellis2 Texture] Force refresh - regenerating texture data")
-        else:
-            print(f"[BD Trellis2 Texture] No cache found - generating new texture data")
+        if check_cache_exists(cache_path, min_size=100):
+            print(f"[BD Trellis2 Texture] ✓ Cache exists - SKIPPING upstream execution")
+            return []  # Empty list = don't need inputs, skip upstream
+        print(f"[BD Trellis2 Texture] No cache found - will run upstream")
         return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
 
     def cache_texture(self, trimesh_out, voxelgrid, pbr_pointcloud, cache_name, seed, force_refresh, name_prefix=""):
@@ -2756,6 +2764,946 @@ Options:
 
 
 # =============================================================================
+# PBR Voxelgrid Sampling - Full PBR Extraction
+# =============================================================================
+
+class BD_SampleVoxelgridPBR:
+    """
+    Sample full PBR attributes from TRELLIS2 voxelgrid to mesh vertices.
+
+    Extracts all PBR channels: base_color, metallic, roughness, alpha.
+    This is an enhanced version of BD_SampleVoxelgridColors that outputs
+    separate metallic and roughness arrays for custom handling.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+                "voxelgrid": ("TRELLIS2_VOXELGRID",),
+            },
+            "optional": {
+                "sampling_mode": (["smooth", "sharp", "face"], {
+                    "default": "sharp",
+                    "tooltip": "smooth=k=4 weighted blend, sharp=k=1 nearest, face=per-face colors"
+                }),
+                "default_color": ("STRING", {"default": "0.5,0.5,0.5,1.0"}),
+                "default_metallic": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "default_roughness": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "distance_threshold": ("FLOAT", {
+                    "default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5,
+                    "tooltip": "Max voxels distance before using default values"
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("mesh", "metallic_json", "roughness_json", "status")
+    FUNCTION = "sample_pbr"
+    CATEGORY = "BrainDead/Mesh"
+    DESCRIPTION = """
+Sample full PBR attributes from TRELLIS2 voxelgrid to mesh vertices.
+
+Extracts all 6 PBR channels from voxelgrid:
+- base_color (RGB) → vertex colors on mesh
+- metallic → per-vertex float array (JSON output)
+- roughness → per-vertex float array (JSON output)
+- alpha → included in vertex colors
+
+Sampling modes:
+- smooth: k=4 inverse distance weighted (blended)
+- sharp: k=1 nearest neighbor (distinct, recommended for game assets)
+- face: per-face color from face center (cleanest boundaries)
+
+Connect:
+1. 'trimesh' from TRELLIS.2 Shape to Textured Mesh → mesh
+2. 'voxelgrid' from TRELLIS.2 Shape to Textured Mesh → voxelgrid
+
+Outputs metallic/roughness as JSON arrays for use with custom export nodes.
+"""
+
+    def sample_pbr(self, mesh, voxelgrid, sampling_mode="sharp",
+                   default_color="0.5,0.5,0.5,1.0", default_metallic=0.0,
+                   default_roughness=0.5, distance_threshold=3.0):
+        import numpy as np
+        import json
+        import time
+
+        if not HAS_TRIMESH:
+            return (mesh, "[]", "[]", "ERROR: trimesh not installed")
+
+        if mesh is None:
+            return (None, "[]", "[]", "ERROR: mesh is None")
+
+        if voxelgrid is None or not isinstance(voxelgrid, dict):
+            return (mesh, "[]", "[]", "ERROR: voxelgrid is None or invalid")
+
+        start_time = time.time()
+
+        # Parse default color
+        try:
+            default_rgba = np.array([float(x.strip()) for x in default_color.split(",")][:4], dtype=np.float32)
+            if len(default_rgba) == 3:
+                default_rgba = np.append(default_rgba, 1.0)
+        except:
+            default_rgba = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
+
+        # Extract voxelgrid data
+        coords = voxelgrid.get('coords')
+        attrs = voxelgrid.get('attrs')
+        voxel_size = voxelgrid.get('voxel_size', 1.0)
+        layout = voxelgrid.get('layout', {})
+
+        if coords is None or attrs is None:
+            return (mesh, "[]", "[]", "ERROR: voxelgrid missing coords or attrs")
+
+        print(f"[BD Sample PBR] Voxelgrid: {len(coords)} voxels, voxel_size={voxel_size}")
+        print(f"[BD Sample PBR] Attrs shape: {attrs.shape}, layout: {layout}")
+
+        # Get mesh data
+        mesh_verts = np.array(mesh.vertices, dtype=np.float32)
+        mesh_faces = mesh.faces if hasattr(mesh, 'faces') else None
+        num_verts = len(mesh_verts)
+        print(f"[BD Sample PBR] Mesh: {num_verts} vertices")
+
+        # Sample all PBR channels
+        vertex_colors, metallic_arr, roughness_arr = self._sample_pbr_kdtree(
+            mesh_verts, coords, attrs, voxel_size, layout,
+            default_rgba, default_metallic, default_roughness,
+            mesh_faces=mesh_faces,
+            sampling_mode=sampling_mode,
+            distance_threshold=distance_threshold
+        )
+
+        # Create new mesh with vertex colors
+        try:
+            vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
+            if vertex_colors_uint8.shape[1] == 3:
+                alpha = np.full((len(vertex_colors_uint8), 1), 255, dtype=np.uint8)
+                vertex_colors_uint8 = np.hstack([vertex_colors_uint8, alpha])
+
+            new_mesh = trimesh.Trimesh(
+                vertices=mesh.vertices.copy(),
+                faces=mesh.faces.copy() if mesh_faces is not None else None,
+                process=False
+            )
+
+            new_mesh.visual = trimesh.visual.ColorVisuals(
+                mesh=new_mesh,
+                vertex_colors=vertex_colors_uint8
+            )
+
+            if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
+                new_mesh.vertex_normals = mesh.vertex_normals.copy()
+
+            total_time = time.time() - start_time
+
+            # Convert PBR arrays to JSON
+            metallic_json = json.dumps(metallic_arr.tolist())
+            roughness_json = json.dumps(roughness_arr.tolist())
+
+            # Statistics
+            vertex_colors_contiguous = np.ascontiguousarray(vertex_colors_uint8)
+            unique_colors = len(np.unique(vertex_colors_contiguous.view(np.uint32)))
+
+            status = (f"Sampled {num_verts} verts ({unique_colors} colors) | "
+                      f"Metallic: [{metallic_arr.min():.2f}, {metallic_arr.max():.2f}] | "
+                      f"Roughness: [{roughness_arr.min():.2f}, {roughness_arr.max():.2f}] | "
+                      f"{total_time:.1f}s")
+            print(f"[BD Sample PBR] ✓ {status}")
+
+            return (new_mesh, metallic_json, roughness_json, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return (mesh, "[]", "[]", f"ERROR creating PBR mesh: {e}")
+
+    def _sample_pbr_kdtree(self, mesh_verts, coords, attrs, voxel_size, layout,
+                           default_rgba, default_metallic, default_roughness,
+                           mesh_faces=None, sampling_mode="sharp", distance_threshold=3.0):
+        """Sample all PBR channels using KD-tree nearest neighbor lookup."""
+        import numpy as np
+        from scipy.spatial import cKDTree
+
+        # Transform mesh coordinates (Y=-Z, Z=Y)
+        mesh_verts_transformed = mesh_verts.copy()
+        mesh_verts_transformed[:, 1] = -mesh_verts[:, 2]
+        mesh_verts_transformed[:, 2] = mesh_verts[:, 1]
+
+        # Convert coords to world positions
+        if hasattr(coords, 'cpu'):
+            coords_np = coords.cpu().numpy()
+        else:
+            coords_np = np.array(coords)
+        voxel_world_positions = coords_np.astype(np.float32) * voxel_size
+
+        # Mesh in voxel space
+        mesh_in_voxel_space = mesh_verts_transformed + 0.5
+
+        print(f"[BD Sample PBR] Building KD-tree from {len(voxel_world_positions)} sparse voxels")
+
+        tree = cKDTree(voxel_world_positions)
+
+        # Get attrs
+        if hasattr(attrs, 'cpu'):
+            attrs_np = attrs.cpu().numpy()
+        else:
+            attrs_np = np.array(attrs)
+
+        # Extract PBR channels from layout
+        base_color_slice = layout.get('base_color', slice(0, 3))
+        metallic_slice = layout.get('metallic', slice(3, 4))
+        roughness_slice = layout.get('roughness', slice(4, 5))
+        alpha_slice = layout.get('alpha', slice(5, 6))
+
+        # Extract channels
+        rgb = np.clip(attrs_np[:, base_color_slice], 0, 1) if isinstance(base_color_slice, slice) else np.clip(attrs_np[:, :3], 0, 1)
+        metallic = np.clip(attrs_np[:, metallic_slice].flatten(), 0, 1) if isinstance(metallic_slice, slice) else np.full(len(attrs_np), default_metallic)
+        roughness = np.clip(attrs_np[:, roughness_slice].flatten(), 0, 1) if isinstance(roughness_slice, slice) else np.full(len(attrs_np), default_roughness)
+        alpha = np.clip(attrs_np[:, alpha_slice].flatten(), 0, 1) if isinstance(alpha_slice, slice) else np.ones(len(attrs_np))
+
+        voxel_colors = np.column_stack([rgb, alpha]).astype(np.float32)
+
+        print(f"[BD Sample PBR] PBR ranges - Metallic: [{metallic.min():.3f}, {metallic.max():.3f}], Roughness: [{roughness.min():.3f}, {roughness.max():.3f}]")
+
+        max_dist = voxel_size * distance_threshold
+        num_verts = len(mesh_in_voxel_space)
+
+        if sampling_mode == "face" and mesh_faces is not None:
+            face_centers = mesh_in_voxel_space[mesh_faces].mean(axis=1)
+            distances, indices = tree.query(face_centers, k=1, workers=-1)
+
+            face_colors = voxel_colors[indices]
+            face_metallic = metallic[indices]
+            face_roughness = roughness[indices]
+
+            vertex_colors = np.full((num_verts, 4), default_rgba, dtype=np.float32)
+            vertex_metallic = np.full(num_verts, default_metallic, dtype=np.float32)
+            vertex_roughness = np.full(num_verts, default_roughness, dtype=np.float32)
+
+            for face_idx, face in enumerate(mesh_faces):
+                for vert_idx in face:
+                    vertex_colors[vert_idx] = face_colors[face_idx]
+                    vertex_metallic[vert_idx] = face_metallic[face_idx]
+                    vertex_roughness[vert_idx] = face_roughness[face_idx]
+
+            far_faces = distances > max_dist
+            print(f"[BD Sample PBR] Face mode: {far_faces.sum()} faces beyond threshold ({100*far_faces.sum()/len(far_faces):.1f}%)")
+
+        elif sampling_mode == "sharp":
+            distances, indices = tree.query(mesh_in_voxel_space, k=1, workers=-1)
+
+            vertex_colors = voxel_colors[indices]
+            vertex_metallic = metallic[indices]
+            vertex_roughness = roughness[indices]
+
+            far_vertices = distances > max_dist
+            vertex_colors[far_vertices] = default_rgba
+            vertex_metallic[far_vertices] = default_metallic
+            vertex_roughness[far_vertices] = default_roughness
+
+            print(f"[BD Sample PBR] Sharp mode: {far_vertices.sum()} verts beyond threshold ({100*far_vertices.sum()/num_verts:.1f}%)")
+
+        else:  # smooth
+            distances, indices = tree.query(mesh_in_voxel_space, k=4, workers=-1)
+
+            distances_safe = np.maximum(distances, 1e-10)
+            weights = 1.0 / distances_safe
+            weights = weights / weights.sum(axis=1, keepdims=True)
+
+            vertex_colors = np.zeros((num_verts, 4), dtype=np.float32)
+            vertex_metallic = np.zeros(num_verts, dtype=np.float32)
+            vertex_roughness = np.zeros(num_verts, dtype=np.float32)
+
+            for i in range(4):
+                vertex_colors += voxel_colors[indices[:, i]] * weights[:, i:i+1]
+                vertex_metallic += metallic[indices[:, i]] * weights[:, i]
+                vertex_roughness += roughness[indices[:, i]] * weights[:, i]
+
+            far_vertices = distances[:, 0] > max_dist
+            vertex_colors[far_vertices] = default_rgba
+            vertex_metallic[far_vertices] = default_metallic
+            vertex_roughness[far_vertices] = default_roughness
+
+            print(f"[BD Sample PBR] Smooth mode: {far_vertices.sum()} verts beyond threshold ({100*far_vertices.sum()/num_verts:.1f}%)")
+
+        return vertex_colors, vertex_metallic, vertex_roughness
+
+
+# =============================================================================
+# Mesh Repair - Pymeshlab-based
+# =============================================================================
+
+class BD_MeshRepair:
+    """
+    Repair mesh topology using PyMeshLab.
+
+    Fixes common mesh issues like holes, duplicate vertices/faces,
+    degenerate triangles, and inconsistent normals.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+            },
+            "optional": {
+                "remove_duplicates": ("BOOLEAN", {"default": True, "tooltip": "Merge duplicate/close vertices"}),
+                "remove_degenerate": ("BOOLEAN", {"default": True, "tooltip": "Remove zero-area faces and duplicates"}),
+                "close_holes": ("BOOLEAN", {"default": True, "tooltip": "Close holes in mesh"}),
+                "max_hole_edges": ("INT", {"default": 100, "min": 3, "max": 1000, "step": 10, "tooltip": "Max edges for hole closing"}),
+                "repair_normals": ("BOOLEAN", {"default": True, "tooltip": "Fix face orientation and recompute normals"}),
+                "merge_threshold": ("FLOAT", {"default": 0.0001, "min": 0.00001, "max": 0.01, "step": 0.00001, "tooltip": "Distance threshold for vertex merging"}),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH", "STRING")
+    RETURN_NAMES = ("mesh", "status")
+    FUNCTION = "repair_mesh"
+    CATEGORY = "BrainDead/Mesh"
+    DESCRIPTION = """
+Repair mesh topology using PyMeshLab filters.
+
+Operations:
+- remove_duplicates: Merge vertices closer than merge_threshold
+- remove_degenerate: Remove duplicate faces and zero-area triangles
+- close_holes: Fill holes up to max_hole_edges
+- repair_normals: Orient faces consistently and recompute vertex normals
+
+Use before color sampling to fix mesh issues from TRELLIS2.
+"""
+
+    def repair_mesh(self, mesh, remove_duplicates=True, remove_degenerate=True,
+                    close_holes=True, max_hole_edges=100, repair_normals=True,
+                    merge_threshold=0.0001):
+        import numpy as np
+        import tempfile
+        import os
+        import time
+
+        try:
+            import pymeshlab
+        except ImportError:
+            return (mesh, "ERROR: pymeshlab not installed")
+
+        if not HAS_TRIMESH:
+            return (mesh, "ERROR: trimesh not installed")
+
+        if mesh is None:
+            return (None, "ERROR: mesh is None")
+
+        start_time = time.time()
+        changes = []
+
+        # Get initial stats
+        initial_verts = len(mesh.vertices)
+        initial_faces = len(mesh.faces) if hasattr(mesh, 'faces') and mesh.faces is not None else 0
+
+        print(f"[BD Mesh Repair] Input: {initial_verts} vertices, {initial_faces} faces")
+
+        # Save mesh to temp file
+        with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as tmp:
+            temp_path = tmp.name
+            mesh.export(temp_path, file_type='ply')
+
+        try:
+            # Load into PyMeshLab
+            ms = pymeshlab.MeshSet()
+            ms.load_new_mesh(temp_path)
+
+            if remove_duplicates:
+                before = ms.current_mesh().vertex_number()
+                ms.meshing_merge_close_vertices(threshold=pymeshlab.PercentageValue(merge_threshold * 100))
+                after = ms.current_mesh().vertex_number()
+                if before != after:
+                    changes.append(f"merged {before - after} duplicate verts")
+                    print(f"[BD Mesh Repair] Merged {before - after} duplicate vertices")
+
+            if remove_degenerate:
+                before_f = ms.current_mesh().face_number()
+                ms.meshing_remove_duplicate_faces()
+                ms.meshing_remove_null_faces()
+                after_f = ms.current_mesh().face_number()
+                if before_f != after_f:
+                    changes.append(f"removed {before_f - after_f} degenerate faces")
+                    print(f"[BD Mesh Repair] Removed {before_f - after_f} degenerate faces")
+
+            # Repair non-manifold geometry BEFORE closing holes (required for hole closing)
+            try:
+                before_v = ms.current_mesh().vertex_number()
+                before_f = ms.current_mesh().face_number()
+                ms.meshing_repair_non_manifold_edges()
+                ms.meshing_repair_non_manifold_vertices()
+                after_v = ms.current_mesh().vertex_number()
+                after_f = ms.current_mesh().face_number()
+                if before_v != after_v or before_f != after_f:
+                    changes.append(f"fixed non-manifold ({before_v - after_v} verts, {before_f - after_f} faces)")
+                    print(f"[BD Mesh Repair] Fixed non-manifold: {before_v - after_v} verts, {before_f - after_f} faces removed")
+                else:
+                    print(f"[BD Mesh Repair] Non-manifold repair: no changes needed")
+            except Exception as e:
+                print(f"[BD Mesh Repair] Warning: non-manifold repair failed: {e}")
+
+            if close_holes:
+                before_f = ms.current_mesh().face_number()
+                try:
+                    ms.meshing_close_holes(maxholesize=max_hole_edges)
+                    after_f = ms.current_mesh().face_number()
+                    if after_f != before_f:
+                        changes.append(f"closed holes (+{after_f - before_f} faces)")
+                        print(f"[BD Mesh Repair] Closed holes, added {after_f - before_f} faces")
+                except Exception as e:
+                    print(f"[BD Mesh Repair] Warning: hole closing failed: {e}")
+
+            if repair_normals:
+                try:
+                    ms.meshing_re_orient_faces_coherently()
+                    ms.compute_normal_per_vertex()
+                    changes.append("normals repaired")
+                    print(f"[BD Mesh Repair] Reoriented faces and recomputed normals")
+                except Exception as e:
+                    print(f"[BD Mesh Repair] Warning: normal repair failed: {e}")
+
+            # Export repaired mesh
+            repaired_path = temp_path.replace(".ply", "_repaired.ply")
+            ms.save_current_mesh(repaired_path)
+
+            # Load back into trimesh
+            repaired_mesh = trimesh.load(repaired_path, process=False)
+
+            # Clean up temp files
+            os.unlink(temp_path)
+            os.unlink(repaired_path)
+
+            # Final stats
+            final_verts = len(repaired_mesh.vertices)
+            final_faces = len(repaired_mesh.faces) if hasattr(repaired_mesh, 'faces') else 0
+            total_time = time.time() - start_time
+
+            if not changes:
+                changes.append("no changes needed")
+
+            status = f"Repaired: {initial_verts}→{final_verts} verts, {initial_faces}→{final_faces} faces | {', '.join(changes)} | {total_time:.1f}s"
+            print(f"[BD Mesh Repair] ✓ {status}")
+
+            return (repaired_mesh, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            # Clean up temp file on error
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return (mesh, f"ERROR: {e}")
+
+
+# =============================================================================
+# Smart Decimation - Edge-Preserving
+# =============================================================================
+
+class BD_SmartDecimate:
+    """
+    Edge-preserving mesh decimation using PyMeshLab.
+
+    Detects and preserves edges based on color boundaries and sharp angles,
+    then decimates using quadric edge collapse while respecting these constraints.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+                "target_faces": ("INT", {"default": 50000, "min": 100, "max": 10000000, "step": 1000}),
+            },
+            "optional": {
+                "preserve_boundary": ("BOOLEAN", {"default": True, "tooltip": "Preserve mesh boundary edges"}),
+                "preserve_topology": ("BOOLEAN", {"default": True, "tooltip": "Preserve mesh topology"}),
+                "quality_threshold": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.1, "tooltip": "Quality threshold for edge collapse"}),
+                "planar_quadric": ("BOOLEAN", {"default": True, "tooltip": "Use planar simplification for flat regions"}),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH", "STRING")
+    RETURN_NAMES = ("mesh", "status")
+    FUNCTION = "decimate"
+    CATEGORY = "BrainDead/Mesh"
+    DESCRIPTION = """
+Edge-preserving mesh decimation using PyMeshLab quadric edge collapse.
+
+Parameters:
+- target_faces: Target number of faces after decimation
+- preserve_boundary: Preserve boundary edges (important for open meshes)
+- preserve_topology: Prevent topology changes during decimation
+- quality_threshold: Higher values = faster but lower quality
+- planar_quadric: Better results for flat regions
+
+Use BD_MeshRepair before decimation to fix holes and topology issues.
+Use BD_TransferVertexColors after decimation to restore colors.
+"""
+
+    def decimate(self, mesh, target_faces, preserve_boundary=True,
+                 preserve_topology=True, quality_threshold=0.3, planar_quadric=True):
+        import numpy as np
+        import tempfile
+        import os
+        import time
+
+        try:
+            import pymeshlab
+        except ImportError:
+            return (mesh, "ERROR: pymeshlab not installed")
+
+        if not HAS_TRIMESH:
+            return (mesh, "ERROR: trimesh not installed")
+
+        if mesh is None:
+            return (None, "ERROR: mesh is None")
+
+        start_time = time.time()
+
+        # Get initial stats
+        initial_faces = len(mesh.faces) if hasattr(mesh, 'faces') and mesh.faces is not None else 0
+        initial_verts = len(mesh.vertices)
+
+        if initial_faces <= target_faces:
+            return (mesh, f"Mesh already has {initial_faces} faces (≤ target {target_faces})")
+
+        print(f"[BD Smart Decimate] Input: {initial_verts} vertices, {initial_faces} faces")
+        print(f"[BD Smart Decimate] Target: {target_faces} faces ({100*target_faces/initial_faces:.1f}%)")
+
+        # Check for vertex colors
+        has_colors = hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None
+
+        # Save mesh to temp file
+        with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as tmp:
+            temp_path = tmp.name
+            mesh.export(temp_path, file_type='ply')
+
+        try:
+            # Load into PyMeshLab
+            ms = pymeshlab.MeshSet()
+            ms.load_new_mesh(temp_path)
+
+            # Calculate target percentage
+            target_percentage = target_faces / initial_faces
+
+            # Apply quadric edge collapse decimation
+            print(f"[BD Smart Decimate] Running quadric edge collapse decimation...")
+
+            ms.meshing_decimation_quadric_edge_collapse(
+                targetfacenum=target_faces,
+                qualitythr=quality_threshold,
+                preserveboundary=preserve_boundary,
+                preservetopology=preserve_topology,
+                planarquadric=planar_quadric,
+                autoclean=True
+            )
+
+            # Export decimated mesh
+            decimated_path = temp_path.replace(".ply", "_decimated.ply")
+            ms.save_current_mesh(decimated_path)
+
+            # Load back into trimesh
+            decimated_mesh = trimesh.load(decimated_path, process=False)
+
+            # Clean up temp files
+            os.unlink(temp_path)
+            os.unlink(decimated_path)
+
+            # Final stats
+            final_verts = len(decimated_mesh.vertices)
+            final_faces = len(decimated_mesh.faces) if hasattr(decimated_mesh, 'faces') else 0
+            total_time = time.time() - start_time
+            reduction = 100 * (1 - final_faces / initial_faces)
+
+            status = f"Decimated: {initial_faces}→{final_faces} faces ({reduction:.1f}% reduction), {initial_verts}→{final_verts} verts | {total_time:.1f}s"
+            if has_colors:
+                status += " | NOTE: Vertex colors lost - use BD_TransferVertexColors to restore"
+
+            print(f"[BD Smart Decimate] ✓ {status}")
+
+            return (decimated_mesh, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            # Clean up temp file on error
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return (mesh, f"ERROR: {e}")
+
+
+# =============================================================================
+# Vertex Color Transfer - BVH-based
+# =============================================================================
+
+class BD_TransferVertexColors:
+    """
+    Transfer vertex colors from source mesh to target mesh using BVH spatial lookup.
+
+    For each face in target mesh, finds the nearest face on source mesh
+    and copies its color directly (no interpolation) for sharp boundaries.
+    Based on the algorithm from Blender Decimate script.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source_mesh": ("TRIMESH", {"tooltip": "High-poly mesh with vertex colors"}),
+                "target_mesh": ("TRIMESH", {"tooltip": "Decimated mesh to receive colors"}),
+            },
+            "optional": {
+                "transfer_mode": (["face_center", "vertex_nearest", "barycentric"], {
+                    "default": "face_center",
+                    "tooltip": "face_center=sharp boundaries, vertex_nearest=per-vertex, barycentric=smooth interpolation"
+                }),
+                "default_color": ("STRING", {"default": "1.0,0.0,1.0,1.0", "tooltip": "Fallback color (magenta) for missing coverage"}),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH", "STRING")
+    RETURN_NAMES = ("mesh", "status")
+    FUNCTION = "transfer_colors"
+    CATEGORY = "BrainDead/Mesh"
+    DESCRIPTION = """
+Transfer vertex colors from source mesh to target mesh using spatial lookup.
+
+Transfer modes:
+- face_center: For each target face, find nearest source face and copy color
+               (sharp color boundaries, best for game assets)
+- vertex_nearest: For each target vertex, find nearest source vertex color
+                  (may cause slight bleeding at boundaries)
+- barycentric: Interpolate colors using barycentric coordinates
+               (smoothest but may blur sharp edges)
+
+Typical workflow:
+1. Sample colors to high-poly mesh (BD_SampleVoxelgridColors)
+2. Decimate mesh (BD_SmartDecimate)
+3. Transfer colors back (BD_TransferVertexColors)
+"""
+
+    def transfer_colors(self, source_mesh, target_mesh, transfer_mode="face_center",
+                        default_color="1.0,0.0,1.0,1.0"):
+        import numpy as np
+        import time
+        from scipy.spatial import cKDTree
+
+        if not HAS_TRIMESH:
+            return (target_mesh, "ERROR: trimesh not installed")
+
+        if source_mesh is None or target_mesh is None:
+            return (target_mesh, "ERROR: source or target mesh is None")
+
+        start_time = time.time()
+
+        # Parse default color
+        try:
+            default_rgba = np.array([float(x.strip()) for x in default_color.split(",")][:4], dtype=np.float32)
+            if len(default_rgba) == 3:
+                default_rgba = np.append(default_rgba, 1.0)
+        except:
+            default_rgba = np.array([1.0, 0.0, 1.0, 1.0], dtype=np.float32)
+
+        # Get source vertex colors
+        source_colors = None
+        if hasattr(source_mesh, 'visual') and hasattr(source_mesh.visual, 'vertex_colors'):
+            source_colors = np.array(source_mesh.visual.vertex_colors, dtype=np.float32)
+            if source_colors.max() > 1.0:
+                source_colors = source_colors / 255.0
+        elif hasattr(source_mesh, 'vertex_colors') and source_mesh.vertex_colors is not None:
+            source_colors = np.array(source_mesh.vertex_colors, dtype=np.float32)
+            if source_colors.max() > 1.0:
+                source_colors = source_colors / 255.0
+
+        if source_colors is None:
+            return (target_mesh, "ERROR: Source mesh has no vertex colors")
+
+        # Ensure RGBA
+        if source_colors.shape[1] == 3:
+            source_colors = np.column_stack([source_colors, np.ones(len(source_colors))])
+
+        source_verts = np.array(source_mesh.vertices, dtype=np.float32)
+        source_faces = np.array(source_mesh.faces)
+        target_verts = np.array(target_mesh.vertices, dtype=np.float32)
+        target_faces = np.array(target_mesh.faces) if hasattr(target_mesh, 'faces') else None
+
+        print(f"[BD Transfer Colors] Source: {len(source_verts)} verts, {len(source_faces)} faces")
+        print(f"[BD Transfer Colors] Target: {len(target_verts)} verts, {len(target_faces) if target_faces is not None else 0} faces")
+        print(f"[BD Transfer Colors] Mode: {transfer_mode}")
+
+        if transfer_mode == "face_center" and target_faces is not None:
+            # Per-face transfer (sharp boundaries)
+            target_colors = self._transfer_face_center(
+                source_verts, source_faces, source_colors,
+                target_verts, target_faces, default_rgba
+            )
+        elif transfer_mode == "barycentric" and target_faces is not None:
+            # Barycentric interpolation
+            target_colors = self._transfer_barycentric(
+                source_mesh, source_colors,
+                target_verts, default_rgba
+            )
+        else:
+            # Vertex nearest (default fallback)
+            target_colors = self._transfer_vertex_nearest(
+                source_verts, source_colors, target_verts, default_rgba
+            )
+
+        # Create new mesh with transferred colors
+        try:
+            target_colors_uint8 = (target_colors * 255).clip(0, 255).astype(np.uint8)
+
+            new_mesh = trimesh.Trimesh(
+                vertices=target_mesh.vertices.copy(),
+                faces=target_mesh.faces.copy() if target_faces is not None else None,
+                process=False
+            )
+
+            new_mesh.visual = trimesh.visual.ColorVisuals(
+                mesh=new_mesh,
+                vertex_colors=target_colors_uint8
+            )
+
+            if hasattr(target_mesh, 'vertex_normals') and target_mesh.vertex_normals is not None:
+                new_mesh.vertex_normals = target_mesh.vertex_normals.copy()
+
+            total_time = time.time() - start_time
+
+            # Count unique colors
+            colors_contiguous = np.ascontiguousarray(target_colors_uint8)
+            unique_colors = len(np.unique(colors_contiguous.view(np.uint32)))
+
+            status = f"Transferred colors: {len(target_verts)} verts ({unique_colors} unique colors) | mode={transfer_mode} | {total_time:.1f}s"
+            print(f"[BD Transfer Colors] ✓ {status}")
+
+            return (new_mesh, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return (target_mesh, f"ERROR: {e}")
+
+    def _transfer_face_center(self, source_verts, source_faces, source_colors,
+                               target_verts, target_faces, default_rgba):
+        """Transfer colors using face center lookup (sharp boundaries)."""
+        import numpy as np
+        from scipy.spatial import cKDTree
+
+        # Compute source face centers and colors
+        source_face_centers = source_verts[source_faces].mean(axis=1)
+
+        # Get source face colors (average of vertex colors per face)
+        source_face_colors = source_colors[source_faces].mean(axis=1)
+
+        print(f"[BD Transfer Colors] Building KD-tree from {len(source_face_centers)} source face centers")
+
+        # Build KD-tree from source face centers
+        tree = cKDTree(source_face_centers)
+
+        # Compute target face centers
+        target_face_centers = target_verts[target_faces].mean(axis=1)
+
+        # Find nearest source face for each target face
+        distances, indices = tree.query(target_face_centers, k=1, workers=-1)
+
+        # Get colors for target faces
+        target_face_colors = source_face_colors[indices]
+
+        # Apply to target vertices (each vertex gets color of first face containing it)
+        target_colors = np.full((len(target_verts), 4), default_rgba, dtype=np.float32)
+
+        for face_idx, face in enumerate(target_faces):
+            for vert_idx in face:
+                target_colors[vert_idx] = target_face_colors[face_idx]
+
+        # Stats
+        num_default = np.all(target_colors == default_rgba, axis=1).sum()
+        print(f"[BD Transfer Colors] Face center: {len(target_faces)} faces mapped, {num_default} verts with default color")
+
+        return target_colors
+
+    def _transfer_vertex_nearest(self, source_verts, source_colors, target_verts, default_rgba):
+        """Transfer colors using nearest vertex lookup."""
+        import numpy as np
+        from scipy.spatial import cKDTree
+
+        print(f"[BD Transfer Colors] Building KD-tree from {len(source_verts)} source vertices")
+
+        tree = cKDTree(source_verts)
+        distances, indices = tree.query(target_verts, k=1, workers=-1)
+
+        target_colors = source_colors[indices]
+
+        print(f"[BD Transfer Colors] Vertex nearest: max distance = {distances.max():.6f}")
+
+        return target_colors
+
+    def _transfer_barycentric(self, source_mesh, source_colors, target_verts, default_rgba):
+        """Transfer colors using barycentric interpolation on source mesh."""
+        import numpy as np
+
+        # Use trimesh's closest point functionality
+        closest_points, distances, face_indices = source_mesh.nearest.on_surface(target_verts)
+
+        # Get barycentric coordinates for each closest point
+        source_faces = np.array(source_mesh.faces)
+        target_colors = np.full((len(target_verts), 4), default_rgba, dtype=np.float32)
+
+        for i, (point, face_idx) in enumerate(zip(closest_points, face_indices)):
+            if face_idx is None or face_idx < 0:
+                continue
+
+            # Get triangle vertices
+            tri_verts = source_mesh.vertices[source_faces[face_idx]]
+            tri_colors = source_colors[source_faces[face_idx]]
+
+            # Compute barycentric coordinates
+            bary = self._barycentric_coords(point, tri_verts)
+
+            # Interpolate color
+            target_colors[i] = (bary[0] * tri_colors[0] +
+                               bary[1] * tri_colors[1] +
+                               bary[2] * tri_colors[2])
+
+        print(f"[BD Transfer Colors] Barycentric: processed {len(target_verts)} vertices")
+
+        return target_colors
+
+    def _barycentric_coords(self, p, tri):
+        """Compute barycentric coordinates for point p in triangle tri."""
+        import numpy as np
+
+        v0, v1, v2 = tri[0], tri[1], tri[2]
+
+        v0v1 = v1 - v0
+        v0v2 = v2 - v0
+        v0p = p - v0
+
+        d00 = np.dot(v0v1, v0v1)
+        d01 = np.dot(v0v1, v0v2)
+        d11 = np.dot(v0v2, v0v2)
+        d20 = np.dot(v0p, v0v1)
+        d21 = np.dot(v0p, v0v2)
+
+        denom = d00 * d11 - d01 * d01
+        if abs(denom) < 1e-10:
+            return np.array([1/3, 1/3, 1/3])
+
+        v = (d11 * d20 - d01 * d21) / denom
+        w = (d00 * d21 - d01 * d20) / denom
+        u = 1.0 - v - w
+
+        return np.array([u, v, w]).clip(0, 1)
+
+
+# =============================================================================
+# TRELLIS2 Dual Conditioning - Separate Shape/Texture Images
+# =============================================================================
+
+class BD_Trellis2DualConditioning:
+    """
+    INFO NODE: Explains dual conditioning workflow for TRELLIS2.
+
+    This is a documentation/helper node. For actual dual conditioning,
+    use two separate TRELLIS.2 Get Conditioning nodes.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {},
+            "optional": {
+                "info_trigger": ("STRING", {"default": "Connect to see workflow info", "multiline": True}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("workflow_info",)
+    FUNCTION = "show_info"
+    CATEGORY = "BrainDead/TRELLIS2"
+    OUTPUT_NODE = True
+    DESCRIPTION = """
+INFO: How to use dual conditioning for TRELLIS2
+
+This node explains the dual-conditioning workflow where you use:
+- One image for SHAPE (e.g., traced outline, edge detection)
+- Another image for TEXTURE (e.g., clean reference render)
+
+WORKFLOW:
+=========
+1. Create TWO "TRELLIS.2 Get Conditioning" nodes:
+   - First one: Connect your SHAPE image (traced outline)
+   - Second one: Connect your TEXTURE image (clean reference)
+
+2. "TRELLIS.2 Image to Shape" node:
+   - Connect the SHAPE conditioning
+   - This determines the 3D geometry
+
+3. "TRELLIS.2 Shape to Textured Mesh" node:
+   - Connect SHAPE conditioning to 'conditioning' (required)
+   - Connect TEXTURE conditioning to 'texture_conditioning' (optional)
+   - This applies texture from the clean image to the generated shape
+
+This workflow is now supported natively in the TRELLIS2 nodes!
+"""
+
+    def show_info(self, info_trigger=""):
+        info = """
+ADVANCED TRELLIS2 WORKFLOWS
+===========================
+
+1. DUAL CONDITIONING (different images for shape vs texture)
+------------------------------------------------------------
+Use case: Traced outline for shape, clean image for texture.
+
+Setup:
+- Add TWO "TRELLIS.2 Get Conditioning" nodes
+- Shape image (outline) → first conditioning
+- Texture image (clean) → second conditioning
+
+Connections:
+- First conditioning → "Image to Shape" (conditioning)
+- First conditioning → "Shape to Textured Mesh" (conditioning)
+- Second conditioning → "Shape to Textured Mesh" (texture_conditioning)
+
+
+2. FAST SHAPE + DETAILED TEXTURE (different resolutions)
+--------------------------------------------------------
+Use case: Fast shape at 512, detailed voxelgrid at 1024.
+
+Setup:
+- Add TWO "Load TRELLIS.2 Models" nodes
+- First: resolution=512 (fast shape generation)
+- Second: resolution=1024_cascade (detailed texture voxelgrid)
+
+Connections:
+- First model config → "Image to Shape" (model_config)
+- First model config → "Shape to Textured Mesh" (model_config)
+- Second model config → "Shape to Textured Mesh" (texture_model_config)
+
+This gives ~2x faster shape generation while maintaining
+high-resolution color data for vertex color sampling.
+
+
+3. COMBINED WORKFLOW (both features)
+------------------------------------
+- 512 model → shape generation (fast)
+- 1024_cascade model → texture generation (detailed)
+- Outline image → shape conditioning
+- Clean image → texture conditioning
+
+All four optional inputs can be used together!
+"""
+        print(f"[BD Dual Conditioning Info] Workflow information displayed")
+        return (info,)
+
+
+# =============================================================================
 # Node Mappings
 # =============================================================================
 
@@ -2779,6 +3727,11 @@ NODE_CLASS_MAPPINGS = {
     "BD_CacheTrellis2Texture": BD_CacheTrellis2Texture,
     # Mesh Processing Nodes
     "BD_SampleVoxelgridColors": BD_SampleVoxelgridColors,
+    "BD_SampleVoxelgridPBR": BD_SampleVoxelgridPBR,
+    "BD_MeshRepair": BD_MeshRepair,
+    "BD_SmartDecimate": BD_SmartDecimate,
+    "BD_TransferVertexColors": BD_TransferVertexColors,
+    "BD_Trellis2DualConditioning": BD_Trellis2DualConditioning,
     "BD_TransferPointcloudColors": BD_TransferPointcloudColors,
     "BD_TransferColorsPymeshlab": BD_TransferColorsPymeshlab,
     "BD_ExportMeshWithColors": BD_ExportMeshWithColors,
@@ -2809,6 +3762,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BD_CacheTrellis2Texture": "BD Cache Trellis2 Texture",
     # Mesh Processing Nodes
     "BD_SampleVoxelgridColors": "BD Sample Voxelgrid Colors",
+    "BD_SampleVoxelgridPBR": "BD Sample Voxelgrid PBR",
+    "BD_MeshRepair": "BD Mesh Repair",
+    "BD_SmartDecimate": "BD Smart Decimate",
+    "BD_TransferVertexColors": "BD Transfer Vertex Colors",
+    "BD_Trellis2DualConditioning": "BD TRELLIS2 Dual Conditioning (Info)",
     "BD_TransferPointcloudColors": "BD Transfer Pointcloud Colors (deprecated)",
     "BD_TransferColorsPymeshlab": "BD Transfer Colors (Pymeshlab)",
     "BD_ExportMeshWithColors": "BD Export Mesh With Colors",
