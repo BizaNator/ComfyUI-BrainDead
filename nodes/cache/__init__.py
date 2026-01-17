@@ -1660,7 +1660,272 @@ to be available when loading from cache.
 
 
 # =============================================================================
-# BD_TransferPointcloudColors
+# BD_SampleVoxelgridColors
+# =============================================================================
+
+class BD_SampleVoxelgridColors:
+    """
+    Sample colors from TRELLIS2 voxelgrid directly to mesh vertices.
+
+    This is the CORRECT way to get colors from TRELLIS2 - uses the voxelgrid
+    structure directly instead of the misaligned pointcloud.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("TRIMESH",),
+                "voxelgrid": ("TRELLIS2_VOXELGRID",),
+            },
+            "optional": {
+                "default_color": ("STRING", {"default": "0.5,0.5,0.5,1.0"}),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH", "STRING")
+    RETURN_NAMES = ("mesh", "status")
+    FUNCTION = "sample_colors"
+    CATEGORY = "BrainDead/Mesh"
+    DESCRIPTION = """
+Sample colors from TRELLIS2 voxelgrid to mesh vertices.
+
+This is the CORRECT approach - uses the voxelgrid structure directly
+with proper coordinate alignment and GPU-accelerated sampling.
+
+Connect:
+1. 'trimesh' from TRELLIS.2 Shape to Textured Mesh → mesh
+2. 'voxelgrid' from TRELLIS.2 Shape to Textured Mesh → voxelgrid
+
+The voxelgrid contains original_vertices that match the mesh,
+ensuring proper coordinate alignment.
+"""
+
+    def sample_colors(self, mesh, voxelgrid, default_color="0.5,0.5,0.5,1.0"):
+        import numpy as np
+        import time
+
+        if not HAS_TRIMESH:
+            return (mesh, "ERROR: trimesh not installed")
+
+        if mesh is None:
+            return (None, "ERROR: mesh is None")
+
+        if voxelgrid is None or not isinstance(voxelgrid, dict):
+            return (mesh, "ERROR: voxelgrid is None or invalid")
+
+        start_time = time.time()
+
+        # Parse default color
+        try:
+            default_rgba = np.array([float(x.strip()) for x in default_color.split(",")][:4], dtype=np.float32)
+            if len(default_rgba) == 3:
+                default_rgba = np.append(default_rgba, 1.0)
+        except:
+            default_rgba = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
+
+        # Extract voxelgrid data
+        coords = voxelgrid.get('coords')  # Voxel indices
+        attrs = voxelgrid.get('attrs')    # PBR attributes per voxel
+        voxel_size = voxelgrid.get('voxel_size', 1.0)
+        layout = voxelgrid.get('layout', {})
+        original_verts = voxelgrid.get('original_vertices')
+
+        if coords is None or attrs is None:
+            return (mesh, "ERROR: voxelgrid missing coords or attrs")
+
+        print(f"[BD Sample Voxelgrid] Voxelgrid: {len(coords)} voxels, voxel_size={voxel_size}")
+        print(f"[BD Sample Voxelgrid] Attrs shape: {attrs.shape}, layout: {layout}")
+
+        # Get mesh vertices
+        mesh_verts = np.array(mesh.vertices, dtype=np.float32)
+        num_verts = len(mesh_verts)
+        print(f"[BD Sample Voxelgrid] Mesh: {num_verts} vertices")
+
+        # Debug bounds
+        mesh_min, mesh_max = mesh_verts.min(axis=0), mesh_verts.max(axis=0)
+        print(f"[BD Sample Voxelgrid] Mesh bounds: {mesh_min} to {mesh_max}")
+
+        if original_verts is not None:
+            orig_min, orig_max = original_verts.min(axis=0), original_verts.max(axis=0)
+            print(f"[BD Sample Voxelgrid] Original verts bounds: {orig_min} to {orig_max}")
+
+        # Build sparse voxel lookup
+        # Convert voxel coords to world positions
+        voxel_positions = coords.astype(np.float32) * voxel_size
+        voxel_min = voxel_positions.min(axis=0)
+        voxel_max = voxel_positions.max(axis=0)
+        print(f"[BD Sample Voxelgrid] Voxel world bounds: {voxel_min} to {voxel_max}")
+
+        # Try to use PyTorch for GPU acceleration
+        try:
+            import torch
+            use_torch = torch.cuda.is_available()
+        except:
+            use_torch = False
+
+        if use_torch:
+            print(f"[BD Sample Voxelgrid] Using PyTorch GPU acceleration")
+            vertex_colors = self._sample_with_torch(
+                mesh_verts, coords, attrs, voxel_size, layout, default_rgba
+            )
+        else:
+            print(f"[BD Sample Voxelgrid] Using numpy (no GPU)")
+            vertex_colors = self._sample_with_numpy(
+                mesh_verts, coords, attrs, voxel_size, layout, default_rgba
+            )
+
+        # Create new mesh with vertex colors
+        try:
+            vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
+
+            new_mesh = trimesh.Trimesh(
+                vertices=mesh.vertices.copy(),
+                faces=mesh.faces.copy() if hasattr(mesh, 'faces') and mesh.faces is not None else None,
+                vertex_colors=vertex_colors_uint8,
+                process=False
+            )
+
+            if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
+                new_mesh.vertex_normals = mesh.vertex_normals.copy()
+
+            total_time = time.time() - start_time
+            unique_colors = len(np.unique(vertex_colors_uint8.view(np.uint32)))
+
+            status = f"Sampled {num_verts} vertices ({unique_colors} unique colors) in {total_time:.1f}s"
+            print(f"[BD Sample Voxelgrid] ✓ {status}")
+
+            return (new_mesh, status)
+
+        except Exception as e:
+            return (mesh, f"ERROR creating colored mesh: {e}")
+
+    def _sample_with_torch(self, mesh_verts, coords, attrs, voxel_size, layout, default_rgba):
+        """GPU-accelerated sampling using PyTorch grid_sample."""
+        import torch
+        import numpy as np
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Get base color channels from layout
+        base_color_slice = layout.get('base_color', slice(0, 3))
+
+        # Convert sparse voxels to dense 3D volume
+        coords_int = coords.astype(np.int32)
+        coord_min = coords_int.min(axis=0)
+        coord_max = coords_int.max(axis=0)
+        grid_size = coord_max - coord_min + 1
+
+        print(f"[BD Sample Voxelgrid] Building dense volume: {grid_size}")
+
+        # Create dense volume for RGB (3 channels)
+        # attrs are in range [-1, 1], convert to [0, 1]
+        attrs_normalized = (attrs + 1.0) * 0.5
+
+        # Initialize volume with default color
+        volume = np.full((grid_size[0], grid_size[1], grid_size[2], 4),
+                         default_rgba, dtype=np.float32)
+
+        # Fill in voxel colors
+        local_coords = coords_int - coord_min
+        if isinstance(base_color_slice, slice):
+            rgb = attrs_normalized[:, base_color_slice]
+        else:
+            rgb = attrs_normalized[:, :3]
+
+        # Get alpha if available
+        alpha_slice = layout.get('alpha', slice(5, 6))
+        if isinstance(alpha_slice, slice):
+            alpha = attrs_normalized[:, alpha_slice].flatten()
+        else:
+            alpha = np.ones(len(rgb), dtype=np.float32)
+
+        rgba = np.column_stack([rgb, alpha])
+
+        for i in range(len(local_coords)):
+            x, y, z = local_coords[i]
+            volume[x, y, z] = rgba[i]
+
+        print(f"[BD Sample Voxelgrid] Volume created, transferring to GPU")
+
+        # Convert to torch tensor (D, H, W, C) -> (1, C, D, H, W) for grid_sample
+        volume_tensor = torch.from_numpy(volume).permute(3, 0, 1, 2).unsqueeze(0).to(device)
+
+        # Normalize mesh vertices to grid coordinates [-1, 1]
+        # First convert to voxel grid space
+        mesh_verts_voxel = mesh_verts / voxel_size
+        mesh_verts_local = mesh_verts_voxel - coord_min
+
+        # Normalize to [-1, 1] for grid_sample
+        grid_coords = (mesh_verts_local / (grid_size - 1)) * 2 - 1
+
+        # Reshape for grid_sample: (1, N, 1, 1, 3)
+        grid_tensor = torch.from_numpy(grid_coords.astype(np.float32)).unsqueeze(0).unsqueeze(2).unsqueeze(2).to(device)
+
+        print(f"[BD Sample Voxelgrid] Running grid_sample on {len(mesh_verts)} vertices")
+
+        # Sample using trilinear interpolation
+        with torch.no_grad():
+            sampled = torch.nn.functional.grid_sample(
+                volume_tensor,
+                grid_tensor,
+                mode='bilinear',
+                padding_mode='border',
+                align_corners=True
+            )
+
+        # Extract colors (1, C, N, 1, 1) -> (N, C)
+        vertex_colors = sampled.squeeze().permute(1, 0).cpu().numpy()
+
+        return vertex_colors
+
+    def _sample_with_numpy(self, mesh_verts, coords, attrs, voxel_size, layout, default_rgba):
+        """CPU-based sampling using scipy KD-tree on voxel centers."""
+        import numpy as np
+        from scipy.spatial import cKDTree
+
+        # Get base color from attrs
+        base_color_slice = layout.get('base_color', slice(0, 3))
+        alpha_slice = layout.get('alpha', slice(5, 6))
+
+        # Normalize attrs from [-1, 1] to [0, 1]
+        attrs_normalized = (attrs + 1.0) * 0.5
+
+        if isinstance(base_color_slice, slice):
+            rgb = attrs_normalized[:, base_color_slice]
+        else:
+            rgb = attrs_normalized[:, :3]
+
+        if isinstance(alpha_slice, slice):
+            alpha = attrs_normalized[:, alpha_slice].flatten()
+        else:
+            alpha = np.ones(len(rgb), dtype=np.float32)
+
+        voxel_colors = np.column_stack([rgb, alpha]).astype(np.float32)
+
+        # Voxel world positions
+        voxel_positions = coords.astype(np.float32) * voxel_size
+
+        print(f"[BD Sample Voxelgrid] Building KD-tree from {len(voxel_positions)} voxels")
+        tree = cKDTree(voxel_positions)
+
+        print(f"[BD Sample Voxelgrid] Querying {len(mesh_verts)} vertices")
+        distances, indices = tree.query(mesh_verts, k=1, workers=-1)
+
+        # Get colors
+        vertex_colors = np.zeros((len(mesh_verts), 4), dtype=np.float32)
+        valid = indices < len(voxel_colors)
+        vertex_colors[valid] = voxel_colors[indices[valid]]
+        vertex_colors[~valid] = default_rgba
+
+        avg_dist = np.mean(distances)
+        print(f"[BD Sample Voxelgrid] Average distance: {avg_dist:.4f}")
+
+        return vertex_colors
+
+
+# =============================================================================
+# BD_TransferPointcloudColors (DEPRECATED - use BD_SampleVoxelgridColors)
 # =============================================================================
 
 class BD_TransferPointcloudColors:
@@ -1978,7 +2243,7 @@ class BD_ExportMeshWithColors:
     """
     Export a mesh with vertex colors to file (GLB, PLY, OBJ).
 
-    Designed to work with BD_TransferPointcloudColors output.
+    Designed to work with BD_SampleVoxelgridColors output.
     """
 
     @classmethod
@@ -1990,7 +2255,8 @@ class BD_ExportMeshWithColors:
                 "format": (["glb", "ply", "obj"], {"default": "glb"}),
             },
             "optional": {
-                "output_dir": ("STRING", {"default": "", "tooltip": "Leave empty for default output folder"}),
+                "name_prefix": ("STRING", {"default": "", "tooltip": "Prefix for filename (creates subdirectory)"}),
+                "auto_increment": ("BOOLEAN", {"default": True, "tooltip": "Auto-increment filename to avoid overwriting"}),
             }
         }
 
@@ -2007,12 +2273,17 @@ Formats:
 - PLY: Good for Blender import, preserves vertex colors
 - OBJ: Basic format, vertex colors may not be preserved
 
-Use after BD_TransferPointcloudColors to export colored mesh
+Use after BD_SampleVoxelgridColors to export colored mesh
 for decimation in Blender.
+
+Options:
+- name_prefix: Creates subdirectory and prefixes filename
+- auto_increment: Adds _001, _002 etc. to avoid overwriting
 """
 
-    def export_mesh(self, mesh, filename, format="glb", output_dir=""):
+    def export_mesh(self, mesh, filename, format="glb", name_prefix="", auto_increment=True):
         import os
+        import glob
 
         if not HAS_TRIMESH:
             return ("", "ERROR: trimesh not installed")
@@ -2021,18 +2292,48 @@ for decimation in Blender.
             return ("", "ERROR: mesh is None")
 
         # Determine output directory
-        if not output_dir:
-            import folder_paths
-            output_dir = folder_paths.get_output_directory()
+        import folder_paths
+        base_output_dir = folder_paths.get_output_directory()
+
+        # If name_prefix specified, create subdirectory
+        if name_prefix:
+            output_dir = os.path.join(base_output_dir, name_prefix)
+        else:
+            output_dir = base_output_dir
 
         # Ensure directory exists
         os.makedirs(output_dir, exist_ok=True)
 
-        # Build filename
-        if not filename.endswith(f".{format}"):
-            filename = f"{filename}.{format}"
+        # Build filename with optional prefix
+        base_filename = filename
+        if name_prefix and not filename.startswith(name_prefix):
+            base_filename = f"{name_prefix}_{filename}"
 
-        file_path = os.path.join(output_dir, filename)
+        # Auto-increment to avoid overwriting
+        if auto_increment:
+            # Find existing files with this pattern
+            pattern = os.path.join(output_dir, f"{base_filename}_*.{format}")
+            existing = glob.glob(pattern)
+
+            if existing:
+                # Extract numbers and find max
+                numbers = []
+                for f in existing:
+                    try:
+                        # Extract _NNN before extension
+                        num_str = os.path.basename(f).replace(f".{format}", "").split("_")[-1]
+                        numbers.append(int(num_str))
+                    except:
+                        pass
+                next_num = max(numbers) + 1 if numbers else 1
+            else:
+                next_num = 1
+
+            final_filename = f"{base_filename}_{next_num:03d}.{format}"
+        else:
+            final_filename = f"{base_filename}.{format}"
+
+        file_path = os.path.join(output_dir, final_filename)
 
         try:
             # Check if mesh has vertex colors
@@ -2095,6 +2396,7 @@ NODE_CLASS_MAPPINGS = {
     "BD_CacheTrellis2Shape": BD_CacheTrellis2Shape,
     "BD_CacheTrellis2Texture": BD_CacheTrellis2Texture,
     # Mesh Processing Nodes
+    "BD_SampleVoxelgridColors": BD_SampleVoxelgridColors,
     "BD_TransferPointcloudColors": BD_TransferPointcloudColors,
     "BD_ExportMeshWithColors": BD_ExportMeshWithColors,
     # Workflow Version Nodes
@@ -2123,7 +2425,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BD_CacheTrellis2Shape": "BD Cache Trellis2 Shape",
     "BD_CacheTrellis2Texture": "BD Cache Trellis2 Texture",
     # Mesh Processing Nodes
-    "BD_TransferPointcloudColors": "BD Transfer Pointcloud Colors",
+    "BD_SampleVoxelgridColors": "BD Sample Voxelgrid Colors",
+    "BD_TransferPointcloudColors": "BD Transfer Pointcloud Colors (deprecated)",
     "BD_ExportMeshWithColors": "BD Export Mesh With Colors",
     # Workflow Version Nodes
     "BD_WorkflowVersionCache": "BD Workflow Version Cache",
