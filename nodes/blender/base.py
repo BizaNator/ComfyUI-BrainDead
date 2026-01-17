@@ -12,11 +12,15 @@ from pathlib import Path
 from typing import Optional
 
 # Find Blender executable - check common locations
+# Prefer newer Blender versions first
 BLENDER_PATHS = [
-    # GeometryPack bundled Blender
+    # BrainDead bundled Blender 5.0.1 (preferred)
+    "/opt/comfyui/dev/custom_nodes/ComfyUI-BrainDead/lib/blender/blender-5.0.1-linux-x64/blender",
+    "/opt/comfyui/stable/custom_nodes/ComfyUI-BrainDead/lib/blender/blender-5.0.1-linux-x64/blender",
+    # GeometryPack bundled Blender 4.2.3
     "/opt/comfyui/dev/custom_nodes/ComfyUI-GeometryPack/_blender/blender-4.2.3-linux-x64/blender",
     "/opt/comfyui/stable/custom_nodes/ComfyUI-GeometryPack/_blender/blender-4.2.3-linux-x64/blender",
-    # UniRig bundled Blender
+    # UniRig bundled Blender 4.2.3
     "/opt/comfyui/dev/custom_nodes/ComfyUI-UniRig/lib/blender/blender-4.2.3-linux-x64/blender",
     "/opt/comfyui/stable/custom_nodes/ComfyUI-UniRig/lib/blender/blender-4.2.3-linux-x64/blender",
     # System Blender

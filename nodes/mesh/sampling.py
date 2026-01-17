@@ -3,6 +3,14 @@ V3 API Voxelgrid sampling nodes for extracting colors/PBR from TRELLIS2 voxelgri
 
 BD_SampleVoxelgridColors - Sample colors from voxelgrid to mesh vertices
 BD_SampleVoxelgridPBR - Sample full PBR attributes (color, metallic, roughness)
+
+Sampling modes:
+- smooth: k=4 weighted average (soft gradients, may blur boundaries)
+- sharp: k=1 nearest neighbor (per-vertex, faster)
+- face: Per-face colors with NO bleeding (each face gets ONE solid color)
+
+Face mode creates unique vertices per face to prevent color interpolation
+at shared vertices - this is the key for clean stylized/low-poly looks.
 """
 
 import numpy as np
@@ -16,6 +24,56 @@ try:
     HAS_TRIMESH = True
 except ImportError:
     HAS_TRIMESH = False
+
+
+def split_vertices_by_face(mesh, face_colors):
+    """
+    Split vertices so each face has its own unique vertices.
+    This prevents color bleeding at shared vertices.
+
+    Args:
+        mesh: trimesh.Trimesh object
+        face_colors: np.array of shape (num_faces, 4) - RGBA per face
+
+    Returns:
+        New trimesh with unique vertices per face and vertex colors set.
+    """
+    faces = mesh.faces
+    vertices = mesh.vertices
+    normals = mesh.vertex_normals if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None else None
+
+    num_faces = len(faces)
+
+    # Create new vertices - 3 unique vertices per triangle face
+    new_vertices = vertices[faces.flatten()].reshape(-1, 3)
+    new_faces = np.arange(num_faces * 3).reshape(-1, 3)
+
+    # Create vertex colors - same color for all 3 vertices of each face
+    new_vertex_colors = np.repeat(face_colors, 3, axis=0)
+
+    # Handle normals if present
+    new_normals = None
+    if normals is not None:
+        new_normals = normals[faces.flatten()].reshape(-1, 3)
+
+    # Create new mesh with split vertices
+    new_mesh = trimesh.Trimesh(
+        vertices=new_vertices,
+        faces=new_faces,
+        process=False
+    )
+
+    # Set vertex colors
+    vertex_colors_uint8 = (new_vertex_colors * 255).clip(0, 255).astype(np.uint8)
+    new_mesh.visual = trimesh.visual.ColorVisuals(
+        mesh=new_mesh,
+        vertex_colors=vertex_colors_uint8
+    )
+
+    if new_normals is not None:
+        new_mesh.vertex_normals = new_normals
+
+    return new_mesh
 
 
 class BD_SampleVoxelgridColors(io.ComfyNode):
@@ -32,12 +90,12 @@ class BD_SampleVoxelgridColors(io.ComfyNode):
             node_id="BD_SampleVoxelgridColors",
             display_name="BD Sample Voxelgrid Colors",
             category="🧠BrainDead/Mesh",
-            description="Sample colors from TRELLIS2 voxelgrid to mesh vertices. Modes: smooth (k=4 weighted), sharp (k=1 nearest), face (per-face).",
+            description="Sample colors from TRELLIS2 voxelgrid to mesh. Face mode: ONE solid color per face with NO bleeding (splits vertices).",
             inputs=[
                 io.Mesh.Input("mesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
-                io.Combo.Input("sampling_mode", options=["smooth", "sharp", "face"], default="smooth", optional=True,
-                              tooltip="smooth=k=4 weighted, sharp=k=1 nearest, face=per-face colors"),
+                io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
+                              tooltip="face=per-face no-bleed (RECOMMENDED), sharp=per-vertex k=1, smooth=per-vertex k=4"),
                 io.String.Input("default_color", default="0.5,0.5,0.5,1.0", optional=True),
                 io.Float.Input("distance_threshold", default=3.0, min=1.0, max=10.0, step=0.5, optional=True,
                               tooltip="Max voxels distance before using default color"),
@@ -88,53 +146,141 @@ class BD_SampleVoxelgridColors(io.ComfyNode):
         num_verts = len(mesh_verts)
         print(f"[BD Sample Voxelgrid] Mesh: {num_verts} vertices")
 
+        mesh_faces = mesh.faces if hasattr(mesh, 'faces') and mesh.faces is not None else None
+
         # Use KD-tree for sparse voxel sampling
         print(f"[BD Sample Voxelgrid] Using KD-tree sparse sampling, mode={sampling_mode}")
-        vertex_colors = cls._sample_with_kdtree(
-            mesh_verts, coords, attrs, voxel_size, layout, default_rgba,
-            mesh_faces=mesh.faces if hasattr(mesh, 'faces') else None,
-            sampling_mode=sampling_mode,
-            distance_threshold=distance_threshold
-        )
 
-        # Create new mesh with vertex colors
-        try:
-            vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
-
-            if vertex_colors_uint8.shape[1] == 3:
-                alpha = np.full((len(vertex_colors_uint8), 1), 255, dtype=np.uint8)
-                vertex_colors_uint8 = np.hstack([vertex_colors_uint8, alpha])
-
-            new_mesh = trimesh.Trimesh(
-                vertices=mesh.vertices.copy(),
-                faces=mesh.faces.copy() if hasattr(mesh, 'faces') and mesh.faces is not None else None,
-                process=False
+        if sampling_mode == "face" and mesh_faces is not None:
+            # FACE MODE: Sample one color per face, then split vertices for no-bleed
+            face_colors = cls._sample_face_colors(
+                mesh_verts, mesh_faces, coords, attrs, voxel_size, layout, default_rgba,
+                distance_threshold=distance_threshold
             )
 
-            new_mesh.visual = trimesh.visual.ColorVisuals(
-                mesh=new_mesh,
-                vertex_colors=vertex_colors_uint8
+            try:
+                # Create mesh with split vertices (no color bleeding)
+                new_mesh = split_vertices_by_face(mesh, face_colors)
+
+                total_time = time.time() - start_time
+                num_faces = len(mesh_faces)
+                unique_colors = len(np.unique(face_colors.view(np.float32).reshape(-1, 4), axis=0))
+
+                status = f"Face mode: {num_faces} faces ({unique_colors} unique colors), {len(new_mesh.vertices)} verts in {total_time:.1f}s"
+                print(f"[BD Sample Voxelgrid] {status}")
+
+                return io.NodeOutput(new_mesh, status)
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return io.NodeOutput(mesh, f"ERROR in face mode: {e}")
+
+        else:
+            # VERTEX MODE: smooth or sharp
+            vertex_colors = cls._sample_with_kdtree(
+                mesh_verts, coords, attrs, voxel_size, layout, default_rgba,
+                mesh_faces=mesh_faces,
+                sampling_mode=sampling_mode,
+                distance_threshold=distance_threshold
             )
 
-            if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
-                new_mesh.vertex_normals = mesh.vertex_normals.copy()
+            try:
+                vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
 
-            total_time = time.time() - start_time
-            vertex_colors_contiguous = np.ascontiguousarray(vertex_colors_uint8)
-            unique_colors = len(np.unique(vertex_colors_contiguous.view(np.uint32)))
+                if vertex_colors_uint8.shape[1] == 3:
+                    alpha = np.full((len(vertex_colors_uint8), 1), 255, dtype=np.uint8)
+                    vertex_colors_uint8 = np.hstack([vertex_colors_uint8, alpha])
 
-            status = f"Sampled {num_verts} vertices ({unique_colors} unique colors) in {total_time:.1f}s"
-            print(f"[BD Sample Voxelgrid] {status}")
+                new_mesh = trimesh.Trimesh(
+                    vertices=mesh.vertices.copy(),
+                    faces=mesh_faces.copy() if mesh_faces is not None else None,
+                    process=False
+                )
 
-            return io.NodeOutput(new_mesh, status)
+                new_mesh.visual = trimesh.visual.ColorVisuals(
+                    mesh=new_mesh,
+                    vertex_colors=vertex_colors_uint8
+                )
 
-        except Exception as e:
-            return io.NodeOutput(mesh, f"ERROR creating colored mesh: {e}")
+                if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
+                    new_mesh.vertex_normals = mesh.vertex_normals.copy()
+
+                total_time = time.time() - start_time
+                vertex_colors_contiguous = np.ascontiguousarray(vertex_colors_uint8)
+                unique_colors = len(np.unique(vertex_colors_contiguous.view(np.uint32)))
+
+                status = f"{sampling_mode.capitalize()} mode: {num_verts} verts ({unique_colors} unique colors) in {total_time:.1f}s"
+                print(f"[BD Sample Voxelgrid] {status}")
+
+                return io.NodeOutput(new_mesh, status)
+
+            except Exception as e:
+                return io.NodeOutput(mesh, f"ERROR creating colored mesh: {e}")
+
+    @classmethod
+    def _sample_face_colors(cls, mesh_verts, mesh_faces, coords, attrs, voxel_size, layout, default_rgba,
+                            distance_threshold=3.0):
+        """
+        Sample ONE color per face using face centers.
+        Returns face_colors array of shape (num_faces, 4).
+        """
+        from scipy.spatial import cKDTree
+
+        # Transform mesh coordinates to voxelgrid space
+        mesh_verts_transformed = mesh_verts.copy()
+        mesh_verts_transformed[:, 1] = -mesh_verts[:, 2]
+        mesh_verts_transformed[:, 2] = mesh_verts[:, 1]
+
+        # Convert coords to world positions
+        if hasattr(coords, 'cpu'):
+            coords_np = coords.cpu().numpy()
+        else:
+            coords_np = np.array(coords)
+        voxel_world_positions = coords_np.astype(np.float32) * voxel_size
+
+        mesh_in_voxel_space = mesh_verts_transformed + 0.5
+
+        print(f"[BD Sample Voxelgrid] Face mode: building KD-tree from {len(voxel_world_positions)} voxels")
+        tree = cKDTree(voxel_world_positions)
+
+        # Get voxel colors
+        if hasattr(attrs, 'cpu'):
+            attrs_np = attrs.cpu().numpy()
+        else:
+            attrs_np = np.array(attrs)
+
+        base_color_slice = layout.get('base_color', slice(0, 3))
+        alpha_slice = layout.get('alpha', slice(5, 6))
+
+        rgb = np.clip(attrs_np[:, base_color_slice] if isinstance(base_color_slice, slice) else attrs_np[:, :3], 0, 1)
+        alpha = np.clip(attrs_np[:, alpha_slice].flatten() if isinstance(alpha_slice, slice) else np.ones(len(attrs_np)), 0, 1)
+        voxel_colors = np.column_stack([rgb, alpha]).astype(np.float32)
+
+        # Calculate face centers
+        face_centers = mesh_in_voxel_space[mesh_faces].mean(axis=1)
+        num_faces = len(face_centers)
+        print(f"[BD Sample Voxelgrid] Sampling colors for {num_faces} face centers...")
+
+        # Query nearest voxel for each face center
+        distances, indices = tree.query(face_centers, k=1, workers=-1)
+
+        # Get colors for each face
+        face_colors = voxel_colors[indices].copy()
+
+        # Apply distance threshold - use default color for faces too far from voxels
+        max_dist = voxel_size * distance_threshold
+        far_faces = distances > max_dist
+        face_colors[far_faces] = default_rgba
+
+        print(f"[BD Sample Voxelgrid] Face colors: {far_faces.sum()} faces beyond threshold ({100*far_faces.sum()/num_faces:.1f}%)")
+
+        return face_colors
 
     @classmethod
     def _sample_with_kdtree(cls, mesh_verts, coords, attrs, voxel_size, layout, default_rgba,
                              mesh_faces=None, sampling_mode="smooth", distance_threshold=3.0):
-        """Sample colors using KD-tree nearest neighbor lookup on sparse voxels."""
+        """Sample colors using KD-tree nearest neighbor lookup on sparse voxels (vertex modes)."""
         from scipy.spatial import cKDTree
 
         # The mesh and voxelgrid have swapped Y/Z axes with negation
@@ -182,22 +328,8 @@ class BD_SampleVoxelgridColors(io.ComfyNode):
 
         max_dist = voxel_size * distance_threshold
 
-        if sampling_mode == "face" and mesh_faces is not None:
-            print(f"[BD Sample Voxelgrid] Face mode: computing {len(mesh_faces)} face centers...")
-            face_centers = mesh_in_voxel_space[mesh_faces].mean(axis=1)
-
-            distances, indices = tree.query(face_centers, k=1, workers=-1)
-            face_colors = voxel_colors[indices]
-
-            vertex_colors = np.full((len(mesh_in_voxel_space), 4), default_rgba, dtype=np.float32)
-            for face_idx, face in enumerate(mesh_faces):
-                for vert_idx in face:
-                    vertex_colors[vert_idx] = face_colors[face_idx]
-
-            far_faces = distances > max_dist
-            print(f"[BD Sample Voxelgrid] Faces beyond {max_dist:.6f} threshold: {far_faces.sum()} ({100*far_faces.sum()/len(far_faces):.1f}%)")
-
-        elif sampling_mode == "sharp":
+        # Note: "face" mode is handled separately in _sample_face_colors()
+        if sampling_mode == "sharp":
             print(f"[BD Sample Voxelgrid] Sharp mode: k=1 nearest neighbor...")
             distances, indices = tree.query(mesh_in_voxel_space, k=1, workers=-1)
 
@@ -239,12 +371,12 @@ class BD_SampleVoxelgridPBR(io.ComfyNode):
             node_id="BD_SampleVoxelgridPBR",
             display_name="BD Sample Voxelgrid PBR",
             category="🧠BrainDead/Mesh",
-            description="Sample full PBR attributes (color, metallic, roughness) from TRELLIS2 voxelgrid to mesh vertices.",
+            description="Sample full PBR (color, metallic, roughness) from TRELLIS2 voxelgrid. Face mode: ONE solid color per face with NO bleeding.",
             inputs=[
                 io.Mesh.Input("mesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
-                io.Combo.Input("sampling_mode", options=["smooth", "sharp", "face"], default="sharp", optional=True,
-                              tooltip="smooth=k=4 weighted, sharp=k=1 nearest, face=per-face colors"),
+                io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
+                              tooltip="face=per-face no-bleed (RECOMMENDED), sharp=per-vertex k=1, smooth=per-vertex k=4"),
                 io.String.Input("default_color", default="0.5,0.5,0.5,1.0", optional=True),
                 io.Float.Input("default_metallic", default=0.0, min=0.0, max=1.0, step=0.05, optional=True),
                 io.Float.Input("default_roughness", default=0.5, min=0.0, max=1.0, step=0.05, optional=True),
@@ -301,60 +433,166 @@ class BD_SampleVoxelgridPBR(io.ComfyNode):
         num_verts = len(mesh_verts)
         print(f"[BD Sample PBR] Mesh: {num_verts} vertices")
 
-        vertex_colors, metallic_arr, roughness_arr = cls._sample_pbr_kdtree(
-            mesh_verts, coords, attrs, voxel_size, layout,
-            default_rgba, default_metallic, default_roughness,
-            mesh_faces=mesh_faces,
-            sampling_mode=sampling_mode,
-            distance_threshold=distance_threshold
-        )
-
-        try:
-            vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
-            if vertex_colors_uint8.shape[1] == 3:
-                alpha = np.full((len(vertex_colors_uint8), 1), 255, dtype=np.uint8)
-                vertex_colors_uint8 = np.hstack([vertex_colors_uint8, alpha])
-
-            new_mesh = trimesh.Trimesh(
-                vertices=mesh.vertices.copy(),
-                faces=mesh.faces.copy() if mesh_faces is not None else None,
-                process=False
+        if sampling_mode == "face" and mesh_faces is not None:
+            # FACE MODE: Sample per-face, then split vertices for no-bleed
+            face_colors, face_metallic, face_roughness = cls._sample_pbr_face(
+                mesh_verts, mesh_faces, coords, attrs, voxel_size, layout,
+                default_rgba, default_metallic, default_roughness,
+                distance_threshold=distance_threshold
             )
 
-            new_mesh.visual = trimesh.visual.ColorVisuals(
-                mesh=new_mesh,
-                vertex_colors=vertex_colors_uint8
+            try:
+                # Create mesh with split vertices (no color bleeding)
+                new_mesh = split_vertices_by_face(mesh, face_colors)
+
+                total_time = time.time() - start_time
+                num_faces = len(mesh_faces)
+
+                # For PBR, expand face values to vertex values (3 verts per face)
+                metallic_arr = np.repeat(face_metallic, 3)
+                roughness_arr = np.repeat(face_roughness, 3)
+
+                metallic_json = json.dumps(metallic_arr.tolist())
+                roughness_json = json.dumps(roughness_arr.tolist())
+
+                unique_colors = len(np.unique(face_colors.view(np.float32).reshape(-1, 4), axis=0))
+
+                status = (f"Face mode: {num_faces} faces ({unique_colors} colors), {len(new_mesh.vertices)} verts | "
+                          f"Metallic: [{face_metallic.min():.2f}, {face_metallic.max():.2f}] | "
+                          f"Roughness: [{face_roughness.min():.2f}, {face_roughness.max():.2f}] | "
+                          f"{total_time:.1f}s")
+                print(f"[BD Sample PBR] {status}")
+
+                return io.NodeOutput(new_mesh, metallic_json, roughness_json, status)
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return io.NodeOutput(mesh, "[]", "[]", f"ERROR in face mode: {e}")
+
+        else:
+            # VERTEX MODE: smooth or sharp
+            vertex_colors, metallic_arr, roughness_arr = cls._sample_pbr_kdtree(
+                mesh_verts, coords, attrs, voxel_size, layout,
+                default_rgba, default_metallic, default_roughness,
+                mesh_faces=mesh_faces,
+                sampling_mode=sampling_mode,
+                distance_threshold=distance_threshold
             )
 
-            if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
-                new_mesh.vertex_normals = mesh.vertex_normals.copy()
+            try:
+                vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
+                if vertex_colors_uint8.shape[1] == 3:
+                    alpha = np.full((len(vertex_colors_uint8), 1), 255, dtype=np.uint8)
+                    vertex_colors_uint8 = np.hstack([vertex_colors_uint8, alpha])
 
-            total_time = time.time() - start_time
+                new_mesh = trimesh.Trimesh(
+                    vertices=mesh.vertices.copy(),
+                    faces=mesh.faces.copy() if mesh_faces is not None else None,
+                    process=False
+                )
 
-            metallic_json = json.dumps(metallic_arr.tolist())
-            roughness_json = json.dumps(roughness_arr.tolist())
+                new_mesh.visual = trimesh.visual.ColorVisuals(
+                    mesh=new_mesh,
+                    vertex_colors=vertex_colors_uint8
+                )
 
-            vertex_colors_contiguous = np.ascontiguousarray(vertex_colors_uint8)
-            unique_colors = len(np.unique(vertex_colors_contiguous.view(np.uint32)))
+                if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
+                    new_mesh.vertex_normals = mesh.vertex_normals.copy()
 
-            status = (f"Sampled {num_verts} verts ({unique_colors} colors) | "
-                      f"Metallic: [{metallic_arr.min():.2f}, {metallic_arr.max():.2f}] | "
-                      f"Roughness: [{roughness_arr.min():.2f}, {roughness_arr.max():.2f}] | "
-                      f"{total_time:.1f}s")
-            print(f"[BD Sample PBR] {status}")
+                total_time = time.time() - start_time
 
-            return io.NodeOutput(new_mesh, metallic_json, roughness_json, status)
+                metallic_json = json.dumps(metallic_arr.tolist())
+                roughness_json = json.dumps(roughness_arr.tolist())
 
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return io.NodeOutput(mesh, "[]", "[]", f"ERROR creating PBR mesh: {e}")
+                vertex_colors_contiguous = np.ascontiguousarray(vertex_colors_uint8)
+                unique_colors = len(np.unique(vertex_colors_contiguous.view(np.uint32)))
+
+                status = (f"{sampling_mode.capitalize()} mode: {num_verts} verts ({unique_colors} colors) | "
+                          f"Metallic: [{metallic_arr.min():.2f}, {metallic_arr.max():.2f}] | "
+                          f"Roughness: [{roughness_arr.min():.2f}, {roughness_arr.max():.2f}] | "
+                          f"{total_time:.1f}s")
+                print(f"[BD Sample PBR] {status}")
+
+                return io.NodeOutput(new_mesh, metallic_json, roughness_json, status)
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return io.NodeOutput(mesh, "[]", "[]", f"ERROR creating PBR mesh: {e}")
+
+    @classmethod
+    def _sample_pbr_face(cls, mesh_verts, mesh_faces, coords, attrs, voxel_size, layout,
+                         default_rgba, default_metallic, default_roughness, distance_threshold=3.0):
+        """
+        Sample PBR per face (no blending).
+        Returns (face_colors, face_metallic, face_roughness) arrays.
+        """
+        from scipy.spatial import cKDTree
+
+        # Transform mesh coordinates
+        mesh_verts_transformed = mesh_verts.copy()
+        mesh_verts_transformed[:, 1] = -mesh_verts[:, 2]
+        mesh_verts_transformed[:, 2] = mesh_verts[:, 1]
+
+        if hasattr(coords, 'cpu'):
+            coords_np = coords.cpu().numpy()
+        else:
+            coords_np = np.array(coords)
+        voxel_world_positions = coords_np.astype(np.float32) * voxel_size
+
+        mesh_in_voxel_space = mesh_verts_transformed + 0.5
+
+        print(f"[BD Sample PBR] Face mode: building KD-tree from {len(voxel_world_positions)} voxels")
+        tree = cKDTree(voxel_world_positions)
+
+        if hasattr(attrs, 'cpu'):
+            attrs_np = attrs.cpu().numpy()
+        else:
+            attrs_np = np.array(attrs)
+
+        # Extract PBR channels
+        base_color_slice = layout.get('base_color', slice(0, 3))
+        metallic_slice = layout.get('metallic', slice(3, 4))
+        roughness_slice = layout.get('roughness', slice(4, 5))
+        alpha_slice = layout.get('alpha', slice(5, 6))
+
+        rgb = np.clip(attrs_np[:, base_color_slice], 0, 1) if isinstance(base_color_slice, slice) else np.clip(attrs_np[:, :3], 0, 1)
+        metallic = np.clip(attrs_np[:, metallic_slice].flatten(), 0, 1) if isinstance(metallic_slice, slice) else np.full(len(attrs_np), default_metallic)
+        roughness = np.clip(attrs_np[:, roughness_slice].flatten(), 0, 1) if isinstance(roughness_slice, slice) else np.full(len(attrs_np), default_roughness)
+        alpha = np.clip(attrs_np[:, alpha_slice].flatten(), 0, 1) if isinstance(alpha_slice, slice) else np.ones(len(attrs_np))
+
+        voxel_colors = np.column_stack([rgb, alpha]).astype(np.float32)
+
+        # Calculate face centers
+        face_centers = mesh_in_voxel_space[mesh_faces].mean(axis=1)
+        num_faces = len(face_centers)
+        print(f"[BD Sample PBR] Sampling PBR for {num_faces} face centers...")
+
+        # Query nearest voxel for each face
+        distances, indices = tree.query(face_centers, k=1, workers=-1)
+
+        face_colors = voxel_colors[indices].copy()
+        face_metallic = metallic[indices].copy()
+        face_roughness = roughness[indices].copy()
+
+        # Apply distance threshold
+        max_dist = voxel_size * distance_threshold
+        far_faces = distances > max_dist
+        face_colors[far_faces] = default_rgba
+        face_metallic[far_faces] = default_metallic
+        face_roughness[far_faces] = default_roughness
+
+        print(f"[BD Sample PBR] Face PBR: {far_faces.sum()} faces beyond threshold ({100*far_faces.sum()/num_faces:.1f}%)")
+        print(f"[BD Sample PBR] PBR ranges - Metallic: [{face_metallic.min():.3f}, {face_metallic.max():.3f}], Roughness: [{face_roughness.min():.3f}, {face_roughness.max():.3f}]")
+
+        return face_colors, face_metallic, face_roughness
 
     @classmethod
     def _sample_pbr_kdtree(cls, mesh_verts, coords, attrs, voxel_size, layout,
                            default_rgba, default_metallic, default_roughness,
                            mesh_faces=None, sampling_mode="sharp", distance_threshold=3.0):
-        """Sample all PBR channels using KD-tree nearest neighbor lookup."""
+        """Sample all PBR channels using KD-tree (vertex modes only - sharp/smooth)."""
         from scipy.spatial import cKDTree
 
         mesh_verts_transformed = mesh_verts.copy()
@@ -395,28 +633,8 @@ class BD_SampleVoxelgridPBR(io.ComfyNode):
         max_dist = voxel_size * distance_threshold
         num_verts = len(mesh_in_voxel_space)
 
-        if sampling_mode == "face" and mesh_faces is not None:
-            face_centers = mesh_in_voxel_space[mesh_faces].mean(axis=1)
-            distances, indices = tree.query(face_centers, k=1, workers=-1)
-
-            face_colors = voxel_colors[indices]
-            face_metallic = metallic[indices]
-            face_roughness = roughness[indices]
-
-            vertex_colors = np.full((num_verts, 4), default_rgba, dtype=np.float32)
-            vertex_metallic = np.full(num_verts, default_metallic, dtype=np.float32)
-            vertex_roughness = np.full(num_verts, default_roughness, dtype=np.float32)
-
-            for face_idx, face in enumerate(mesh_faces):
-                for vert_idx in face:
-                    vertex_colors[vert_idx] = face_colors[face_idx]
-                    vertex_metallic[vert_idx] = face_metallic[face_idx]
-                    vertex_roughness[vert_idx] = face_roughness[face_idx]
-
-            far_faces = distances > max_dist
-            print(f"[BD Sample PBR] Face mode: {far_faces.sum()} faces beyond threshold ({100*far_faces.sum()/len(far_faces):.1f}%)")
-
-        elif sampling_mode == "sharp":
+        # Note: "face" mode is handled separately in _sample_pbr_face()
+        if sampling_mode == "sharp":
             distances, indices = tree.query(mesh_in_voxel_space, k=1, workers=-1)
 
             vertex_colors = voxel_colors[indices]

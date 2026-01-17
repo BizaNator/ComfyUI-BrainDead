@@ -4,6 +4,12 @@ V3 API Color transfer nodes for transferring colors between meshes.
 BD_TransferPointcloudColors - Transfer from pointcloud to mesh (deprecated)
 BD_TransferColorsPymeshlab - Transfer using pymeshlab
 BD_TransferVertexColors - BVH-based vertex color transfer
+
+Transfer modes:
+- face: Per-face colors with NO bleeding (splits vertices) - RECOMMENDED for stylized
+- face_center: Per-face lookup but assigns to vertices (may bleed at shared verts)
+- vertex_nearest: Per-vertex k=1 nearest neighbor
+- barycentric: Smooth interpolation (for high-poly)
 """
 
 import numpy as np
@@ -17,6 +23,56 @@ try:
     HAS_TRIMESH = True
 except ImportError:
     HAS_TRIMESH = False
+
+
+def split_vertices_by_face(mesh, face_colors):
+    """
+    Split vertices so each face has its own unique vertices.
+    This prevents color bleeding at shared vertices.
+
+    Args:
+        mesh: trimesh.Trimesh object
+        face_colors: np.array of shape (num_faces, 4) - RGBA per face
+
+    Returns:
+        New trimesh with unique vertices per face and vertex colors set.
+    """
+    faces = mesh.faces
+    vertices = mesh.vertices
+    normals = mesh.vertex_normals if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None else None
+
+    num_faces = len(faces)
+
+    # Create new vertices - 3 unique vertices per triangle face
+    new_vertices = vertices[faces.flatten()].reshape(-1, 3)
+    new_faces = np.arange(num_faces * 3).reshape(-1, 3)
+
+    # Create vertex colors - same color for all 3 vertices of each face
+    new_vertex_colors = np.repeat(face_colors, 3, axis=0)
+
+    # Handle normals if present
+    new_normals = None
+    if normals is not None:
+        new_normals = normals[faces.flatten()].reshape(-1, 3)
+
+    # Create new mesh with split vertices
+    new_mesh = trimesh.Trimesh(
+        vertices=new_vertices,
+        faces=new_faces,
+        process=False
+    )
+
+    # Set vertex colors
+    vertex_colors_uint8 = (new_vertex_colors * 255).clip(0, 255).astype(np.uint8)
+    new_mesh.visual = trimesh.visual.ColorVisuals(
+        mesh=new_mesh,
+        vertex_colors=vertex_colors_uint8
+    )
+
+    if new_normals is not None:
+        new_mesh.vertex_normals = new_normals
+
+    return new_mesh
 
 
 class BD_TransferPointcloudColors(io.ComfyNode):
@@ -424,23 +480,22 @@ class BD_TransferVertexColors(io.ComfyNode):
             description="""Transfer vertex colors from source mesh to target mesh using spatial lookup.
 
 Transfer modes:
-- face_center: For each target face, find nearest source face and copy color
-               (sharp color boundaries, best for game assets)
-- vertex_nearest: For each target vertex, find nearest source vertex color
-                  (may cause slight bleeding at boundaries)
-- barycentric: Interpolate colors using barycentric coordinates
-               (smoothest but may blur sharp edges)
+- face: Per-face colors with NO bleeding - splits vertices so each face has unique verts.
+        RECOMMENDED for stylized/low-poly looks. Triples vertex count but ensures clean colors.
+- face_center: Per-face lookup but assigns to shared vertices (may bleed at edges)
+- vertex_nearest: Per-vertex k=1 nearest neighbor (may bleed)
+- barycentric: Smooth interpolation for high-poly blended looks
 
 Typical workflow:
 1. Sample colors to high-poly mesh (BD_SampleVoxelgridColors)
 2. Decimate mesh (BD_SmartDecimate)
-3. Transfer colors back (BD_TransferVertexColors)""",
+3. Transfer colors back (BD_TransferVertexColors) with face mode for clean edges""",
             inputs=[
                 io.Mesh.Input("source_mesh", tooltip="High-poly mesh with vertex colors"),
                 io.Mesh.Input("target_mesh", tooltip="Decimated mesh to receive colors"),
-                io.Combo.Input("transfer_mode", options=["face_center", "vertex_nearest", "barycentric"],
-                              default="face_center", optional=True,
-                              tooltip="face_center=sharp boundaries, vertex_nearest=per-vertex, barycentric=smooth interpolation"),
+                io.Combo.Input("transfer_mode", options=["face", "face_center", "vertex_nearest", "barycentric"],
+                              default="face", optional=True,
+                              tooltip="face=NO bleed (splits verts), face_center=sharp, vertex_nearest=per-vertex, barycentric=smooth"),
                 io.String.Input("default_color", default="1.0,0.0,1.0,1.0", optional=True,
                                tooltip="Fallback color (magenta) for missing coverage"),
             ],
@@ -498,6 +553,15 @@ Typical workflow:
         print(f"[BD Transfer Colors] Target: {len(target_verts)} verts, {len(target_faces) if target_faces is not None else 0} faces")
         print(f"[BD Transfer Colors] Mode: {transfer_mode}")
 
+        # Face mode with vertex splitting - NO color bleeding
+        if transfer_mode == "face" and target_faces is not None:
+            new_mesh, status = cls._transfer_face(
+                source_verts, source_faces, source_colors,
+                target_mesh, default_rgba, start_time
+            )
+            return io.NodeOutput(new_mesh, status)
+
+        # Other modes that don't split vertices
         if transfer_mode == "face_center" and target_faces is not None:
             target_colors = cls._transfer_face_center(
                 source_verts, source_faces, source_colors,
@@ -581,6 +645,72 @@ Typical workflow:
         print(f"[BD Transfer Colors] Face center: {len(target_faces)} faces mapped, {num_default} verts with default color")
 
         return target_colors
+
+    @classmethod
+    def _transfer_face(cls, source_verts, source_faces, source_colors,
+                       target_mesh, default_rgba, start_time):
+        """
+        Transfer colors using face mode with vertex splitting - NO color bleeding.
+
+        For each target face:
+        1. Find nearest source face center
+        2. Get the average color of that source face
+        3. Apply same color to all 3 vertices of the target face
+
+        Vertices are split so each face has unique vertices, preventing any
+        color interpolation at shared edges.
+
+        Returns:
+            (new_mesh, status_string)
+        """
+        from scipy.spatial import cKDTree
+
+        target_verts = np.array(target_mesh.vertices, dtype=np.float32)
+        target_faces = np.array(target_mesh.faces)
+        num_target_faces = len(target_faces)
+
+        # Compute source face centers and average colors
+        source_face_centers = source_verts[source_faces].mean(axis=1)
+        source_face_colors = source_colors[source_faces].mean(axis=1)
+
+        print(f"[BD Transfer Colors] Face mode: Building KD-tree from {len(source_face_centers)} source face centers")
+
+        tree = cKDTree(source_face_centers)
+
+        # Compute target face centers
+        target_face_centers = target_verts[target_faces].mean(axis=1)
+
+        # Find nearest source face for each target face
+        distances, indices = tree.query(target_face_centers, k=1, workers=-1)
+
+        # Get face colors for target - one color per face
+        target_face_colors = source_face_colors[indices]
+
+        # Ensure RGBA
+        if target_face_colors.shape[1] == 3:
+            target_face_colors = np.column_stack([target_face_colors, np.ones(num_target_faces)])
+
+        print(f"[BD Transfer Colors] Face mode: Splitting vertices for {num_target_faces} faces (NO bleed)")
+
+        # Use split_vertices_by_face to create mesh with unique vertices per face
+        new_mesh = split_vertices_by_face(target_mesh, target_face_colors)
+
+        total_time = time.time() - start_time
+
+        # Count unique colors
+        if hasattr(new_mesh, 'visual') and hasattr(new_mesh.visual, 'vertex_colors'):
+            colors = np.ascontiguousarray(new_mesh.visual.vertex_colors)
+            unique_colors = len(np.unique(colors.view(np.uint32)))
+        else:
+            unique_colors = 0
+
+        original_verts = len(target_verts)
+        new_verts = len(new_mesh.vertices)
+
+        status = f"Face mode (NO bleed): {num_target_faces} faces, {original_verts}→{new_verts} verts ({unique_colors} colors) | {total_time:.1f}s"
+        print(f"[BD Transfer Colors] {status}")
+
+        return new_mesh, status
 
     @classmethod
     def _transfer_vertex_nearest(cls, source_verts, source_colors, target_verts, default_rgba):
