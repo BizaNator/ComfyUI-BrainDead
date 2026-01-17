@@ -27,3 +27,4 @@ ENV/
 *.swp
 *.swo
 .DS_Store
+*_v1_backup.py
