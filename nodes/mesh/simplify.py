@@ -152,19 +152,29 @@ Much faster than Blender for large meshes.""",
             # Initialize CuMesh
             cu = cumesh.CuMesh()
             cu.init(vertices_yup, faces)
+            initial_faces = cu.num_faces
             print(f"[BD CuMesh] Initialized: {cu.num_vertices} verts, {cu.num_faces} faces")
 
-            # Fill holes
+            # Fill holes (be careful - can explode face count on bad meshes)
             if fill_holes:
+                pre_fill_faces = cu.num_faces
                 cu.fill_holes(max_hole_perimeter=fill_holes_perimeter)
-                print(f"[BD CuMesh] After fill holes: {cu.num_vertices} verts, {cu.num_faces} faces")
+                post_fill_faces = cu.num_faces
+                # Sanity check: if fill_holes more than doubled face count, something is wrong
+                if post_fill_faces > pre_fill_faces * 2:
+                    print(f"[BD CuMesh] WARNING: fill_holes exploded faces ({pre_fill_faces} -> {post_fill_faces}), reinitializing...")
+                    cu = cumesh.CuMesh()
+                    cu.init(vertices_yup, faces)
+                else:
+                    print(f"[BD CuMesh] After fill holes: {cu.num_vertices} verts, {cu.num_faces} faces")
 
             # Remove degenerate faces
             cu.remove_degenerate_faces()
 
-            # Unify face orientations before simplify
-            cu.unify_face_orientations()
-            print("[BD CuMesh] Unified face orientations")
+            # Unify face orientations before simplify (only if we have faces)
+            if cu.num_faces > 0:
+                cu.unify_face_orientations()
+                print("[BD CuMesh] Unified face orientations")
 
             # Simplify
             if cu.num_faces > target_faces:
@@ -172,8 +182,14 @@ Much faster than Blender for large meshes.""",
                 cu.simplify(target_faces, verbose=True)
                 print(f"[BD CuMesh] After simplify: {cu.num_vertices} verts, {cu.num_faces} faces")
 
+            # Check if simplify removed all faces (bad mesh or bug)
+            if cu.num_faces == 0:
+                print("[BD CuMesh] ERROR: Simplify removed all faces! Returning original mesh.")
+                return io.NodeOutput(mesh, "ERROR: Simplify removed all faces - mesh may have issues")
+
             # Unify orientations again (simplify can break it)
-            cu.unify_face_orientations()
+            if cu.num_faces > 0:
+                cu.unify_face_orientations()
 
             # Remove unreferenced vertices
             cu.remove_unreferenced_vertices()
