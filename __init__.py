@@ -13,16 +13,55 @@ A comprehensive collection of ComfyUI custom nodes for:
 https://github.com/BizaNator/ComfyUI-BrainDead
 """
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
-# Import node mappings from each submodule
+from comfy_api.latest import io, ComfyExtension
+
+# =============================================================================
+# V3 Node Imports
+# =============================================================================
+
+from .nodes.cache import CACHE_V3_NODES
+from .nodes.mesh import MESH_V3_NODES
+from .nodes.trellis2 import TRELLIS2_V3_NODES
+from .nodes.character import CHARACTER_V3_NODES
+from .nodes.prompt import PROMPT_V3_NODES
+
+# =============================================================================
+# V3 Extension Entry Point
+# =============================================================================
+
+class BrainDeadExtension(ComfyExtension):
+    """ComfyUI-BrainDead V3 Extension with cache, mesh, TRELLIS2, character, and prompt nodes."""
+
+    async def get_node_list(self) -> list[type[io.ComfyNode]]:
+        """Return all BrainDead nodes for V3 registration."""
+        return [
+            *CACHE_V3_NODES,
+            *MESH_V3_NODES,
+            *TRELLIS2_V3_NODES,
+            *CHARACTER_V3_NODES,
+            *PROMPT_V3_NODES,
+        ]
+
+
+async def comfy_entrypoint() -> BrainDeadExtension:
+    """V3 entry point for ComfyUI extension system."""
+    return BrainDeadExtension()
+
+
+# =============================================================================
+# V1 Backward Compatibility
+# =============================================================================
+
+# Import V1 node mappings for backward compatibility
 from .nodes.cache import NODE_CLASS_MAPPINGS as CACHE_NODES, NODE_DISPLAY_NAME_MAPPINGS as CACHE_DISPLAY
 from .nodes.mesh import NODE_CLASS_MAPPINGS as MESH_NODES, NODE_DISPLAY_NAME_MAPPINGS as MESH_DISPLAY
 from .nodes.trellis2 import NODE_CLASS_MAPPINGS as TRELLIS2_NODES, NODE_DISPLAY_NAME_MAPPINGS as TRELLIS2_DISPLAY
 from .nodes.character import NODE_CLASS_MAPPINGS as CHARACTER_NODES, NODE_DISPLAY_NAME_MAPPINGS as CHARACTER_DISPLAY
 from .nodes.prompt import NODE_CLASS_MAPPINGS as PROMPT_NODES, NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY
 
-# Aggregate all node mappings
+# Aggregate all node mappings for V1 registration
 NODE_CLASS_MAPPINGS = {
     **CACHE_NODES,
     **MESH_NODES,
@@ -39,11 +78,19 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **PROMPT_DISPLAY,
 }
 
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+__all__ = [
+    'NODE_CLASS_MAPPINGS',
+    'NODE_DISPLAY_NAME_MAPPINGS',
+    'comfy_entrypoint',
+    'BrainDeadExtension',
+]
 
-# Startup message
+# =============================================================================
+# Startup Message
+# =============================================================================
+
 print("=" * 60)
-print("ComfyUI-BrainDead v1.1.0")
+print(f"ComfyUI-BrainDead v{__version__} (V3 API)")
 print("Created by BizaNator for BrainDeadGuild.com")
 print(f"Loaded {len(NODE_CLASS_MAPPINGS)} custom nodes:")
 print(f"  - Cache: {len(CACHE_NODES)} nodes")

@@ -1,5 +1,5 @@
 """
-Color transfer nodes for transferring colors between meshes.
+V3 API Color transfer nodes for transferring colors between meshes.
 
 BD_TransferPointcloudColors - Transfer from pointcloud to mesh (deprecated)
 BD_TransferColorsPymeshlab - Transfer using pymeshlab
@@ -9,6 +9,8 @@ BD_TransferVertexColors - BVH-based vertex color transfer
 import numpy as np
 import time
 
+from comfy_api.latest import io
+
 # Check for optional trimesh support
 try:
     import trimesh
@@ -17,7 +19,7 @@ except ImportError:
     HAS_TRIMESH = False
 
 
-class BD_TransferPointcloudColors:
+class BD_TransferPointcloudColors(io.ComfyNode):
     """
     Transfer colors from a pointcloud to mesh vertices using nearest-neighbor lookup.
 
@@ -28,67 +30,46 @@ class BD_TransferPointcloudColors:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "mesh": ("TRIMESH",),
-                "pointcloud": ("TRIMESH",),  # pbr_pointcloud from TRELLIS2
-            },
-            "optional": {
-                "coordinate_fix": (["auto", "none", "mesh_to_zup", "pointcloud_to_yup"], {
-                    "default": "auto",
-                    "tooltip": "Fix coordinate mismatch between mesh and pointcloud"}),
-                "max_distance": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.001,
-                                           "tooltip": "Max distance for color transfer (0 = unlimited)"}),
-                "default_color": ("STRING", {"default": "0.5,0.5,0.5,1.0",
-                                             "tooltip": "RGBA color for vertices with no nearby points"}),
-            }
-        }
-
-    RETURN_TYPES = ("TRIMESH", "STRING")
-    RETURN_NAMES = ("mesh", "status")
-    FUNCTION = "transfer_colors"
-    CATEGORY = "BrainDead/Mesh"
-    DESCRIPTION = """
-Transfer colors from pointcloud to mesh vertices.
-
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_TransferPointcloudColors",
+            display_name="BD Transfer Pointcloud Colors (deprecated)",
+            category="🧠BrainDead/Mesh",
+            description="""Transfer colors from pointcloud to mesh vertices using KD-tree nearest-neighbor.
 Use this to bypass TRELLIS2's UV/texture pipeline:
 1. Connect 'trimesh' output to mesh input
 2. Connect 'pbr_pointcloud' output to pointcloud input
 3. Output mesh has vertex colors ready for export/decimation
 
-The node uses KD-tree nearest-neighbor search for fast color transfer,
-even on 14M+ polygon meshes (typically <1 minute).
-
-Inputs:
-- mesh: Geometry mesh from TRELLIS2 (or any TRIMESH)
-- pointcloud: pbr_pointcloud from TRELLIS2 (has colors)
-- coordinate_fix: Handle TRELLIS2 coordinate mismatch
-  - auto: Auto-detect and fix (recommended)
-  - none: No conversion
-  - mesh_to_zup: Convert mesh Y-up to Z-up
-  - pointcloud_to_yup: Convert pointcloud Z-up back to Y-up
-- max_distance: Skip vertices farther than this from any point (0=unlimited)
-- default_color: RGBA for vertices with no nearby points
-
 Note: TRELLIS2 outputs mesh in Y-up but pointcloud in Z-up coordinates.
-The 'auto' setting detects and fixes this automatically.
+The 'auto' setting detects and fixes this automatically.""",
+            inputs=[
+                io.Mesh.Input("mesh"),
+                io.Mesh.Input("pointcloud", tooltip="pbr_pointcloud from TRELLIS2"),
+                io.Combo.Input("coordinate_fix", options=["auto", "none", "mesh_to_zup", "pointcloud_to_yup"],
+                              default="auto", optional=True, tooltip="Fix coordinate mismatch between mesh and pointcloud"),
+                io.Float.Input("max_distance", default=0.0, min=0.0, max=10.0, step=0.001, optional=True,
+                              tooltip="Max distance for color transfer (0 = unlimited)"),
+                io.String.Input("default_color", default="0.5,0.5,0.5,1.0", optional=True,
+                               tooltip="RGBA color for vertices with no nearby points"),
+            ],
+            outputs=[
+                io.Mesh.Output(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-Output mesh can be:
-- Exported directly with vertex colors (GLB/PLY)
-- Passed to Blender decimation with color preservation
-- Cached with BD_CacheMesh
-"""
-
-    def transfer_colors(self, mesh, pointcloud, coordinate_fix="auto", max_distance=0.0, default_color="0.5,0.5,0.5,1.0"):
+    @classmethod
+    def execute(cls, mesh, pointcloud, coordinate_fix: str = "auto",
+                max_distance: float = 0.0, default_color: str = "0.5,0.5,0.5,1.0") -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return (mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(mesh, "ERROR: trimesh not installed")
 
         if mesh is None:
-            return (None, "ERROR: mesh is None")
+            return io.NodeOutput(None, "ERROR: mesh is None")
 
         if pointcloud is None:
-            return (mesh, "ERROR: pointcloud is None - no colors to transfer")
+            return io.NodeOutput(mesh, "ERROR: pointcloud is None - no colors to transfer")
 
         # Parse default color
         try:
@@ -110,7 +91,7 @@ Output mesh can be:
         if hasattr(pointcloud, 'vertices'):
             pc_verts = np.array(pointcloud.vertices, dtype=np.float64)
         else:
-            return (mesh, "ERROR: pointcloud has no vertices")
+            return io.NodeOutput(mesh, "ERROR: pointcloud has no vertices")
 
         # Debug: Show bounding boxes BEFORE any conversion
         mesh_min = mesh_verts.min(axis=0)
@@ -197,7 +178,7 @@ Output mesh can be:
                 pc_colors = pc_colors.astype(np.float64) / 255.0
 
         if pc_colors is None or len(pc_colors) == 0:
-            return (mesh, "ERROR: pointcloud has no colors")
+            return io.NodeOutput(mesh, "ERROR: pointcloud has no colors")
 
         print(f"[BD Transfer Colors] Pointcloud: {len(pc_verts)} points with colors")
 
@@ -279,13 +260,13 @@ Output mesh can be:
             status = f"Transferred colors to {num_verts} vertices ({unique_colors} unique colors, avg_dist={avg_dist:.4f}) in {total_time:.1f}s"
             print(f"[BD Transfer Colors] {status}")
 
-            return (new_mesh, status)
+            return io.NodeOutput(new_mesh, status)
 
         except Exception as e:
-            return (mesh, f"ERROR creating colored mesh: {e}")
+            return io.NodeOutput(mesh, f"ERROR creating colored mesh: {e}")
 
 
-class BD_TransferColorsPymeshlab:
+class BD_TransferColorsPymeshlab(io.ComfyNode):
     """
     Transfer colors from TRELLIS2 pointcloud to mesh using pymeshlab.
 
@@ -293,50 +274,49 @@ class BD_TransferColorsPymeshlab:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "mesh": ("TRIMESH",),
-                "pointcloud": ("TRIMESH",),  # pbr_pointcloud from TRELLIS2
-            },
-            "optional": {
-                "max_distance": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001,
-                                           "tooltip": "Max distance for color transfer. 0 = automatic"}),
-            }
-        }
-
-    RETURN_TYPES = ("TRIMESH", "STRING")
-    RETURN_NAMES = ("mesh", "status")
-    FUNCTION = "transfer_colors"
-    CATEGORY = "BrainDead/Mesh"
-    DESCRIPTION = """
-Transfer colors from TRELLIS2 pointcloud to mesh using pymeshlab.
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_TransferColorsPymeshlab",
+            display_name="BD Transfer Colors (Pymeshlab)",
+            category="🧠BrainDead/Mesh",
+            description="""Transfer colors from TRELLIS2 pointcloud to mesh using pymeshlab.
 
 This is the RELIABLE approach - uses MeshLab's proven algorithms
 for point cloud to mesh color transfer.
 
 Connect:
 1. 'trimesh' from TRELLIS.2 Shape to Textured Mesh -> mesh
-2. 'pbr_pointcloud' from TRELLIS.2 Shape to Textured Mesh -> pointcloud
-"""
+2. 'pbr_pointcloud' from TRELLIS.2 Shape to Textured Mesh -> pointcloud""",
+            inputs=[
+                io.Mesh.Input("mesh"),
+                io.Mesh.Input("pointcloud", tooltip="pbr_pointcloud from TRELLIS2"),
+                io.Float.Input("max_distance", default=0.0, min=0.0, max=1.0, step=0.001, optional=True,
+                              tooltip="Max distance for color transfer. 0 = automatic"),
+            ],
+            outputs=[
+                io.Mesh.Output(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    def transfer_colors(self, mesh, pointcloud, max_distance=0.0):
+    @classmethod
+    def execute(cls, mesh, pointcloud, max_distance: float = 0.0) -> io.NodeOutput:
         import tempfile
         import os
 
         if not HAS_TRIMESH:
-            return (mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(mesh, "ERROR: trimesh not installed")
 
         try:
             import pymeshlab
         except ImportError:
-            return (mesh, "ERROR: pymeshlab not installed")
+            return io.NodeOutput(mesh, "ERROR: pymeshlab not installed")
 
         if mesh is None:
-            return (None, "ERROR: mesh is None")
+            return io.NodeOutput(None, "ERROR: mesh is None")
 
         if pointcloud is None:
-            return (mesh, "ERROR: pointcloud is None")
+            return io.NodeOutput(mesh, "ERROR: pointcloud is None")
 
         start_time = time.time()
 
@@ -352,7 +332,7 @@ Connect:
             pc_colors = pointcloud.visual.vertex_colors
             print(f"[BD Pymeshlab Transfer] Pointcloud visual has {len(pc_colors)} vertex colors")
         else:
-            return (mesh, "ERROR: pointcloud has no colors")
+            return io.NodeOutput(mesh, "ERROR: pointcloud has no colors")
 
         # Save to temp files for pymeshlab
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -400,7 +380,7 @@ Connect:
                                     targetmesh=1,
                                     colortransfer=True)
                 except Exception as e2:
-                    return (mesh, f"ERROR: pymeshlab transfer failed: {e2}")
+                    return io.NodeOutput(mesh, f"ERROR: pymeshlab transfer failed: {e2}")
 
             # Save result
             ms.save_current_mesh(output_path)
@@ -424,10 +404,10 @@ Connect:
 
             print(f"[BD Pymeshlab Transfer] {status}")
 
-            return (result_mesh, status)
+            return io.NodeOutput(result_mesh, status)
 
 
-class BD_TransferVertexColors:
+class BD_TransferVertexColors(io.ComfyNode):
     """
     Transfer vertex colors from source mesh to target mesh using BVH spatial lookup.
 
@@ -436,27 +416,12 @@ class BD_TransferVertexColors:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "source_mesh": ("TRIMESH", {"tooltip": "High-poly mesh with vertex colors"}),
-                "target_mesh": ("TRIMESH", {"tooltip": "Decimated mesh to receive colors"}),
-            },
-            "optional": {
-                "transfer_mode": (["face_center", "vertex_nearest", "barycentric"], {
-                    "default": "face_center",
-                    "tooltip": "face_center=sharp boundaries, vertex_nearest=per-vertex, barycentric=smooth interpolation"
-                }),
-                "default_color": ("STRING", {"default": "1.0,0.0,1.0,1.0", "tooltip": "Fallback color (magenta) for missing coverage"}),
-            }
-        }
-
-    RETURN_TYPES = ("TRIMESH", "STRING")
-    RETURN_NAMES = ("mesh", "status")
-    FUNCTION = "transfer_colors"
-    CATEGORY = "BrainDead/Mesh"
-    DESCRIPTION = """
-Transfer vertex colors from source mesh to target mesh using spatial lookup.
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_TransferVertexColors",
+            display_name="BD Transfer Vertex Colors",
+            category="🧠BrainDead/Mesh",
+            description="""Transfer vertex colors from source mesh to target mesh using spatial lookup.
 
 Transfer modes:
 - face_center: For each target face, find nearest source face and copy color
@@ -469,18 +434,32 @@ Transfer modes:
 Typical workflow:
 1. Sample colors to high-poly mesh (BD_SampleVoxelgridColors)
 2. Decimate mesh (BD_SmartDecimate)
-3. Transfer colors back (BD_TransferVertexColors)
-"""
+3. Transfer colors back (BD_TransferVertexColors)""",
+            inputs=[
+                io.Mesh.Input("source_mesh", tooltip="High-poly mesh with vertex colors"),
+                io.Mesh.Input("target_mesh", tooltip="Decimated mesh to receive colors"),
+                io.Combo.Input("transfer_mode", options=["face_center", "vertex_nearest", "barycentric"],
+                              default="face_center", optional=True,
+                              tooltip="face_center=sharp boundaries, vertex_nearest=per-vertex, barycentric=smooth interpolation"),
+                io.String.Input("default_color", default="1.0,0.0,1.0,1.0", optional=True,
+                               tooltip="Fallback color (magenta) for missing coverage"),
+            ],
+            outputs=[
+                io.Mesh.Output(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    def transfer_colors(self, source_mesh, target_mesh, transfer_mode="face_center",
-                        default_color="1.0,0.0,1.0,1.0"):
+    @classmethod
+    def execute(cls, source_mesh, target_mesh, transfer_mode: str = "face_center",
+                default_color: str = "1.0,0.0,1.0,1.0") -> io.NodeOutput:
         from scipy.spatial import cKDTree
 
         if not HAS_TRIMESH:
-            return (target_mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(target_mesh, "ERROR: trimesh not installed")
 
         if source_mesh is None or target_mesh is None:
-            return (target_mesh, "ERROR: source or target mesh is None")
+            return io.NodeOutput(target_mesh, "ERROR: source or target mesh is None")
 
         start_time = time.time()
 
@@ -504,7 +483,7 @@ Typical workflow:
                 source_colors = source_colors / 255.0
 
         if source_colors is None:
-            return (target_mesh, "ERROR: Source mesh has no vertex colors")
+            return io.NodeOutput(target_mesh, "ERROR: Source mesh has no vertex colors")
 
         # Ensure RGBA
         if source_colors.shape[1] == 3:
@@ -520,17 +499,17 @@ Typical workflow:
         print(f"[BD Transfer Colors] Mode: {transfer_mode}")
 
         if transfer_mode == "face_center" and target_faces is not None:
-            target_colors = self._transfer_face_center(
+            target_colors = cls._transfer_face_center(
                 source_verts, source_faces, source_colors,
                 target_verts, target_faces, default_rgba
             )
         elif transfer_mode == "barycentric" and target_faces is not None:
-            target_colors = self._transfer_barycentric(
+            target_colors = cls._transfer_barycentric(
                 source_mesh, source_colors,
                 target_verts, default_rgba
             )
         else:
-            target_colors = self._transfer_vertex_nearest(
+            target_colors = cls._transfer_vertex_nearest(
                 source_verts, source_colors, target_verts, default_rgba
             )
 
@@ -561,14 +540,15 @@ Typical workflow:
             status = f"Transferred colors: {len(target_verts)} verts ({unique_colors} unique colors) | mode={transfer_mode} | {total_time:.1f}s"
             print(f"[BD Transfer Colors] {status}")
 
-            return (new_mesh, status)
+            return io.NodeOutput(new_mesh, status)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return (target_mesh, f"ERROR: {e}")
+            return io.NodeOutput(target_mesh, f"ERROR: {e}")
 
-    def _transfer_face_center(self, source_verts, source_faces, source_colors,
+    @classmethod
+    def _transfer_face_center(cls, source_verts, source_faces, source_colors,
                                target_verts, target_faces, default_rgba):
         """Transfer colors using face center lookup (sharp boundaries)."""
         from scipy.spatial import cKDTree
@@ -602,7 +582,8 @@ Typical workflow:
 
         return target_colors
 
-    def _transfer_vertex_nearest(self, source_verts, source_colors, target_verts, default_rgba):
+    @classmethod
+    def _transfer_vertex_nearest(cls, source_verts, source_colors, target_verts, default_rgba):
         """Transfer colors using nearest vertex lookup."""
         from scipy.spatial import cKDTree
 
@@ -617,7 +598,8 @@ Typical workflow:
 
         return target_colors
 
-    def _transfer_barycentric(self, source_mesh, source_colors, target_verts, default_rgba):
+    @classmethod
+    def _transfer_barycentric(cls, source_mesh, source_colors, target_verts, default_rgba):
         """Transfer colors using barycentric interpolation on source mesh."""
         # Use trimesh's closest point functionality
         closest_points, distances, face_indices = source_mesh.nearest.on_surface(target_verts)
@@ -634,7 +616,7 @@ Typical workflow:
             tri_colors = source_colors[source_faces[face_idx]]
 
             # Compute barycentric coordinates
-            bary = self._barycentric_coords(point, tri_verts)
+            bary = cls._barycentric_coords(point, tri_verts)
 
             # Interpolate color
             target_colors[i] = (bary[0] * tri_colors[0] +
@@ -645,7 +627,8 @@ Typical workflow:
 
         return target_colors
 
-    def _barycentric_coords(self, p, tri):
+    @classmethod
+    def _barycentric_coords(cls, p, tri):
         """Compute barycentric coordinates for point p in triangle tri."""
         v0, v1, v2 = tri[0], tri[1], tri[2]
 
@@ -670,7 +653,14 @@ Typical workflow:
         return np.array([u, v, w]).clip(0, 1)
 
 
-# Node exports
+# V3 node list for extension
+MESH_TRANSFER_V3_NODES = [
+    BD_TransferPointcloudColors,
+    BD_TransferColorsPymeshlab,
+    BD_TransferVertexColors,
+]
+
+# V1 compatibility - NODE_CLASS_MAPPINGS dict
 MESH_TRANSFER_NODES = {
     "BD_TransferPointcloudColors": BD_TransferPointcloudColors,
     "BD_TransferColorsPymeshlab": BD_TransferColorsPymeshlab,

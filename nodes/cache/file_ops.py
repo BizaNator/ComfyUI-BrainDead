@@ -1,5 +1,5 @@
 """
-File operation nodes for saving and loading various data types.
+V3 API file operation nodes for saving and loading various data types.
 
 BD_ClearCache - Clear cache files by pattern
 BD_SaveFile - Save data to output folder
@@ -10,6 +10,10 @@ BD_LoadText - Load text from file path
 """
 
 import os
+from glob import glob
+
+from comfy_api.latest import io
+
 from ...utils.shared import (
     CACHE_DIR,
     OUTPUT_DIR,
@@ -29,7 +33,7 @@ except ImportError:
     HAS_TRIMESH = False
 
 
-class BD_ClearCache:
+class BD_ClearCache(io.ComfyNode):
     """
     Clear cached files from BrainDead_Cache/ folder by name pattern.
 
@@ -38,34 +42,35 @@ class BD_ClearCache:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "pattern": ("STRING", {"default": "*"}),
-                "confirm_clear": ("BOOLEAN", {"default": False}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_ClearCache",
+            display_name="BD Clear Cache",
+            category="🧠BrainDead/Cache",
+            description="Clear cached files from BrainDead_Cache folder by pattern.",
+            is_output_node=True,
+            inputs=[
+                io.String.Input("pattern", default="*", tooltip="File pattern to match (e.g., 'image_*' or '*')"),
+                io.Boolean.Input("confirm_clear", default=False, tooltip="Must be True to actually delete files"),
+            ],
+            outputs=[
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("status",)
-    FUNCTION = "clear_cache"
-    CATEGORY = "BrainDead/Cache"
-    OUTPUT_NODE = True
-
-    def clear_cache(self, pattern, confirm_clear):
+    @classmethod
+    def execute(cls, pattern: str, confirm_clear: bool) -> io.NodeOutput:
         if not confirm_clear:
-            return (f"Set confirm_clear=True to delete: {pattern}",)
+            return io.NodeOutput(f"Set confirm_clear=True to delete: {pattern}")
 
         if not os.path.exists(CACHE_DIR):
-            return ("Cache directory empty",)
-
-        from glob import glob
+            return io.NodeOutput("Cache directory empty")
 
         search_pattern = os.path.join(CACHE_DIR, f"{pattern}*")
         matching_files = glob(search_pattern)
 
         if not matching_files:
-            return (f"No files matching: {pattern}",)
+            return io.NodeOutput(f"No files matching: {pattern}")
 
         deleted_count = 0
         deleted_size = 0
@@ -79,40 +84,40 @@ class BD_ClearCache:
                 print(f"[BD Cache] Error deleting {filepath}: {e}")
 
         size_mb = deleted_size / (1024 * 1024)
-        return (f"Deleted {deleted_count} files ({size_mb:.1f} MB)",)
+        return io.NodeOutput(f"Deleted {deleted_count} files ({size_mb:.1f} MB)")
 
 
-class BD_SaveFile:
+class BD_SaveFile(io.ComfyNode):
     """
     Save ANY data type to file in native format, output the file path.
 
     SAVES TO: ComfyUI output/ folder (NOT BrainDead_Cache)
     Files saved here are NOT affected by BD Clear Cache.
-
-    Supported types: IMAGE (PNG), MASK (PNG), AUDIO (WAV), LATENT, STRING (TXT), TRIMESH (PLY/OBJ/GLB)
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "data": ("*",),
-                "filename": ("STRING", {"default": "saved_file"}),
-                "skip_if_exists": ("BOOLEAN", {"default": True}),
-            },
-            "optional": {
-                "name_prefix": ("STRING", {"default": ""}),
-                "extension": ("STRING", {"default": ""}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_SaveFile",
+            display_name="BD Save File",
+            category="🧠BrainDead/Cache",
+            description="Save any data type to output folder. Supports IMAGE, MASK, AUDIO, LATENT, STRING, TRIMESH.",
+            is_output_node=True,
+            inputs=[
+                io.AnyType.Input("data"),
+                io.String.Input("filename", default="saved_file"),
+                io.Boolean.Input("skip_if_exists", default=True),
+                io.String.Input("name_prefix", default="", optional=True),
+                io.String.Input("extension", default="", optional=True, tooltip="Override auto-detected extension"),
+            ],
+            outputs=[
+                io.String.Output(display_name="file_path"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("file_path", "status")
-    FUNCTION = "save_file"
-    CATEGORY = "BrainDead/Cache"
-    OUTPUT_NODE = True
-
-    def _detect_type_and_save(self, data, filepath):
+    @classmethod
+    def _detect_type_and_save(cls, data, filepath: str) -> tuple[str, str]:
         import torch
         import numpy as np
 
@@ -166,7 +171,9 @@ class BD_SaveFile:
         PickleSerializer.save(filepath, data)
         return filepath, "GENERIC"
 
-    def save_file(self, data, filename, skip_if_exists=True, name_prefix="", extension=""):
+    @classmethod
+    def execute(cls, data, filename: str, skip_if_exists: bool = True,
+                name_prefix: str = "", extension: str = "") -> io.NodeOutput:
         if name_prefix:
             full_name = f"{name_prefix}_{filename}"
         else:
@@ -186,34 +193,39 @@ class BD_SaveFile:
             os.makedirs(subdir, exist_ok=True)
 
         try:
-            final_path, data_type = self._detect_type_and_save(data, filepath)
+            final_path, data_type = cls._detect_type_and_save(data, filepath)
 
             if skip_if_exists and os.path.exists(final_path):
-                return (final_path, f"EXISTS: {os.path.basename(final_path)}")
+                return io.NodeOutput(final_path, f"EXISTS: {os.path.basename(final_path)}")
 
             status = f"Saved {data_type}: {os.path.basename(final_path)}"
-            return (final_path, status)
+            return io.NodeOutput(final_path, status)
         except Exception as e:
-            return ("", f"Save failed: {e}")
+            return io.NodeOutput("", f"Save failed: {e}")
 
 
-class BD_LoadImage:
+class BD_LoadImage(io.ComfyNode):
     """Load an image from a file path (STRING input)."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "file_path": ("STRING", {"default": "", "forceInput": True}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_LoadImage",
+            display_name="BD Load Image",
+            category="🧠BrainDead/Cache",
+            description="Load an image from a file path string.",
+            inputs=[
+                io.String.Input("file_path", default="", force_input=True),
+            ],
+            outputs=[
+                io.Image.Output(display_name="image"),
+                io.Mask.Output(display_name="mask"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
-    RETURN_NAMES = ("image", "mask", "status")
-    FUNCTION = "load_image"
-    CATEGORY = "BrainDead/Cache"
-
-    def load_image(self, file_path):
+    @classmethod
+    def execute(cls, file_path: str) -> io.NodeOutput:
         from PIL import Image
         import torch
         import numpy as np
@@ -221,7 +233,7 @@ class BD_LoadImage:
         if not file_path or not os.path.exists(file_path):
             empty_img = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return (empty_img, empty_mask, f"File not found: {file_path}")
+            return io.NodeOutput(empty_img, empty_mask, f"File not found: {file_path}")
 
         try:
             pil_img = Image.open(file_path)
@@ -242,35 +254,39 @@ class BD_LoadImage:
             img_np = np.array(pil_img).astype(np.float32) / 255.0
             image = torch.from_numpy(img_np).unsqueeze(0)
 
-            return (image, mask, f"Loaded: {os.path.basename(file_path)}")
+            return io.NodeOutput(image, mask, f"Loaded: {os.path.basename(file_path)}")
         except Exception as e:
             empty_img = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return (empty_img, empty_mask, f"Load failed: {e}")
+            return io.NodeOutput(empty_img, empty_mask, f"Load failed: {e}")
 
 
-class BD_LoadMesh:
+class BD_LoadMesh(io.ComfyNode):
     """Load a 3D mesh from a file path (STRING input)."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "file_path": ("STRING", {"default": "", "forceInput": True}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_LoadMesh",
+            display_name="BD Load Mesh",
+            category="🧠BrainDead/Cache",
+            description="Load a 3D mesh from a file path. Supports PLY, OBJ, GLB, STL.",
+            inputs=[
+                io.String.Input("file_path", default="", force_input=True),
+            ],
+            outputs=[
+                io.Mesh.Output(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("TRIMESH", "STRING")
-    RETURN_NAMES = ("mesh", "status")
-    FUNCTION = "load_mesh"
-    CATEGORY = "BrainDead/Cache"
-
-    def load_mesh(self, file_path):
+    @classmethod
+    def execute(cls, file_path: str) -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return (None, "ERROR: trimesh not installed")
+            return io.NodeOutput(None, "ERROR: trimesh not installed")
 
         if not file_path or not os.path.exists(file_path):
-            return (None, f"File not found: {file_path}")
+            return io.NodeOutput(None, f"File not found: {file_path}")
 
         try:
             mesh = trimesh.load(file_path)
@@ -280,76 +296,92 @@ class BD_LoadMesh:
                 if meshes:
                     mesh = trimesh.util.concatenate(meshes)
                 else:
-                    return (None, "No meshes found in scene")
+                    return io.NodeOutput(None, "No meshes found in scene")
 
-            return (mesh, f"Loaded: {os.path.basename(file_path)} ({len(mesh.vertices)} verts)")
+            return io.NodeOutput(mesh, f"Loaded: {os.path.basename(file_path)} ({len(mesh.vertices)} verts)")
         except Exception as e:
-            return (None, f"Load failed: {e}")
+            return io.NodeOutput(None, f"Load failed: {e}")
 
 
-class BD_LoadAudio:
+class BD_LoadAudio(io.ComfyNode):
     """Load audio from a file path (STRING input)."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "file_path": ("STRING", {"default": "", "forceInput": True}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_LoadAudio",
+            display_name="BD Load Audio",
+            category="🧠BrainDead/Cache",
+            description="Load audio from a file path. Supports WAV, MP3, FLAC.",
+            inputs=[
+                io.String.Input("file_path", default="", force_input=True),
+            ],
+            outputs=[
+                io.Audio.Output(display_name="audio"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("AUDIO", "STRING")
-    RETURN_NAMES = ("audio", "status")
-    FUNCTION = "load_audio"
-    CATEGORY = "BrainDead/Cache"
-
-    def load_audio(self, file_path):
-        import torch
-
+    @classmethod
+    def execute(cls, file_path: str) -> io.NodeOutput:
         if not file_path or not os.path.exists(file_path):
-            return (None, f"File not found: {file_path}")
+            return io.NodeOutput(None, f"File not found: {file_path}")
 
         try:
             import torchaudio
             waveform, sample_rate = torchaudio.load(file_path)
             audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
             duration = waveform.shape[-1] / sample_rate
-            return (audio, f"Loaded: {os.path.basename(file_path)} ({duration:.1f}s)")
+            return io.NodeOutput(audio, f"Loaded: {os.path.basename(file_path)} ({duration:.1f}s)")
         except ImportError:
-            return (None, "ERROR: torchaudio not installed")
+            return io.NodeOutput(None, "ERROR: torchaudio not installed")
         except Exception as e:
-            return (None, f"Load failed: {e}")
+            return io.NodeOutput(None, f"Load failed: {e}")
 
 
-class BD_LoadText:
+class BD_LoadText(io.ComfyNode):
     """Load text from a file path (STRING input)."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "file_path": ("STRING", {"default": "", "forceInput": True}),
-            },
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_LoadText",
+            display_name="BD Load Text",
+            category="🧠BrainDead/Cache",
+            description="Load text content from a file path.",
+            inputs=[
+                io.String.Input("file_path", default="", force_input=True),
+            ],
+            outputs=[
+                io.String.Output(display_name="text"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("text", "status")
-    FUNCTION = "load_text"
-    CATEGORY = "BrainDead/Cache"
-
-    def load_text(self, file_path):
+    @classmethod
+    def execute(cls, file_path: str) -> io.NodeOutput:
         if not file_path or not os.path.exists(file_path):
-            return ("", f"File not found: {file_path}")
+            return io.NodeOutput("", f"File not found: {file_path}")
 
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 text = f.read()
-            return (text, f"Loaded: {os.path.basename(file_path)} ({len(text)} chars)")
+            return io.NodeOutput(text, f"Loaded: {os.path.basename(file_path)} ({len(text)} chars)")
         except Exception as e:
-            return ("", f"Load failed: {e}")
+            return io.NodeOutput("", f"Load failed: {e}")
 
 
-# Node exports
+# V3 node list for extension
+FILE_OPS_V3_NODES = [
+    BD_ClearCache,
+    BD_SaveFile,
+    BD_LoadImage,
+    BD_LoadMesh,
+    BD_LoadAudio,
+    BD_LoadText,
+]
+
+# V1 compatibility - NODE_CLASS_MAPPINGS dict
 FILE_OPS_NODES = {
     "BD_ClearCache": BD_ClearCache,
     "BD_SaveFile": BD_SaveFile,

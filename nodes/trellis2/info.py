@@ -1,11 +1,13 @@
 """
-TRELLIS2 information/helper nodes.
+V3 API TRELLIS2 information/helper nodes.
 
 BD_Trellis2DualConditioning - Info node explaining dual conditioning workflow
 """
 
+from comfy_api.latest import io
 
-class BD_Trellis2DualConditioning:
+
+class BD_Trellis2DualConditioning(io.ComfyNode):
     """
     INFO NODE: Explains dual conditioning workflow for TRELLIS2.
 
@@ -14,45 +16,23 @@ class BD_Trellis2DualConditioning:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {},
-            "optional": {
-                "info_trigger": ("STRING", {"default": "Connect to see workflow info", "multiline": True}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_Trellis2DualConditioning",
+            display_name="BD TRELLIS2 Dual Conditioning (Info)",
+            category="🧠BrainDead/TRELLIS2",
+            description="INFO: How to use dual conditioning for TRELLIS2. Explains workflows for using different images for shape vs texture.",
+            is_output_node=True,
+            inputs=[
+                io.String.Input("info_trigger", default="Connect to see workflow info", multiline=True, optional=True),
+            ],
+            outputs=[
+                io.String.Output(display_name="workflow_info"),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("workflow_info",)
-    FUNCTION = "show_info"
-    CATEGORY = "BrainDead/TRELLIS2"
-    OUTPUT_NODE = True
-    DESCRIPTION = """
-INFO: How to use dual conditioning for TRELLIS2
-
-This node explains the dual-conditioning workflow where you use:
-- One image for SHAPE (e.g., traced outline, edge detection)
-- Another image for TEXTURE (e.g., clean reference render)
-
-WORKFLOW:
-=========
-1. Create TWO "TRELLIS.2 Get Conditioning" nodes:
-   - First one: Connect your SHAPE image (traced outline)
-   - Second one: Connect your TEXTURE image (clean reference)
-
-2. "TRELLIS.2 Image to Shape" node:
-   - Connect the SHAPE conditioning
-   - This determines the 3D geometry
-
-3. "TRELLIS.2 Shape to Textured Mesh" node:
-   - Connect SHAPE conditioning to 'conditioning' (required)
-   - Connect TEXTURE conditioning to 'texture_conditioning' (optional)
-   - This applies texture from the clean image to the generated shape
-
-This workflow is now supported natively in the TRELLIS2 nodes!
-"""
-
-    def show_info(self, info_trigger=""):
+    @classmethod
+    def execute(cls, info_trigger: str = "") -> io.NodeOutput:
         info = """
 ADVANCED TRELLIS2 WORKFLOWS
 ===========================
@@ -100,10 +80,15 @@ high-resolution color data for vertex color sampling.
 All four optional inputs can be used together!
 """
         print(f"[BD Dual Conditioning Info] Workflow information displayed")
-        return (info,)
+        return io.NodeOutput(info)
 
 
-# Node exports
+# V3 node list for extension
+TRELLIS2_INFO_V3_NODES = [
+    BD_Trellis2DualConditioning,
+]
+
+# V1 compatibility - NODE_CLASS_MAPPINGS dict
 TRELLIS2_INFO_NODES = {
     "BD_Trellis2DualConditioning": BD_Trellis2DualConditioning,
 }

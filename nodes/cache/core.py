@@ -1,11 +1,13 @@
 """
-Core cache nodes for common ComfyUI data types.
+V3 API cache nodes for common ComfyUI data types.
 
 Each node caches a specific data type with lazy evaluation
 to skip expensive upstream generation when cache is valid.
 """
 
-from .base import BaseCacheNode
+from comfy_api.latest import io
+
+from .base_v3 import CacheNodeMixin
 from ...utils.shared import (
     ImageSerializer,
     MaskSerializer,
@@ -16,7 +18,7 @@ from ...utils.shared import (
 )
 
 
-class BD_CacheImage(BaseCacheNode):
+class BD_CacheImage(CacheNodeMixin, io.ComfyNode):
     """
     Cache IMAGE tensors to skip expensive image generation.
 
@@ -25,89 +27,169 @@ class BD_CacheImage(BaseCacheNode):
     """
 
     input_name = "image"
-    input_type = "IMAGE"
     serializer = ImageSerializer
-    default_cache_name = "cached_image"
     node_label = "BD Cache Image"
 
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("image", "status")
-    FUNCTION = "cache_image"
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheImage",
+            display_name="BD Cache Image",
+            category="🧠BrainDead/Cache",
+            description="Cache images with lazy evaluation - skips upstream generation when cache exists.",
+            inputs=[
+                io.Image.Input("image", lazy=True),
+                io.String.Input("cache_name", default="cached_image"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False, tooltip="Force regeneration even if cache exists"),
+                io.String.Input("name_prefix", default="", optional=True, tooltip="Prefix for cache filename"),
+            ],
+            outputs=[
+                io.Image.Output(display_name="image"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    def cache_image(self, image, cache_name, seed, force_refresh, name_prefix=""):
-        return self._cache_data(image, cache_name, seed, force_refresh, name_prefix)
+    @classmethod
+    def execute(cls, image, cache_name, seed, force_refresh, name_prefix="") -> io.NodeOutput:
+        result, status = cls._cache_data(image, cache_name, seed, force_refresh, name_prefix)
+        return io.NodeOutput(result, status)
 
 
-class BD_CacheMask(BaseCacheNode):
+class BD_CacheMask(CacheNodeMixin, io.ComfyNode):
     """Cache MASK tensors to skip expensive mask generation."""
 
     input_name = "mask"
-    input_type = "MASK"
     serializer = MaskSerializer
-    default_cache_name = "cached_mask"
     node_label = "BD Cache Mask"
 
-    RETURN_TYPES = ("MASK", "STRING")
-    RETURN_NAMES = ("mask", "status")
-    FUNCTION = "cache_mask"
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheMask",
+            display_name="BD Cache Mask",
+            category="🧠BrainDead/Cache",
+            description="Cache masks with lazy evaluation - skips upstream generation when cache exists.",
+            inputs=[
+                io.Mask.Input("mask", lazy=True),
+                io.String.Input("cache_name", default="cached_mask"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.Mask.Output(display_name="mask"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    def cache_mask(self, mask, cache_name, seed, force_refresh, name_prefix=""):
-        return self._cache_data(mask, cache_name, seed, force_refresh, name_prefix)
+    @classmethod
+    def execute(cls, mask, cache_name, seed, force_refresh, name_prefix="") -> io.NodeOutput:
+        result, status = cls._cache_data(mask, cache_name, seed, force_refresh, name_prefix)
+        return io.NodeOutput(result, status)
 
 
-class BD_CacheLatent(BaseCacheNode):
+class BD_CacheLatent(CacheNodeMixin, io.ComfyNode):
     """Cache LATENT dicts to skip expensive latent generation."""
 
     input_name = "latent"
-    input_type = "LATENT"
     serializer = LatentSerializer
-    default_cache_name = "cached_latent"
     node_label = "BD Cache Latent"
 
-    RETURN_TYPES = ("LATENT", "STRING")
-    RETURN_NAMES = ("latent", "status")
-    FUNCTION = "cache_latent"
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheLatent",
+            display_name="BD Cache Latent",
+            category="🧠BrainDead/Cache",
+            description="Cache latents with lazy evaluation - skips upstream generation when cache exists.",
+            inputs=[
+                io.Latent.Input("latent", lazy=True),
+                io.String.Input("cache_name", default="cached_latent"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.Latent.Output(display_name="latent"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    def cache_latent(self, latent, cache_name, seed, force_refresh, name_prefix=""):
-        return self._cache_data(latent, cache_name, seed, force_refresh, name_prefix)
+    @classmethod
+    def execute(cls, latent, cache_name, seed, force_refresh, name_prefix="") -> io.NodeOutput:
+        result, status = cls._cache_data(latent, cache_name, seed, force_refresh, name_prefix)
+        return io.NodeOutput(result, status)
 
 
-class BD_CacheAudio(BaseCacheNode):
+class BD_CacheAudio(CacheNodeMixin, io.ComfyNode):
     """Cache AUDIO dicts to skip expensive audio generation."""
 
     input_name = "audio"
-    input_type = "AUDIO"
     serializer = AudioSerializer
-    default_cache_name = "cached_audio"
     node_label = "BD Cache Audio"
 
-    RETURN_TYPES = ("AUDIO", "STRING")
-    RETURN_NAMES = ("audio", "status")
-    FUNCTION = "cache_audio"
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheAudio",
+            display_name="BD Cache Audio",
+            category="🧠BrainDead/Cache",
+            description="Cache audio with lazy evaluation - skips upstream generation when cache exists.",
+            inputs=[
+                io.Audio.Input("audio", lazy=True),
+                io.String.Input("cache_name", default="cached_audio"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.Audio.Output(display_name="audio"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    def cache_audio(self, audio, cache_name, seed, force_refresh, name_prefix=""):
-        return self._cache_data(audio, cache_name, seed, force_refresh, name_prefix)
+    @classmethod
+    def execute(cls, audio, cache_name, seed, force_refresh, name_prefix="") -> io.NodeOutput:
+        result, status = cls._cache_data(audio, cache_name, seed, force_refresh, name_prefix)
+        return io.NodeOutput(result, status)
 
 
-class BD_CacheString(BaseCacheNode):
+class BD_CacheString(CacheNodeMixin, io.ComfyNode):
     """Cache STRING values."""
 
     input_name = "text"
-    input_type = "STRING"
     serializer = StringSerializer
-    default_cache_name = "cached_string"
     node_label = "BD Cache String"
     min_cache_size = 0  # Empty strings are valid
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("text", "status")
-    FUNCTION = "cache_string"
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheString",
+            display_name="BD Cache String",
+            category="🧠BrainDead/Cache",
+            description="Cache strings with lazy evaluation.",
+            inputs=[
+                io.String.Input("text", lazy=True, multiline=True),
+                io.String.Input("cache_name", default="cached_string"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.String.Output(display_name="text"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    def cache_string(self, text, cache_name, seed, force_refresh, name_prefix=""):
-        return self._cache_data(text, cache_name, seed, force_refresh, name_prefix)
+    @classmethod
+    def execute(cls, text, cache_name, seed, force_refresh, name_prefix="") -> io.NodeOutput:
+        result, status = cls._cache_data(text, cache_name, seed, force_refresh, name_prefix)
+        return io.NodeOutput(result, status)
 
 
-class BD_CacheAny(BaseCacheNode):
+class BD_CacheAny(CacheNodeMixin, io.ComfyNode):
     """
     Cache ANY data type using pickle serialization.
 
@@ -116,35 +198,46 @@ class BD_CacheAny(BaseCacheNode):
     """
 
     input_name = "data"
-    input_type = "*"  # Accepts any type
     serializer = PickleSerializer
-    default_cache_name = "cached_data"
     node_label = "BD Cache Any"
 
-    RETURN_TYPES = ("*", "STRING")
-    RETURN_NAMES = ("data", "status")
-    FUNCTION = "cache_any"
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheAny",
+            display_name="BD Cache Any",
+            category="🧠BrainDead/Cache",
+            description="Cache any data type using pickle serialization.",
+            inputs=[
+                io.AnyType.Input("data", lazy=True),
+                io.String.Input("cache_name", default="cached_data"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.AnyType.Output(display_name="data"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        from ...utils.shared import LAZY_OPTIONS
-        return {
-            "required": {
-                "data": ("*", LAZY_OPTIONS),
-                "cache_name": ("STRING", {"default": cls.default_cache_name}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "force_refresh": ("BOOLEAN", {"default": False}),
-            },
-            "optional": {
-                "name_prefix": ("STRING", {"default": ""}),
-            }
-        }
-
-    def cache_any(self, data, cache_name, seed, force_refresh, name_prefix=""):
-        return self._cache_data(data, cache_name, seed, force_refresh, name_prefix)
+    def execute(cls, data, cache_name, seed, force_refresh, name_prefix="") -> io.NodeOutput:
+        result, status = cls._cache_data(data, cache_name, seed, force_refresh, name_prefix)
+        return io.NodeOutput(result, status)
 
 
-# Node exports
+# V3 node list for extension
+CACHE_CORE_V3_NODES = [
+    BD_CacheImage,
+    BD_CacheMask,
+    BD_CacheLatent,
+    BD_CacheAudio,
+    BD_CacheString,
+    BD_CacheAny,
+]
+
+# V1 compatibility - NODE_CLASS_MAPPINGS dict
 CACHE_CORE_NODES = {
     "BD_CacheImage": BD_CacheImage,
     "BD_CacheMask": BD_CacheMask,

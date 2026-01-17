@@ -1,11 +1,13 @@
 """
-Mesh export node for saving meshes with vertex colors.
+V3 API Mesh export node for saving meshes with vertex colors.
 
 BD_ExportMeshWithColors - Export mesh with vertex colors to GLB/PLY/OBJ
 """
 
 import os
-import glob
+from glob import glob
+
+from comfy_api.latest import io
 
 # Check for optional trimesh support
 try:
@@ -15,7 +17,7 @@ except ImportError:
     HAS_TRIMESH = False
 
 
-class BD_ExportMeshWithColors:
+class BD_ExportMeshWithColors(io.ComfyNode):
     """
     Export a mesh with vertex colors to file (GLB, PLY, OBJ).
 
@@ -23,47 +25,34 @@ class BD_ExportMeshWithColors:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "mesh": ("TRIMESH",),
-                "filename": ("STRING", {"default": "mesh_colored"}),
-                "format": (["glb", "ply", "obj"], {"default": "glb"}),
-            },
-            "optional": {
-                "name_prefix": ("STRING", {"default": "", "tooltip": "Prepended to filename: {name_prefix}_{filename}. Supports subdirs (e.g., 'Project/Name')"}),
-                "auto_increment": ("BOOLEAN", {"default": True, "tooltip": "Auto-increment filename to avoid overwriting"}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_ExportMeshWithColors",
+            display_name="BD Export Mesh With Colors",
+            category="🧠BrainDead/Mesh",
+            description="Export mesh with vertex colors to GLB/PLY/OBJ. Use after BD_SampleVoxelgridColors.",
+            is_output_node=True,
+            inputs=[
+                io.Mesh.Input("mesh"),
+                io.String.Input("filename", default="mesh_colored"),
+                io.Combo.Input("format", options=["glb", "ply", "obj"], default="glb"),
+                io.String.Input("name_prefix", default="", optional=True, tooltip="Prepended to filename. Supports subdirs (e.g., 'Project/Name')"),
+                io.Boolean.Input("auto_increment", default=True, optional=True, tooltip="Auto-increment filename to avoid overwriting"),
+            ],
+            outputs=[
+                io.String.Output(display_name="file_path"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("file_path", "status")
-    FUNCTION = "export_mesh"
-    CATEGORY = "BrainDead/Mesh"
-    OUTPUT_NODE = True
-    DESCRIPTION = """
-Export mesh with vertex colors to file.
-
-Formats:
-- GLB: Best for game engines, preserves vertex colors
-- PLY: Good for Blender import, preserves vertex colors
-- OBJ: Basic format, vertex colors may not be preserved
-
-Use after BD_SampleVoxelgridColors to export colored mesh
-for decimation in Blender.
-
-Options:
-- name_prefix: Prepended to filename ({prefix}_{filename})
-  Supports subdirs: "Project/Name" + "mesh" = Project/Name_mesh_001.ext
-- auto_increment: Adds _001, _002 etc. to avoid overwriting
-"""
-
-    def export_mesh(self, mesh, filename, format="glb", name_prefix="", auto_increment=True):
+    @classmethod
+    def execute(cls, mesh, filename: str, format: str = "glb",
+                name_prefix: str = "", auto_increment: bool = True) -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return ("", "ERROR: trimesh not installed")
+            return io.NodeOutput("", "ERROR: trimesh not installed")
 
         if mesh is None:
-            return ("", "ERROR: mesh is None")
+            return io.NodeOutput("", "ERROR: mesh is None")
 
         import folder_paths
         base_output_dir = folder_paths.get_output_directory()
@@ -88,7 +77,7 @@ Options:
         if auto_increment:
             # Find existing files with this pattern
             pattern = os.path.join(output_dir, f"{base_filename}_*.{format}")
-            existing = glob.glob(pattern)
+            existing = glob(pattern)
 
             if existing:
                 # Extract numbers and find max
@@ -139,13 +128,16 @@ Options:
             status = f"Exported {format.upper()}: {vert_count} verts, {face_count} faces ({size_str})"
             print(f"[BD Export Mesh] {status}")
 
-            return (file_path, status)
+            return io.NodeOutput(file_path, status)
 
         except Exception as e:
-            return ("", f"ERROR: {e}")
+            return io.NodeOutput("", f"ERROR: {e}")
 
 
-# Node exports
+# V3 node list for extension
+MESH_EXPORT_V3_NODES = [BD_ExportMeshWithColors]
+
+# V1 compatibility - NODE_CLASS_MAPPINGS dict
 MESH_EXPORT_NODES = {
     "BD_ExportMeshWithColors": BD_ExportMeshWithColors,
 }

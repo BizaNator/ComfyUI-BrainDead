@@ -1,5 +1,5 @@
 """
-Mesh processing nodes for repair and decimation.
+V3 API Mesh processing nodes for repair and decimation.
 
 BD_MeshRepair - Repair mesh topology using PyMeshLab
 BD_SmartDecimate - Edge-preserving mesh decimation
@@ -7,6 +7,8 @@ BD_SmartDecimate - Edge-preserving mesh decimation
 
 import os
 import time
+
+from comfy_api.latest import io
 
 # Check for optional trimesh support
 try:
@@ -16,7 +18,7 @@ except ImportError:
     HAS_TRIMESH = False
 
 
-class BD_MeshRepair:
+class BD_MeshRepair(io.ComfyNode):
     """
     Repair mesh topology using PyMeshLab.
 
@@ -25,53 +27,44 @@ class BD_MeshRepair:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "mesh": ("TRIMESH",),
-            },
-            "optional": {
-                "remove_duplicates": ("BOOLEAN", {"default": True, "tooltip": "Merge duplicate/close vertices"}),
-                "remove_degenerate": ("BOOLEAN", {"default": True, "tooltip": "Remove zero-area faces and duplicates"}),
-                "close_holes": ("BOOLEAN", {"default": True, "tooltip": "Close holes in mesh"}),
-                "max_hole_edges": ("INT", {"default": 100, "min": 3, "max": 1000, "step": 10, "tooltip": "Max edges for hole closing"}),
-                "repair_normals": ("BOOLEAN", {"default": True, "tooltip": "Fix face orientation and recompute normals"}),
-                "merge_threshold": ("FLOAT", {"default": 0.0001, "min": 0.00001, "max": 0.01, "step": 0.00001, "tooltip": "Distance threshold for vertex merging"}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_MeshRepair",
+            display_name="BD Mesh Repair",
+            category="🧠BrainDead/Mesh",
+            description="Repair mesh topology using PyMeshLab. Fixes holes, duplicates, degenerates, and normals.",
+            inputs=[
+                io.Mesh.Input("mesh"),
+                io.Boolean.Input("remove_duplicates", default=True, optional=True, tooltip="Merge duplicate/close vertices"),
+                io.Boolean.Input("remove_degenerate", default=True, optional=True, tooltip="Remove zero-area faces and duplicates"),
+                io.Boolean.Input("close_holes", default=True, optional=True, tooltip="Close holes in mesh"),
+                io.Int.Input("max_hole_edges", default=100, min=3, max=1000, step=10, optional=True, tooltip="Max edges for hole closing"),
+                io.Boolean.Input("repair_normals", default=True, optional=True, tooltip="Fix face orientation and recompute normals"),
+                io.Float.Input("merge_threshold", default=0.0001, min=0.00001, max=0.01, step=0.00001, optional=True, tooltip="Distance threshold for vertex merging"),
+            ],
+            outputs=[
+                io.Mesh.Output(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("TRIMESH", "STRING")
-    RETURN_NAMES = ("mesh", "status")
-    FUNCTION = "repair_mesh"
-    CATEGORY = "BrainDead/Mesh"
-    DESCRIPTION = """
-Repair mesh topology using PyMeshLab filters.
-
-Operations:
-- remove_duplicates: Merge vertices closer than merge_threshold
-- remove_degenerate: Remove duplicate faces and zero-area triangles
-- close_holes: Fill holes up to max_hole_edges
-- repair_normals: Orient faces consistently and recompute vertex normals
-
-Use before color sampling to fix mesh issues from TRELLIS2.
-"""
-
-    def repair_mesh(self, mesh, remove_duplicates=True, remove_degenerate=True,
-                    close_holes=True, max_hole_edges=100, repair_normals=True,
-                    merge_threshold=0.0001):
+    @classmethod
+    def execute(cls, mesh, remove_duplicates: bool = True, remove_degenerate: bool = True,
+                close_holes: bool = True, max_hole_edges: int = 100, repair_normals: bool = True,
+                merge_threshold: float = 0.0001) -> io.NodeOutput:
         import numpy as np
         import tempfile
 
         try:
             import pymeshlab
         except ImportError:
-            return (mesh, "ERROR: pymeshlab not installed")
+            return io.NodeOutput(mesh, "ERROR: pymeshlab not installed")
 
         if not HAS_TRIMESH:
-            return (mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(mesh, "ERROR: trimesh not installed")
 
         if mesh is None:
-            return (None, "ERROR: mesh is None")
+            return io.NodeOutput(None, "ERROR: mesh is None")
 
         start_time = time.time()
         changes = []
@@ -167,7 +160,7 @@ Use before color sampling to fix mesh issues from TRELLIS2.
             status = f"Repaired: {initial_verts}->{final_verts} verts, {initial_faces}->{final_faces} faces | {', '.join(changes)} | {total_time:.1f}s"
             print(f"[BD Mesh Repair] {status}")
 
-            return (repaired_mesh, status)
+            return io.NodeOutput(repaired_mesh, status)
 
         except Exception as e:
             import traceback
@@ -175,65 +168,54 @@ Use before color sampling to fix mesh issues from TRELLIS2.
             # Clean up temp file on error
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
-            return (mesh, f"ERROR: {e}")
+            return io.NodeOutput(mesh, f"ERROR: {e}")
 
 
-class BD_SmartDecimate:
+class BD_SmartDecimate(io.ComfyNode):
     """
     Edge-preserving mesh decimation using PyMeshLab.
 
-    Detects and preserves edges based on color boundaries and sharp angles,
-    then decimates using quadric edge collapse while respecting these constraints.
+    Decimates using quadric edge collapse while respecting boundary constraints.
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "mesh": ("TRIMESH",),
-                "target_faces": ("INT", {"default": 50000, "min": 100, "max": 10000000, "step": 1000}),
-            },
-            "optional": {
-                "preserve_boundary": ("BOOLEAN", {"default": True, "tooltip": "Preserve mesh boundary edges"}),
-                "preserve_topology": ("BOOLEAN", {"default": True, "tooltip": "Preserve mesh topology"}),
-                "quality_threshold": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.1, "tooltip": "Quality threshold for edge collapse"}),
-                "planar_quadric": ("BOOLEAN", {"default": True, "tooltip": "Use planar simplification for flat regions"}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_SmartDecimate",
+            display_name="BD Smart Decimate",
+            category="🧠BrainDead/Mesh",
+            description="Edge-preserving mesh decimation using PyMeshLab quadric edge collapse.",
+            inputs=[
+                io.Mesh.Input("mesh"),
+                io.Int.Input("target_faces", default=50000, min=100, max=10000000, step=1000),
+                io.Boolean.Input("preserve_boundary", default=True, optional=True, tooltip="Preserve mesh boundary edges"),
+                io.Boolean.Input("preserve_topology", default=True, optional=True, tooltip="Preserve mesh topology"),
+                io.Float.Input("quality_threshold", default=0.3, min=0.0, max=1.0, step=0.1, optional=True, tooltip="Quality threshold for edge collapse"),
+                io.Boolean.Input("planar_quadric", default=True, optional=True, tooltip="Use planar simplification for flat regions"),
+            ],
+            outputs=[
+                io.Mesh.Output(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
-    RETURN_TYPES = ("TRIMESH", "STRING")
-    RETURN_NAMES = ("mesh", "status")
-    FUNCTION = "decimate"
-    CATEGORY = "BrainDead/Mesh"
-    DESCRIPTION = """
-Edge-preserving mesh decimation using PyMeshLab quadric edge collapse.
-
-Parameters:
-- target_faces: Target number of faces after decimation
-- preserve_boundary: Preserve boundary edges (important for open meshes)
-- preserve_topology: Prevent topology changes during decimation
-- quality_threshold: Higher values = faster but lower quality
-- planar_quadric: Better results for flat regions
-
-Use BD_MeshRepair before decimation to fix holes and topology issues.
-Use BD_TransferVertexColors after decimation to restore colors.
-"""
-
-    def decimate(self, mesh, target_faces, preserve_boundary=True,
-                 preserve_topology=True, quality_threshold=0.3, planar_quadric=True):
+    @classmethod
+    def execute(cls, mesh, target_faces: int, preserve_boundary: bool = True,
+                preserve_topology: bool = True, quality_threshold: float = 0.3,
+                planar_quadric: bool = True) -> io.NodeOutput:
         import numpy as np
         import tempfile
 
         try:
             import pymeshlab
         except ImportError:
-            return (mesh, "ERROR: pymeshlab not installed")
+            return io.NodeOutput(mesh, "ERROR: pymeshlab not installed")
 
         if not HAS_TRIMESH:
-            return (mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(mesh, "ERROR: trimesh not installed")
 
         if mesh is None:
-            return (None, "ERROR: mesh is None")
+            return io.NodeOutput(None, "ERROR: mesh is None")
 
         start_time = time.time()
 
@@ -242,7 +224,7 @@ Use BD_TransferVertexColors after decimation to restore colors.
         initial_verts = len(mesh.vertices)
 
         if initial_faces <= target_faces:
-            return (mesh, f"Mesh already has {initial_faces} faces (<= target {target_faces})")
+            return io.NodeOutput(mesh, f"Mesh already has {initial_faces} faces (<= target {target_faces})")
 
         print(f"[BD Smart Decimate] Input: {initial_verts} vertices, {initial_faces} faces")
         print(f"[BD Smart Decimate] Target: {target_faces} faces ({100*target_faces/initial_faces:.1f}%)")
@@ -295,7 +277,7 @@ Use BD_TransferVertexColors after decimation to restore colors.
 
             print(f"[BD Smart Decimate] {status}")
 
-            return (decimated_mesh, status)
+            return io.NodeOutput(decimated_mesh, status)
 
         except Exception as e:
             import traceback
@@ -303,10 +285,13 @@ Use BD_TransferVertexColors after decimation to restore colors.
             # Clean up temp file on error
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
-            return (mesh, f"ERROR: {e}")
+            return io.NodeOutput(mesh, f"ERROR: {e}")
 
 
-# Node exports
+# V3 node list for extension
+MESH_PROCESSING_V3_NODES = [BD_MeshRepair, BD_SmartDecimate]
+
+# V1 compatibility - NODE_CLASS_MAPPINGS dict
 MESH_PROCESSING_NODES = {
     "BD_MeshRepair": BD_MeshRepair,
     "BD_SmartDecimate": BD_SmartDecimate,

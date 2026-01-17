@@ -1,5 +1,5 @@
 """
-BrainDead Prompt Iterator Nodes for ComfyUI
+V3 API BrainDead Prompt Iterator Nodes for ComfyUI
 Created by BizaNator for BrainDeadGuild.com
 A Biloxi Studios Inc. Production
 
@@ -9,82 +9,64 @@ Perfect for batch processing character sheets, multi-view renders, and sequentia
 
 import json
 import random
-from typing import Dict, List, Tuple, Any
+import time
+from typing import Dict, Any, Tuple
+
+from comfy_api.latest import io
 
 # Global state management for tracking iteration position
 ITERATOR_STATE: Dict[str, Dict[str, Any]] = {}
 
 
-class BD_PromptIterator:
+class BD_PromptIterator(io.ComfyNode):
     """
     Basic prompt iterator that cycles through a list of prompts
     and generates corresponding filenames.
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "prompts": ("STRING", {
-                    "multiline": True,
-                    "default": "prompt 1\nprompt 2\nprompt 3",
-                    "dynamicPrompts": False
-                }),
-                "mode": (["sequential", "manual", "single"], {
-                    "default": "sequential"
-                }),
-                "base_filename": ("STRING", {
-                    "default": "output",
-                    "multiline": False
-                }),
-            },
-            "optional": {
-                "filenames": ("STRING", {
-                    "multiline": True,
-                    "default": "",
-                    "dynamicPrompts": False
-                }),
-                "manual_index": ("INT", {
-                    "default": 0,
-                    "min": 0,
-                    "max": 9999,
-                    "step": 1
-                }),
-                "reset": ("BOOLEAN", {
-                    "default": False,
-                    "label_on": "Reset",
-                    "label_off": "Continue"
-                }),
-                "workflow_id": ("STRING", {
-                    "default": "default",
-                    "multiline": False
-                }),
-            }
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "INT", "INT", "STRING")
-    RETURN_NAMES = ("prompt", "filename", "current_index", "total_count", "status")
-    FUNCTION = "iterate_prompt"
-    CATEGORY = "BrainDead/Prompt"
-    OUTPUT_NODE = False
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_PromptIterator",
+            display_name="BD Prompt Iterator",
+            category="🧠BrainDead/Prompt",
+            description="Basic prompt iterator that cycles through a list of prompts and generates corresponding filenames.",
+            inputs=[
+                io.String.Input("prompts", multiline=True, default="prompt 1\nprompt 2\nprompt 3", dynamic_prompts=False),
+                io.Combo.Input("mode", options=["sequential", "manual", "single"], default="sequential"),
+                io.String.Input("base_filename", multiline=False, default="output"),
+                io.String.Input("filenames", multiline=True, default="", dynamic_prompts=False, optional=True),
+                io.Int.Input("manual_index", default=0, min=0, max=9999, step=1, optional=True),
+                io.Boolean.Input("reset", default=False, optional=True),
+                io.String.Input("workflow_id", multiline=False, default="default", optional=True),
+            ],
+            outputs=[
+                io.String.Output(display_name="prompt"),
+                io.String.Output(display_name="filename"),
+                io.Int.Output(display_name="current_index"),
+                io.Int.Output(display_name="total_count"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        mode = kwargs.get("mode", "sequential")
+    def fingerprint_inputs(cls, prompts, mode, base_filename, filenames="",
+                           manual_index=0, reset=False, workflow_id="default") -> str:
         if mode == "sequential":
-            return float("NaN")
-        return False
+            return f"seq_{time.time()}"  # Always different = always re-execute
+        return f"{mode}_{manual_index}_{workflow_id}"
 
-    def iterate_prompt(self, prompts: str, mode: str, base_filename: str,
-                      filenames: str = "", manual_index: int = 0,
-                      reset: bool = False, workflow_id: str = "default") -> Tuple:
+    @classmethod
+    def execute(cls, prompts: str, mode: str, base_filename: str,
+                filenames: str = "", manual_index: int = 0,
+                reset: bool = False, workflow_id: str = "default") -> io.NodeOutput:
         global ITERATOR_STATE
 
         prompt_list = [p.strip() for p in prompts.strip().split('\n') if p.strip()]
         filename_list = [f.strip() for f in filenames.strip().split('\n') if f.strip()] if filenames else []
 
         if not prompt_list:
-            return ("", base_filename, 0, 0, "Error: No prompts provided")
+            return io.NodeOutput("", base_filename, 0, 0, "Error: No prompts provided")
 
         total_count = len(prompt_list)
 
@@ -118,115 +100,71 @@ class BD_PromptIterator:
         if mode == "sequential":
             status += f" (Iteration {state['iteration'] + 1})"
 
-        return (current_prompt, current_filename, current_index, total_count, status)
+        return io.NodeOutput(current_prompt, current_filename, current_index, total_count, status)
 
 
-class BD_PromptIteratorAdvanced:
+class BD_PromptIteratorAdvanced(io.ComfyNode):
     """
     Advanced prompt iterator with templates, suffix lists, seed modes,
     and more control options for complex batch workflows.
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "prompts": ("STRING", {
-                    "multiline": True,
-                    "default": "face only headshot, facing camera directly\nLeft profile View - rotate face 90 degrees left\nRight profile View - rotate face 90 degrees right\nBack View - direct back of the head",
-                    "dynamicPrompts": False
-                }),
-                "mode": (["sequential", "manual", "random", "single"], {
-                    "default": "sequential"
-                }),
-                "filename_mode": (["list", "suffix_list", "template", "index"], {
-                    "default": "suffix_list"
-                }),
-                "base_filename": ("STRING", {
-                    "default": "character",
-                    "multiline": False
-                }),
-            },
-            "optional": {
-                "filenames": ("STRING", {
-                    "multiline": True,
-                    "default": "",
-                    "dynamicPrompts": False,
-                    "placeholder": "One filename per line (for 'list' mode)"
-                }),
-                "suffixes": ("STRING", {
-                    "multiline": True,
-                    "default": "_front\n_left\n_right\n_back",
-                    "dynamicPrompts": False,
-                    "placeholder": "One suffix per line (for 'suffix_list' mode)"
-                }),
-                "filename_template": ("STRING", {
-                    "default": "{base}_{index:03d}_{suffix}",
-                    "multiline": False,
-                    "placeholder": "Template with {base}, {index}, {suffix} placeholders"
-                }),
-                "prepend_text": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "Text to add before each prompt"
-                }),
-                "append_text": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "placeholder": "Text to add after each prompt"
-                }),
-                "manual_index": ("INT", {
-                    "default": 0,
-                    "min": 0,
-                    "max": 9999,
-                    "step": 1
-                }),
-                "loop_mode": (["once", "loop", "ping_pong"], {
-                    "default": "loop"
-                }),
-                "reset": ("BOOLEAN", {
-                    "default": False,
-                    "label_on": "Reset",
-                    "label_off": "Continue"
-                }),
-                "generation_seed": ("INT", {
-                    "default": -1,
-                    "min": -1,
-                    "max": 2147483647,
-                    "step": 1,
-                    "display": "number"
-                }),
-                "seed_mode": (["fixed", "increment_batch", "increment_prompt", "random"], {
-                    "default": "increment_batch"
-                }),
-                "workflow_id": ("STRING", {
-                    "default": "default",
-                    "multiline": False
-                }),
-            }
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "INT", "INT", "STRING", "INT", "STRING")
-    RETURN_NAMES = ("prompt", "filename", "current_index", "total_count", "status", "seed", "debug_info")
-    FUNCTION = "iterate_prompt_advanced"
-    CATEGORY = "BrainDead/Prompt"
-    OUTPUT_NODE = False
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_PromptIteratorAdvanced",
+            display_name="BD Prompt Iterator (Advanced)",
+            category="🧠BrainDead/Prompt",
+            description="Advanced prompt iterator with templates, suffix lists, seed modes, and more control options.",
+            inputs=[
+                io.String.Input("prompts", multiline=True,
+                               default="face only headshot, facing camera directly\nLeft profile View - rotate face 90 degrees left\nRight profile View - rotate face 90 degrees right\nBack View - direct back of the head",
+                               dynamic_prompts=False),
+                io.Combo.Input("mode", options=["sequential", "manual", "random", "single"], default="sequential"),
+                io.Combo.Input("filename_mode", options=["list", "suffix_list", "template", "index"], default="suffix_list"),
+                io.String.Input("base_filename", multiline=False, default="character"),
+                io.String.Input("filenames", multiline=True, default="", dynamic_prompts=False, optional=True),
+                io.String.Input("suffixes", multiline=True, default="_front\n_left\n_right\n_back", dynamic_prompts=False, optional=True),
+                io.String.Input("filename_template", multiline=False, default="{base}_{index:03d}_{suffix}", optional=True),
+                io.String.Input("prepend_text", multiline=False, default="", optional=True),
+                io.String.Input("append_text", multiline=False, default="", optional=True),
+                io.Int.Input("manual_index", default=0, min=0, max=9999, step=1, optional=True),
+                io.Combo.Input("loop_mode", options=["once", "loop", "ping_pong"], default="loop", optional=True),
+                io.Boolean.Input("reset", default=False, optional=True),
+                io.Int.Input("generation_seed", default=-1, min=-1, max=2147483647, step=1, optional=True),
+                io.Combo.Input("seed_mode", options=["fixed", "increment_batch", "increment_prompt", "random"], default="increment_batch", optional=True),
+                io.String.Input("workflow_id", multiline=False, default="default", optional=True),
+            ],
+            outputs=[
+                io.String.Output(display_name="prompt"),
+                io.String.Output(display_name="filename"),
+                io.Int.Output(display_name="current_index"),
+                io.Int.Output(display_name="total_count"),
+                io.String.Output(display_name="status"),
+                io.Int.Output(display_name="seed"),
+                io.String.Output(display_name="debug_info"),
+            ],
+        )
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        mode = kwargs.get("mode", "sequential")
+    def fingerprint_inputs(cls, prompts, mode, filename_mode, base_filename,
+                           filenames="", suffixes="", filename_template="",
+                           prepend_text="", append_text="", manual_index=0,
+                           loop_mode="loop", reset=False, generation_seed=-1,
+                           seed_mode="increment_batch", workflow_id="default") -> str:
         if mode in ["sequential", "random"]:
-            return float("NaN")
-        return False
+            return f"adv_{time.time()}"  # Always different = always re-execute
+        return f"{mode}_{manual_index}_{workflow_id}"
 
-    def iterate_prompt_advanced(self, prompts: str, mode: str, filename_mode: str,
-                               base_filename: str, filenames: str = "",
-                               suffixes: str = "", filename_template: str = "",
-                               prepend_text: str = "", append_text: str = "",
-                               manual_index: int = 0, loop_mode: str = "loop",
-                               reset: bool = False, generation_seed: int = -1,
-                               seed_mode: str = "increment_batch",
-                               workflow_id: str = "default") -> Tuple:
+    @classmethod
+    def execute(cls, prompts: str, mode: str, filename_mode: str,
+                base_filename: str, filenames: str = "",
+                suffixes: str = "", filename_template: str = "",
+                prepend_text: str = "", append_text: str = "",
+                manual_index: int = 0, loop_mode: str = "loop",
+                reset: bool = False, generation_seed: int = -1,
+                seed_mode: str = "increment_batch",
+                workflow_id: str = "default") -> io.NodeOutput:
         global ITERATOR_STATE
 
         prompt_list = [p.strip() for p in prompts.strip().split('\n') if p.strip()]
@@ -234,7 +172,7 @@ class BD_PromptIteratorAdvanced:
         suffix_list = [s.strip() for s in suffixes.strip().split('\n') if s.strip()] if suffixes else []
 
         if not prompt_list:
-            return ("", base_filename, 0, 0, "Error: No prompts provided", 0, "")
+            return io.NodeOutput("", base_filename, 0, 0, "Error: No prompts provided", 0, "")
 
         total_count = len(prompt_list)
 
@@ -348,10 +286,10 @@ class BD_PromptIteratorAdvanced:
             "seed_mode": seed_mode
         }, indent=2)
 
-        return (current_prompt, current_filename, current_index, total_count, status, output_seed, debug_info)
+        return io.NodeOutput(current_prompt, current_filename, current_index, total_count, status, output_seed, debug_info)
 
 
-class BD_PromptIteratorDynamic:
+class BD_PromptIteratorDynamic(io.ComfyNode):
     """
     Dynamic prompt iterator that accepts multiple string inputs
     and cycles through them with automatic filename generation.
@@ -359,72 +297,61 @@ class BD_PromptIteratorDynamic:
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        inputs = {
-            "required": {
-                "mode": (["sequential", "manual", "random", "single"], {
-                    "default": "sequential"
-                }),
-                "filename_mode": (["auto_index", "suffix_list", "template"], {
-                    "default": "auto_index"
-                }),
-                "base_filename": ("STRING", {
-                    "default": "output",
-                    "multiline": False
-                }),
-            },
-            "optional": {
-                "prompt_1": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "prompt_2": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "prompt_3": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "prompt_4": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "prompt_5": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "prompt_6": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "prompt_7": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "prompt_8": ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False}),
-                "suffixes": ("STRING", {
-                    "multiline": True,
-                    "default": "",
-                    "dynamicPrompts": False,
-                    "placeholder": "One suffix per line (for suffix_list mode)"
-                }),
-                "filename_template": ("STRING", {
-                    "default": "{base}_{index:03d}",
-                    "multiline": False,
-                    "placeholder": "{base}, {index}, {suffix}"
-                }),
-                "manual_index": ("INT", {"default": 0, "min": 0, "max": 9999, "step": 1}),
-                "reset": ("BOOLEAN", {"default": False, "label_on": "Reset", "label_off": "Continue"}),
-                "generation_seed": ("INT", {"default": -1, "min": -1, "max": 2147483647, "step": 1, "display": "number"}),
-                "seed_mode": (["fixed", "increment_batch", "increment_prompt", "random"], {"default": "increment_batch"}),
-                "workflow_id": ("STRING", {"default": "default", "multiline": False}),
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        # Build inputs list
+        inputs = [
+            io.Combo.Input("mode", options=["sequential", "manual", "random", "single"], default="sequential"),
+            io.Combo.Input("filename_mode", options=["auto_index", "suffix_list", "template"], default="auto_index"),
+            io.String.Input("base_filename", multiline=False, default="output"),
+        ]
 
-        # Add more prompt inputs (up to 20)
-        for i in range(9, 21):
-            inputs["optional"][f"prompt_{i}"] = ("STRING", {"multiline": True, "default": "", "forceInput": True, "dynamicPrompts": False})
+        # Add 20 optional prompt inputs
+        for i in range(1, 21):
+            inputs.append(io.String.Input(f"prompt_{i}", multiline=True, default="", dynamic_prompts=False, optional=True, force_input=True))
 
-        return inputs
+        # Add remaining optional inputs
+        inputs.extend([
+            io.String.Input("suffixes", multiline=True, default="", dynamic_prompts=False, optional=True),
+            io.String.Input("filename_template", multiline=False, default="{base}_{index:03d}", optional=True),
+            io.Int.Input("manual_index", default=0, min=0, max=9999, step=1, optional=True),
+            io.Boolean.Input("reset", default=False, optional=True),
+            io.Int.Input("generation_seed", default=-1, min=-1, max=2147483647, step=1, optional=True),
+            io.Combo.Input("seed_mode", options=["fixed", "increment_batch", "increment_prompt", "random"], default="increment_batch", optional=True),
+            io.String.Input("workflow_id", multiline=False, default="default", optional=True),
+        ])
 
-    RETURN_TYPES = ("STRING", "STRING", "INT", "INT", "STRING", "INT")
-    RETURN_NAMES = ("prompt", "filename", "current_index", "total_count", "status", "seed")
-    FUNCTION = "iterate_prompts"
-    CATEGORY = "BrainDead/Prompt"
-    OUTPUT_NODE = False
+        return io.Schema(
+            node_id="BD_PromptIteratorDynamic",
+            display_name="BD Prompt Iterator (Dynamic)",
+            category="🧠BrainDead/Prompt",
+            description="Dynamic prompt iterator that accepts up to 20 string inputs and cycles through them with automatic filename generation.",
+            inputs=inputs,
+            outputs=[
+                io.String.Output(display_name="prompt"),
+                io.String.Output(display_name="filename"),
+                io.Int.Output(display_name="current_index"),
+                io.Int.Output(display_name="total_count"),
+                io.String.Output(display_name="status"),
+                io.Int.Output(display_name="seed"),
+            ],
+        )
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        mode = kwargs.get("mode", "sequential")
+    def fingerprint_inputs(cls, mode, filename_mode, base_filename,
+                           suffixes="", filename_template="",
+                           manual_index=0, reset=False,
+                           generation_seed=-1, seed_mode="increment_batch",
+                           workflow_id="default", **kwargs) -> str:
         if mode in ["sequential", "random"]:
-            return float("NaN")
-        return False
+            return f"dyn_{time.time()}"  # Always different = always re-execute
+        return f"{mode}_{manual_index}_{workflow_id}"
 
-    def iterate_prompts(self, mode: str, filename_mode: str, base_filename: str,
-                       suffixes: str = "", filename_template: str = "",
-                       manual_index: int = 0, reset: bool = False,
-                       generation_seed: int = -1, seed_mode: str = "increment_batch",
-                       workflow_id: str = "default", **kwargs) -> Tuple:
+    @classmethod
+    def execute(cls, mode: str, filename_mode: str, base_filename: str,
+                suffixes: str = "", filename_template: str = "",
+                manual_index: int = 0, reset: bool = False,
+                generation_seed: int = -1, seed_mode: str = "increment_batch",
+                workflow_id: str = "default", **kwargs) -> io.NodeOutput:
         global ITERATOR_STATE
 
         # Collect all prompt inputs
@@ -437,7 +364,7 @@ class BD_PromptIteratorDynamic:
                     prompt_list.append(prompt_value.strip())
 
         if not prompt_list:
-            return ("", base_filename, 0, 0, "Error: No prompts provided", 0)
+            return io.NodeOutput("", base_filename, 0, 0, "Error: No prompts provided", 0)
 
         suffix_list = [s.strip() for s in suffixes.strip().split('\n') if s.strip()] if suffixes else []
         total_count = len(prompt_list)
@@ -518,11 +445,21 @@ class BD_PromptIteratorDynamic:
         elif mode == "random":
             status += " (random)"
 
-        return (current_prompt, current_filename, current_index, total_count, status, output_seed)
+        return io.NodeOutput(current_prompt, current_filename, current_index, total_count, status, output_seed)
 
 
 # =============================================================================
-# Node Mappings
+# V3 Node List for Extension
+# =============================================================================
+
+PROMPT_V3_NODES = [
+    BD_PromptIterator,
+    BD_PromptIteratorAdvanced,
+    BD_PromptIteratorDynamic,
+]
+
+# =============================================================================
+# V1 Compatibility - Node Mappings
 # =============================================================================
 
 NODE_CLASS_MAPPINGS = {

@@ -1,5 +1,5 @@
 """
-TRELLIS2 cache nodes for caching conditioning, shape, and texture outputs.
+V3 API TRELLIS2 cache nodes for caching conditioning, shape, and texture outputs.
 
 BD_CacheTrellis2Conditioning - Cache conditioning to skip image preprocessing
 BD_CacheTrellis2Shape - Cache shape + mesh to skip expensive shape generation
@@ -9,8 +9,9 @@ BD_CacheTrellis2Texture - Cache texture outputs (trimesh, voxelgrid, pointcloud)
 import os
 import time
 
+from comfy_api.latest import io
+
 from ...utils.shared import (
-    LAZY_OPTIONS,
     get_cache_path,
     hash_from_seed,
     check_cache_exists,
@@ -26,41 +27,40 @@ except ImportError:
     HAS_TRIMESH = False
 
 
-class BD_CacheTrellis2Conditioning:
+class BD_CacheTrellis2Conditioning(io.ComfyNode):
     """Cache Trellis2 conditioning output to skip image preprocessing."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "conditioning": ("TRELLIS2_CONDITIONING", LAZY_OPTIONS),
-                "cache_name": ("STRING", {"default": "trellis2_cond"}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "force_refresh": ("BOOLEAN", {"default": False}),
-            },
-            "optional": {
-                "name_prefix": ("STRING", {"default": ""}),
-            }
-        }
-
-    RETURN_TYPES = ("TRELLIS2_CONDITIONING", "STRING")
-    RETURN_NAMES = ("conditioning", "status")
-    FUNCTION = "cache_conditioning"
-    CATEGORY = "BrainDead/TRELLIS2"
-    DESCRIPTION = """
-Cache Trellis2 conditioning to skip image preprocessing.
-
-Place AFTER Trellis2GetConditioning node.
-"""
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheTrellis2Conditioning",
+            display_name="BD Cache Trellis2 Conditioning",
+            category="🧠BrainDead/TRELLIS2",
+            description="Cache Trellis2 conditioning to skip image preprocessing. Place AFTER Trellis2GetConditioning node.",
+            inputs=[
+                io.Custom("TRELLIS2_CONDITIONING").Input("conditioning", lazy=True),
+                io.String.Input("cache_name", default="trellis2_cond"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.Custom("TRELLIS2_CONDITIONING").Output(display_name="conditioning"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
     @classmethod
-    def IS_CHANGED(cls, cache_name, seed, force_refresh, conditioning=None, name_prefix=""):
+    def fingerprint_inputs(cls, cache_name: str, seed: int, force_refresh: bool,
+                           name_prefix: str = "", **kwargs) -> str:
         if force_refresh:
             return f"force_{time.time()}"
         return f"{name_prefix}_{cache_name}_{seed}"
 
-    def check_lazy_status(self, cache_name, seed, force_refresh, conditioning=None, name_prefix=""):
-        """Return [] to skip upstream, ["conditioning"] to evaluate upstream."""
+    @classmethod
+    def check_lazy_status(cls, cache_name: str, seed: int, force_refresh: bool,
+                          conditioning=None, name_prefix: str = "") -> list[str]:
+        """Return [] to skip upstream, ['conditioning'] to evaluate upstream."""
         if force_refresh:
             print(f"[BD Trellis2 Conditioning] Force refresh - will run upstream")
             return ["conditioning"]
@@ -75,7 +75,9 @@ Place AFTER Trellis2GetConditioning node.
         print(f"[BD Trellis2 Conditioning] No cache found - will run upstream")
         return ["conditioning"]
 
-    def cache_conditioning(self, conditioning, cache_name, seed, force_refresh, name_prefix=""):
+    @classmethod
+    def execute(cls, conditioning, cache_name: str, seed: int, force_refresh: bool,
+                name_prefix: str = "") -> io.NodeOutput:
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, ".pkl")
@@ -84,12 +86,12 @@ Place AFTER Trellis2GetConditioning node.
             try:
                 cached_data = PickleSerializer.load(cache_path)
                 if cached_data is not None:
-                    return (cached_data, f"Cache HIT (main): {os.path.basename(cache_path)}")
+                    return io.NodeOutput(cached_data, f"Cache HIT: {os.path.basename(cache_path)}")
             except:
                 pass
 
         if conditioning is None:
-            return (conditioning, "Input is None - cannot cache")
+            return io.NodeOutput(conditioning, "Input is None - cannot cache")
 
         print(f"[BD Trellis2 Conditioning] Saving new cache: {cache_path}")
         if save_to_cache(cache_path, conditioning, PickleSerializer):
@@ -98,51 +100,48 @@ Place AFTER Trellis2GetConditioning node.
         else:
             status = "Save failed"
             print(f"[BD Trellis2 Conditioning] Cache save failed")
-        return (conditioning, status)
+        return io.NodeOutput(conditioning, status)
 
 
-class BD_CacheTrellis2Shape:
+class BD_CacheTrellis2Shape(io.ComfyNode):
     """
     Cache Trellis2 shape result AND mesh together.
     This is the KEY node - caches expensive shape generation.
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "shape_result": ("TRELLIS2_SHAPE_RESULT", LAZY_OPTIONS),
-                "mesh": ("TRIMESH", LAZY_OPTIONS),
-                "cache_name": ("STRING", {"default": "trellis2_shape"}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "force_refresh": ("BOOLEAN", {"default": False}),
-            },
-            "optional": {
-                "name_prefix": ("STRING", {"default": ""}),
-            }
-        }
-
-    RETURN_TYPES = ("TRELLIS2_SHAPE_RESULT", "TRIMESH", "STRING")
-    RETURN_NAMES = ("shape_result", "mesh", "status")
-    FUNCTION = "cache_shape"
-    CATEGORY = "BrainDead/TRELLIS2"
-    DESCRIPTION = """
-Cache Trellis2 shape result + mesh to skip expensive generation.
-
-Place AFTER Trellis2ImageToShape node.
-This is THE most important cache - saves ~30-60s per run!
-
-Caches both shape_result (PKL) and mesh (PLY) together.
-"""
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheTrellis2Shape",
+            display_name="BD Cache Trellis2 Shape",
+            category="🧠BrainDead/TRELLIS2",
+            description="Cache Trellis2 shape result + mesh to skip expensive generation. Place AFTER Trellis2ImageToShape node. Saves ~30-60s per run!",
+            inputs=[
+                io.Custom("TRELLIS2_SHAPE_RESULT").Input("shape_result", lazy=True),
+                io.Mesh.Input("mesh", lazy=True),
+                io.String.Input("cache_name", default="trellis2_shape"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.Custom("TRELLIS2_SHAPE_RESULT").Output(display_name="shape_result"),
+                io.Mesh.Output(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
     @classmethod
-    def IS_CHANGED(cls, cache_name, seed, force_refresh, shape_result=None, mesh=None, name_prefix=""):
+    def fingerprint_inputs(cls, cache_name: str, seed: int, force_refresh: bool,
+                           shape_result=None, mesh=None, name_prefix: str = "") -> str:
         if force_refresh:
             return f"force_{time.time()}"
         return f"{name_prefix}_{cache_name}_{seed}"
 
-    def check_lazy_status(self, cache_name, seed, force_refresh, shape_result=None, mesh=None, name_prefix=""):
-        """Return [] to skip upstream, ["shape_result", "mesh"] to evaluate upstream."""
+    @classmethod
+    def check_lazy_status(cls, cache_name: str, seed: int, force_refresh: bool,
+                          shape_result=None, mesh=None, name_prefix: str = "") -> list[str]:
+        """Return [] to skip upstream, ['shape_result', 'mesh'] to evaluate upstream."""
         if force_refresh:
             print(f"[BD Trellis2 Shape] Force refresh - will run upstream")
             return ["shape_result", "mesh"]
@@ -162,9 +161,11 @@ Caches both shape_result (PKL) and mesh (PLY) together.
         print(f"[BD Trellis2 Shape] No cache found - will run upstream")
         return ["shape_result", "mesh"]
 
-    def cache_shape(self, shape_result, mesh, cache_name, seed, force_refresh, name_prefix=""):
+    @classmethod
+    def execute(cls, shape_result, mesh, cache_name: str, seed: int, force_refresh: bool,
+                name_prefix: str = "") -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return (shape_result, mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(shape_result, mesh, "ERROR: trimesh not installed")
 
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
@@ -177,12 +178,12 @@ Caches both shape_result (PKL) and mesh (PLY) together.
                 shape_data = PickleSerializer.load(cache_path_pkl)
                 mesh_data = trimesh.load(cache_path_ply)
                 if shape_data is not None and mesh_data is not None:
-                    return (shape_data, mesh_data, f"Cache HIT (main): shape + mesh")
+                    return io.NodeOutput(shape_data, mesh_data, f"Cache HIT: shape + mesh")
             except:
                 pass
 
         if shape_result is None or mesh is None:
-            return (shape_result, mesh, "Input is None - cannot cache")
+            return io.NodeOutput(shape_result, mesh, "Input is None - cannot cache")
 
         try:
             print(f"[BD Trellis2 Shape] Saving new cache...")
@@ -197,52 +198,51 @@ Caches both shape_result (PKL) and mesh (PLY) together.
             status = f"Save failed: {e}"
             print(f"[BD Trellis2 Shape] Cache save failed: {e}")
 
-        return (shape_result, mesh, status)
+        return io.NodeOutput(shape_result, mesh, status)
 
 
-class BD_CacheTrellis2Texture:
+class BD_CacheTrellis2Texture(io.ComfyNode):
     """
     Cache Trellis2 textured mesh output (trimesh + voxelgrid + pointcloud).
     """
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "trimesh_out": ("TRIMESH", LAZY_OPTIONS),
-                "voxelgrid": ("TRELLIS2_VOXELGRID", LAZY_OPTIONS),
-                "pbr_pointcloud": ("TRIMESH", LAZY_OPTIONS),
-                "cache_name": ("STRING", {"default": "trellis2_texture"}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "force_refresh": ("BOOLEAN", {"default": False}),
-            },
-            "optional": {
-                "name_prefix": ("STRING", {"default": ""}),
-            }
-        }
-
-    RETURN_TYPES = ("TRIMESH", "TRELLIS2_VOXELGRID", "TRIMESH", "STRING")
-    RETURN_NAMES = ("trimesh", "voxelgrid", "pbr_pointcloud", "status")
-    FUNCTION = "cache_texture"
-    CATEGORY = "BrainDead/TRELLIS2"
-    DESCRIPTION = """
-Cache Trellis2 textured mesh outputs together.
-
-Place AFTER Trellis2ShapeToTexturedMesh node.
-Caches trimesh, voxelgrid, and pbr_pointcloud as single PKL.
-
-Note: voxelgrid contains GPU tensors - may require GPU
-to be available when loading from cache.
-"""
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CacheTrellis2Texture",
+            display_name="BD Cache Trellis2 Texture",
+            category="🧠BrainDead/TRELLIS2",
+            description="Cache Trellis2 textured mesh outputs together. Place AFTER Trellis2ShapeToTexturedMesh node. Note: voxelgrid contains GPU tensors.",
+            inputs=[
+                io.Mesh.Input("trimesh_out", lazy=True),
+                io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid", lazy=True),
+                io.Mesh.Input("pbr_pointcloud", lazy=True),
+                io.String.Input("cache_name", default="trellis2_texture"),
+                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                io.Boolean.Input("force_refresh", default=False),
+                io.String.Input("name_prefix", default="", optional=True),
+            ],
+            outputs=[
+                io.Mesh.Output(display_name="trimesh"),
+                io.Custom("TRELLIS2_VOXELGRID").Output(display_name="voxelgrid"),
+                io.Mesh.Output(display_name="pbr_pointcloud"),
+                io.String.Output(display_name="status"),
+            ],
+        )
 
     @classmethod
-    def IS_CHANGED(cls, cache_name, seed, force_refresh, trimesh_out=None, voxelgrid=None, pbr_pointcloud=None, name_prefix=""):
+    def fingerprint_inputs(cls, cache_name: str, seed: int, force_refresh: bool,
+                           trimesh_out=None, voxelgrid=None, pbr_pointcloud=None,
+                           name_prefix: str = "") -> str:
         if force_refresh:
             return f"force_{time.time()}"
         return f"{name_prefix}_{cache_name}_{seed}"
 
-    def check_lazy_status(self, cache_name, seed, force_refresh, trimesh_out=None, voxelgrid=None, pbr_pointcloud=None, name_prefix=""):
-        """Return [] to skip upstream, ["trimesh_out", "voxelgrid", "pbr_pointcloud"] to evaluate upstream."""
+    @classmethod
+    def check_lazy_status(cls, cache_name: str, seed: int, force_refresh: bool,
+                          trimesh_out=None, voxelgrid=None, pbr_pointcloud=None,
+                          name_prefix: str = "") -> list[str]:
+        """Return [] to skip upstream, ['trimesh_out', 'voxelgrid', 'pbr_pointcloud'] to evaluate upstream."""
         if force_refresh:
             print(f"[BD Trellis2 Texture] Force refresh - will run upstream")
             return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
@@ -257,7 +257,9 @@ to be available when loading from cache.
         print(f"[BD Trellis2 Texture] No cache found - will run upstream")
         return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
 
-    def cache_texture(self, trimesh_out, voxelgrid, pbr_pointcloud, cache_name, seed, force_refresh, name_prefix=""):
+    @classmethod
+    def execute(cls, trimesh_out, voxelgrid, pbr_pointcloud, cache_name: str, seed: int,
+                force_refresh: bool, name_prefix: str = "") -> io.NodeOutput:
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
         cache_path = get_cache_path(full_name, cache_hash, "_texture.pkl")
@@ -266,13 +268,13 @@ to be available when loading from cache.
             try:
                 cached_data = PickleSerializer.load(cache_path)
                 if cached_data and 'trimesh' in cached_data and 'voxelgrid' in cached_data:
-                    return (cached_data['trimesh'], cached_data['voxelgrid'],
-                           cached_data['pointcloud'], f"Cache HIT (main): texture data")
+                    return io.NodeOutput(cached_data['trimesh'], cached_data['voxelgrid'],
+                           cached_data['pointcloud'], f"Cache HIT: texture data")
             except:
                 pass
 
         if trimesh_out is None or voxelgrid is None:
-            return (trimesh_out, voxelgrid, pbr_pointcloud, "Input is None - cannot cache")
+            return io.NodeOutput(trimesh_out, voxelgrid, pbr_pointcloud, "Input is None - cannot cache")
 
         try:
             print(f"[BD Trellis2 Texture] Saving new cache...")
@@ -293,10 +295,17 @@ to be available when loading from cache.
             status = f"Save failed: {e}"
             print(f"[BD Trellis2 Texture] Cache save failed: {e}")
 
-        return (trimesh_out, voxelgrid, pbr_pointcloud, status)
+        return io.NodeOutput(trimesh_out, voxelgrid, pbr_pointcloud, status)
 
 
-# Node exports
+# V3 node list for extension
+TRELLIS2_CACHE_V3_NODES = [
+    BD_CacheTrellis2Conditioning,
+    BD_CacheTrellis2Shape,
+    BD_CacheTrellis2Texture,
+]
+
+# V1 compatibility - NODE_CLASS_MAPPINGS dict
 TRELLIS2_CACHE_NODES = {
     "BD_CacheTrellis2Conditioning": BD_CacheTrellis2Conditioning,
     "BD_CacheTrellis2Shape": BD_CacheTrellis2Shape,

@@ -13,10 +13,12 @@ Nodes:
 from .cache import (
     TRELLIS2_CACHE_NODES,
     TRELLIS2_CACHE_DISPLAY_NAMES,
+    TRELLIS2_CACHE_V3_NODES,
 )
 from .info import (
     TRELLIS2_INFO_NODES,
     TRELLIS2_INFO_DISPLAY_NAMES,
+    TRELLIS2_INFO_V3_NODES,
 )
 
 # Combine all TRELLIS2 nodes
@@ -33,8 +35,15 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 # Export lists for external use
 TRELLIS2_NODES = list(NODE_CLASS_MAPPINGS.values())
 
+# V3 node list for extension
+TRELLIS2_V3_NODES = [
+    *TRELLIS2_CACHE_V3_NODES,
+    *TRELLIS2_INFO_V3_NODES,
+]
+
 __all__ = [
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
     "TRELLIS2_NODES",
+    "TRELLIS2_V3_NODES",
 ]
