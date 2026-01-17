@@ -406,12 +406,6 @@ Best for: Stylized characters, props, game assets with vertex colors.""",
                 timeout=timeout,
             )
 
-            # Print Blender log summary
-            if log_lines:
-                bd_lines = [l for l in log_lines if l.startswith('[BD')]
-                for line in bd_lines[-5:]:  # Last 5 status lines
-                    print(line)
-
             if not success:
                 # Include relevant log lines in error
                 error_context = '\n'.join(log_lines[-10:]) if log_lines else ''

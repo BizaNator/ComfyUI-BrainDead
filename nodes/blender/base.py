@@ -162,14 +162,12 @@ class BlenderNodeMixin:
                         break
                     time.sleep(0.1)
 
-            # Get remaining output
+            # Get remaining output (don't re-print - already printed in real-time)
             remaining = process.stdout.read()
             if remaining:
                 for line in remaining.strip().split('\n'):
                     if line:
                         log_lines.append(line)
-                        if line.startswith('[BD') or 'Error' in line:
-                            print(line)
 
             if retcode != 0:
                 # Find error in log
@@ -232,8 +230,13 @@ class BlenderNodeMixin:
         Returns:
             trimesh.Trimesh object
         """
+        import os
+
         if not HAS_TRIMESH:
             raise RuntimeError("trimesh not installed")
+
+        file_size = os.path.getsize(path) / (1024 * 1024)  # MB
+        print(f"[BD Blender] Loading result mesh ({file_size:.1f}MB)...")
 
         mesh = trimesh.load(path, force='mesh')
 
@@ -245,6 +248,7 @@ class BlenderNodeMixin:
             else:
                 raise RuntimeError("No meshes found in loaded file")
 
+        print(f"[BD Blender] Loaded: {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces")
         return mesh
 
 
