@@ -128,13 +128,25 @@ class BlenderNodeMixin:
                 env=env,
             )
 
+            import select
+            import fcntl
+
             start_time = time.time()
 
+            # Make stdout non-blocking
+            fd = process.stdout.fileno()
+            fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
             # Read output in real-time with timeout checking
+            output_buffer = ""
+            last_output_time = time.time()
+
             while True:
                 # Check timeout
                 elapsed = time.time() - start_time
                 if elapsed > timeout:
+                    print(f"[BD Blender] TIMEOUT after {timeout}s - killing process")
                     process.kill()
                     process.wait()
                     return False, f"Blender timed out after {timeout}s", log_lines
@@ -142,25 +154,50 @@ class BlenderNodeMixin:
                 # Check if process finished
                 retcode = process.poll()
 
-                # Read available output (non-blocking)
-                try:
-                    line = process.stdout.readline()
-                    if line:
-                        line = line.rstrip()
-                        log_lines.append(line)
-                        # Print lines that look like progress/status
-                        if line.startswith('[BD') or 'Error' in line or 'faces' in line.lower():
-                            print(line)
-                    elif retcode is not None:
-                        # Process finished and no more output
-                        break
-                    else:
-                        # No output but still running, brief sleep
-                        time.sleep(0.1)
-                except:
-                    if retcode is not None:
-                        break
-                    time.sleep(0.1)
+                # Check for available output using select (with 0.5s timeout)
+                ready, _, _ = select.select([process.stdout], [], [], 0.5)
+
+                if ready:
+                    try:
+                        chunk = process.stdout.read(4096)
+                        if chunk:
+                            output_buffer += chunk
+                            last_output_time = time.time()
+
+                            # Process complete lines
+                            while '\n' in output_buffer:
+                                line, output_buffer = output_buffer.split('\n', 1)
+                                line = line.rstrip()
+                                if line:
+                                    log_lines.append(line)
+                                    if line.startswith('[BD') or 'Error' in line or 'faces' in line.lower():
+                                        print(line)
+                    except (IOError, BlockingIOError):
+                        pass
+
+                # Check if process finished and no more output
+                if retcode is not None:
+                    # Give a moment for any final output
+                    time.sleep(0.2)
+                    try:
+                        final = process.stdout.read()
+                        if final:
+                            output_buffer += final
+                    except:
+                        pass
+                    break
+
+                # Print heartbeat every 30 seconds if no output
+                if time.time() - last_output_time > 30:
+                    print(f"[BD Blender] Still running... ({int(elapsed)}s elapsed)")
+                    last_output_time = time.time()
+
+            # Process any remaining buffered output
+            for line in output_buffer.strip().split('\n'):
+                if line:
+                    log_lines.append(line)
+                    if line.startswith('[BD') or 'Error' in line:
+                        print(line)
 
             # Get remaining output (don't re-print - already printed in real-time)
             remaining = process.stdout.read()
@@ -209,14 +246,35 @@ class BlenderNodeMixin:
         Returns:
             Path to temporary file
         """
+        import numpy as np
+
         if not HAS_TRIMESH:
             raise RuntimeError("trimesh not installed")
 
         fd, path = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
 
-        # Export with colors if available
-        trimesh.exchange.export.export_mesh(mesh, path, file_type=suffix[1:])
+        file_type = suffix[1:]  # Remove leading dot
+
+        # Check for vertex colors
+        has_colors = False
+        if hasattr(mesh, 'visual') and mesh.visual is not None:
+            if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                colors = mesh.visual.vertex_colors
+                if colors is not None and len(colors) > 0:
+                    has_colors = True
+                    print(f"[BD Blender] Mesh has {len(colors)} vertex colors")
+
+        # Export - for PLY, use ply encoding that includes colors
+        if file_type == 'ply' and has_colors:
+            # Export PLY with vertex colors explicitly
+            mesh.export(path, file_type='ply', encoding='ascii')
+        else:
+            mesh.export(path, file_type=file_type)
+
+        file_size = os.path.getsize(path) / (1024 * 1024)
+        color_status = "with colors" if has_colors else "NO colors"
+        print(f"[BD Blender] Saved input mesh ({file_size:.1f}MB) as {file_type.upper()} ({color_status})")
         return path
 
     @classmethod
@@ -306,10 +364,10 @@ else:
 # Apply modifier
 bpy.ops.object.modifier_apply(modifier=modifier.name)
 
-# Export result
+# Export result (binary PLY for faster loading)
 ext_out = os.path.splitext(output_path)[1].lower()
 if ext_out == '.ply':
-    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB')
+    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB', ascii_format=False)
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
@@ -382,7 +440,7 @@ if smooth_iterations > 0:
 # Export result
 ext_out = os.path.splitext(output_path)[1].lower()
 if ext_out == '.ply':
-    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB')
+    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB', ascii_format=False)
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
@@ -469,7 +527,7 @@ bpy.ops.object.mode_set(mode='OBJECT')
 # Export result
 ext_out = os.path.splitext(output_path)[1].lower()
 if ext_out == '.ply':
-    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB')
+    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB', ascii_format=False)
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
@@ -568,13 +626,13 @@ bpy.context.view_layer.objects.active = target_obj
 # Export result
 ext_out = os.path.splitext(output_path)[1].lower()
 if ext_out == '.ply':
-    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB')
+    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB', ascii_format=False)
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
     bpy.ops.export_scene.gltf(filepath=output_path)
 else:
-    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB')
+    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB', ascii_format=False)
 
 log(f"[BD Transfer] Saved to {output_path}")
 '''

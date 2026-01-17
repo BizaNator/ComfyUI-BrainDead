@@ -77,11 +77,34 @@ bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
 
 original_faces = len(obj.data.polygons)
-log(f"[BD Decimate] Input: {original_faces} faces")
+original_verts = len(obj.data.vertices)
+log(f"[BD Decimate] Input: {original_verts} verts, {original_faces} faces")
 
-# Create reference copy for color transfer if we have colors
+# Check for colors in multiple places
+has_colors = False
+color_source = None
+
+# Check vertex_colors (older Blender API)
+if obj.data.vertex_colors:
+    has_colors = True
+    color_source = "vertex_colors"
+    log(f"[BD Decimate] Found vertex_colors: {len(obj.data.vertex_colors)} layers")
+
+# Check color_attributes (newer Blender API)
+if obj.data.color_attributes:
+    has_colors = True
+    color_source = "color_attributes"
+    log(f"[BD Decimate] Found color_attributes: {len(obj.data.color_attributes)} layers")
+    for attr in obj.data.color_attributes:
+        log(f"[BD Decimate]   - {attr.name}: domain={attr.domain}, type={attr.data_type}")
+
+if not has_colors:
+    log(f"[BD Decimate] WARNING: No vertex colors found on imported mesh!")
+    log(f"[BD Decimate] vertex_colors: {obj.data.vertex_colors}")
+    log(f"[BD Decimate] color_attributes: {obj.data.color_attributes}")
+
+# Create reference copy for color transfer
 ref_obj = None
-has_colors = obj.data.vertex_colors or obj.data.color_attributes
 if preserve_colors and has_colors:
     # Duplicate for color reference
     bpy.ops.object.duplicate()
@@ -93,7 +116,7 @@ if preserve_colors and has_colors:
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     ref_obj.select_set(False)
-    log(f"[BD Decimate] Created color reference copy")
+    log(f"[BD Decimate] Created color reference copy (source: {color_source})")
 
 # Step 1: Fill holes if requested
 if fill_holes:
@@ -135,17 +158,33 @@ if target_faces > 0 and current_faces > target_faces:
     ratio = max(0.01, min(1.0, ratio))
     log(f"[BD Decimate] Target {target_faces} faces, using ratio {ratio:.3f}")
 
-# Step 5: Collapse decimation
+# Step 5: Triangulate n-gons BEFORE collapse
+# Planar decimate creates n-gons (5+ sided faces), which collapse decimate handles poorly
+# Triangulate them first for accurate face count and proper collapse behavior
+bpy.ops.object.mode_set(mode='EDIT')
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
+bpy.ops.object.mode_set(mode='OBJECT')
+log(f"[BD Decimate] Triangulated n-gons - now {len(obj.data.polygons)} faces")
+
+# Update current face count after triangulation
+current_faces = len(obj.data.polygons)
+if target_faces > 0 and current_faces > target_faces:
+    ratio = target_faces / current_faces
+    ratio = max(0.01, min(1.0, ratio))
+    log(f"[BD Decimate] Adjusted ratio for {target_faces} target faces: {ratio:.3f}")
+
+# Step 6: Collapse decimation
 if ratio < 1.0:
     modifier = obj.modifiers.new(name='CollapseDecimate', type='DECIMATE')
     modifier.decimate_type = 'COLLAPSE'
     modifier.ratio = ratio
-    modifier.use_collapse_triangulate = True
+    modifier.use_collapse_triangulate = False  # CRITICAL: Keep topology intact, don't fragment
     modifier.use_symmetry = False
     bpy.ops.object.modifier_apply(modifier=modifier.name)
     log(f"[BD Decimate] Collapse decimate - now {len(obj.data.polygons)} faces")
 
-# Step 6: Transfer colors back from reference (face-based, no bleeding)
+# Step 7: Transfer colors back from reference (face-based, no bleeding)
 if preserve_colors and ref_obj and has_colors:
     ref_mesh = ref_obj.data
     log(f"[BD Decimate] Extracting colors from {len(ref_mesh.polygons)} source faces...")
@@ -241,14 +280,34 @@ final_faces = len(obj.data.polygons)
 reduction = (1 - final_faces / original_faces) * 100 if original_faces > 0 else 0
 log(f"[BD Decimate] Final: {final_faces} faces ({reduction:.1f}% reduction)")
 
+# Debug: save a copy to permanent location for inspection
+debug_path = os.environ.get('BLENDER_ARG_DEBUG_PATH', '')
+if debug_path:
+    log(f"[BD Decimate] Saving debug copy to: {debug_path}")
+    try:
+        bpy.ops.export_scene.gltf(
+            filepath=debug_path,
+            export_format='GLB',
+            export_all_vertex_colors=True,
+        )
+        log(f"[BD Decimate] Debug copy saved - open in Blender to verify")
+    except Exception as e:
+        log(f"[BD Decimate] Warning: Could not save debug copy: {e}")
+
 # Export result
 ext_out = os.path.splitext(output_path)[1].lower()
+log(f"[BD Decimate] Exporting to {ext_out}...")
 if ext_out == '.ply':
-    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB')
+    bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB', ascii_format=False)
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
-    bpy.ops.export_scene.gltf(filepath=output_path)
+    # GLB with vertex colors
+    bpy.ops.export_scene.gltf(
+        filepath=output_path,
+        export_format='GLB',
+        export_all_vertex_colors=True,
+    )
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
@@ -342,6 +401,12 @@ Best for: Stylized characters, props, game assets with vertex colors.""",
                     optional=True,
                     tooltip="Maximum processing time in seconds",
                 ),
+                io.String.Input(
+                    "debug_path",
+                    default="",
+                    optional=True,
+                    tooltip="Optional: path to save debug GLB for manual inspection (e.g., /tmp/decimate_debug.glb)",
+                ),
             ],
             outputs=[
                 TrimeshOutput(display_name="mesh"),
@@ -361,6 +426,7 @@ Best for: Stylized characters, props, game assets with vertex colors.""",
         preserve_boundaries: bool = True,
         preserve_colors: bool = True,
         timeout: int = 300,
+        debug_path: str = "",
     ) -> io.NodeOutput:
         # Check dependencies
         if not HAS_TRIMESH:
@@ -378,31 +444,38 @@ Best for: Stylized characters, props, game assets with vertex colors.""",
         orig_faces = len(mesh.faces) if hasattr(mesh, 'faces') else 0
 
         # Save input mesh to temp file
+        # Input: PLY (trimesh exports well)
+        # Output: GLB (Blender exports well, trimesh loads fast)
         input_path = None
         output_path = None
         try:
             input_path = cls._mesh_to_temp_file(mesh, suffix='.ply')
-            fd, output_path = tempfile.mkstemp(suffix='.ply')
+            fd, output_path = tempfile.mkstemp(suffix='.glb')
             os.close(fd)
 
             print(f"[BD Decimate] Input mesh: {orig_verts:,} verts, {orig_faces:,} faces")
             print(f"[BD Decimate] Target: {target_faces} faces, planar_angle={planar_angle}°")
 
             # Run Blender decimate
+            extra_args = {
+                'ratio': ratio,
+                'target_faces': target_faces,
+                'planar_angle': planar_angle,
+                'fill_holes': fill_holes,
+                'remove_internal': remove_internal,
+                'preserve_boundaries': preserve_boundaries,
+                'preserve_colors': preserve_colors,
+                'use_planar': planar_angle > 0,
+            }
+            if debug_path:
+                extra_args['debug_path'] = debug_path
+                print(f"[BD Decimate] Debug output will be saved to: {debug_path}")
+
             success, message, log_lines = cls._run_blender_script(
                 ADVANCED_DECIMATE_SCRIPT,
                 input_path,
                 output_path,
-                extra_args={
-                    'ratio': ratio,
-                    'target_faces': target_faces,
-                    'planar_angle': planar_angle,
-                    'fill_holes': fill_holes,
-                    'remove_internal': remove_internal,
-                    'preserve_boundaries': preserve_boundaries,
-                    'preserve_colors': preserve_colors,
-                    'use_planar': planar_angle > 0,
-                },
+                extra_args=extra_args,
                 timeout=timeout,
             )
 
