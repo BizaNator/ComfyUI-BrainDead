@@ -1000,7 +1000,7 @@ Complete pipeline from Decimate_v1.py script.""",
         output_path = None
         try:
             input_path = cls._mesh_to_temp_file(mesh, suffix='.glb')
-            fd, output_path = tempfile.mkstemp(suffix='.glb')
+            fd, output_path = tempfile.mkstemp(suffix='.ply')  # PLY preserves vertex colors better than GLB
             os.close(fd)
 
             print(f"[BD Decimate V2] Input mesh: {orig_verts:,} verts, {orig_faces:,} faces")
