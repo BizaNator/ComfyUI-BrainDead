@@ -664,6 +664,16 @@ bpy.ops.object.delete()
 
 # Import mesh
 ext = os.path.splitext(INPUT_PATH)[1].lower()
+log(f"[BD Decimate V2] Importing {ext} from {INPUT_PATH}")
+
+# Check file exists and has content
+if not os.path.exists(INPUT_PATH):
+    raise ValueError(f"Input file not found: {INPUT_PATH}")
+file_size = os.path.getsize(INPUT_PATH)
+log(f"[BD Decimate V2] Input file size: {file_size} bytes")
+if file_size == 0:
+    raise ValueError(f"Input file is empty: {INPUT_PATH}")
+
 if ext == '.ply':
     bpy.ops.wm.ply_import(filepath=INPUT_PATH)
 elif ext == '.obj':
@@ -675,12 +685,21 @@ elif ext == '.stl':
 else:
     raise ValueError(f"Unsupported format: {ext}")
 
-# Get imported object
+# Get imported object - GLTF can create hierarchies, need to find mesh
+log(f"[BD Decimate V2] Scene objects after import: {[o.name for o in bpy.context.scene.objects]}")
+
 obj = bpy.context.active_object
-if obj is None:
-    obj = [o for o in bpy.context.scene.objects if o.type == 'MESH'][0]
+if obj is None or obj.type != 'MESH':
+    # Find first mesh object
+    mesh_objects = [o for o in bpy.context.scene.objects if o.type == 'MESH']
+    log(f"[BD Decimate V2] Found {len(mesh_objects)} mesh objects")
+    if not mesh_objects:
+        raise ValueError("No mesh objects found after import!")
+    obj = mesh_objects[0]
+
 bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
+log(f"[BD Decimate V2] Selected object: {obj.name}")
 
 original_faces = get_face_count(obj)
 original_verts = get_vertex_count(obj)
@@ -770,7 +789,7 @@ if DEBUG_PATH:
         bpy.ops.export_scene.gltf(
             filepath=DEBUG_PATH,
             export_format='GLB',
-            export_colors=True,
+            export_attributes=True,  # Include vertex colors/attributes
             export_yup=True,  # GLTF standard Y-up (trimesh expects this)
         )
         log(f"[BD Decimate V2] Debug copy saved")
@@ -788,7 +807,7 @@ elif ext_out in ['.glb', '.gltf']:
     bpy.ops.export_scene.gltf(
         filepath=OUTPUT_PATH,
         export_format='GLB',
-        export_colors=True,
+        export_attributes=True,  # Include vertex colors/attributes
         export_yup=True,  # GLTF standard Y-up (trimesh expects this)
     )
 elif ext_out == '.stl':
