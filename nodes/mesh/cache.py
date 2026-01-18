@@ -92,10 +92,12 @@ class BD_CacheMesh(io.ComfyNode):
 
         if check_cache_exists(cache_path, min_size=100) and not force_refresh:
             try:
-                cached_mesh = trimesh.load(cache_path)
+                # Explicitly specify file_type='ply' to avoid auto-detection issues
+                cached_mesh = trimesh.load(cache_path, file_type='ply', force='mesh')
                 if cached_mesh is not None and hasattr(cached_mesh, 'vertices'):
                     return io.NodeOutput(cached_mesh, f"Cache HIT: {os.path.basename(cache_path)}")
-            except:
+            except Exception as e:
+                print(f"[BD Cache Mesh] WARNING: Failed to load cache: {e}")
                 pass
 
         if mesh is None:

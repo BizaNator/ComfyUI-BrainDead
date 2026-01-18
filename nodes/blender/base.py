@@ -311,9 +311,23 @@ class BlenderNodeMixin:
             raise RuntimeError("trimesh not installed")
 
         file_size = os.path.getsize(path) / (1024 * 1024)  # MB
-        print(f"[BD Blender] Loading result mesh ({file_size:.1f}MB)...")
+        ext = os.path.splitext(path)[1].lower()
+        print(f"[BD Blender] Loading result mesh ({file_size:.1f}MB) as {ext}...")
 
-        mesh = trimesh.load(path, force='mesh')
+        # Explicitly specify file_type to avoid auto-detection issues
+        file_type_map = {
+            '.ply': 'ply',
+            '.obj': 'obj',
+            '.glb': 'glb',
+            '.gltf': 'gltf',
+            '.stl': 'stl',
+        }
+        file_type = file_type_map.get(ext, None)
+
+        if file_type:
+            mesh = trimesh.load(path, file_type=file_type, force='mesh')
+        else:
+            mesh = trimesh.load(path, force='mesh')
 
         # Handle scene vs single mesh
         if isinstance(mesh, trimesh.Scene):

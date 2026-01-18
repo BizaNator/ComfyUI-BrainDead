@@ -63,6 +63,40 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 - Per-image weight and role control
 - Identity-focused templates that prioritize facial features
 
+### Mesh Nodes (`BrainDead/Mesh`)
+3D mesh processing, color sampling, and simplification tools.
+
+| Node | Description |
+|------|-------------|
+| **BD Cache Mesh** | Cache TRIMESH objects as PLY files |
+| **BD Sample Voxelgrid Colors** | Sample vertex colors from TRELLIS2 voxelgrid |
+| **BD Sample Voxelgrid PBR** | Sample full PBR attributes from voxelgrid |
+| **BD Transfer Vertex Colors** | BVH-based vertex color transfer between meshes |
+| **BD Transfer Colors Pymeshlab** | Transfer colors using pymeshlab |
+| **BD Mesh Repair** | Repair mesh topology (holes, normals, duplicates) |
+| **BD Smart Decimate** | Edge-preserving decimation with pymeshlab |
+| **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ |
+| **BD CuMesh Simplify** | GPU-accelerated mesh simplification with color preservation |
+
+### Blender Nodes (`BrainDead/Blender`)
+Advanced mesh processing using Blender's geometry tools (requires Blender 4.2+).
+
+| Node | Description |
+|------|-------------|
+| **BD Blender Decimate** | Basic Blender decimation with color preservation |
+| **BD Blender Decimate V2 (Full)** | Full-featured stylized low-poly decimation |
+| **BD Blender Remesh** | Voxel/quad remeshing with Blender |
+| **BD Blender Repair** | Advanced mesh repair using Blender |
+| **BD Blender Transfer Colors** | BVH-based color transfer using Blender |
+
+**BD Blender Decimate V2 Features:**
+- **Color Edge Detection**: Marks color boundaries as sharp/seam edges for preservation
+- **Planar Decimation**: Merges coplanar faces while respecting marked edges
+- **Collapse Decimation**: Reduces to target face count
+- **Face-Based Color Transfer**: No color bleeding at vertices
+- **Coordinate System Handling**: Automatic Y-up ↔ Z-up conversion
+- **Pre-cleanup**: Fixes non-manifold geometry before processing
+
 ### Prompt Nodes (`BrainDead/Prompt`)
 Iterate through multiple prompts with automatic filename generation.
 
@@ -151,6 +185,9 @@ output/
 ```
 BrainDead/
 ├── Cache/       # Caching and file I/O nodes
+├── Mesh/        # 3D mesh processing and color tools
+├── Blender/     # Blender-based mesh operations
+├── TRELLIS2/    # TRELLIS2-specific caching
 ├── Character/   # Qwen-Image character consistency
 └── Prompt/      # Prompt iteration tools
 ```

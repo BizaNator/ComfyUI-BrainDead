@@ -176,10 +176,12 @@ class BD_CacheTrellis2Shape(io.ComfyNode):
             check_cache_exists(cache_path_ply, min_size=100) and not force_refresh):
             try:
                 shape_data = PickleSerializer.load(cache_path_pkl)
-                mesh_data = trimesh.load(cache_path_ply)
+                # Explicitly specify file_type='ply' to avoid auto-detection issues
+                mesh_data = trimesh.load(cache_path_ply, file_type='ply', force='mesh')
                 if shape_data is not None and mesh_data is not None:
                     return io.NodeOutput(shape_data, mesh_data, f"Cache HIT: shape + mesh")
-            except:
+            except Exception as e:
+                print(f"[BD Trellis2 Shape] WARNING: Failed to load cache: {e}")
                 pass
 
         if shape_result is None or mesh is None:

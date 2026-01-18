@@ -644,14 +644,14 @@ def fix_normals(obj):
     bpy.ops.mesh.normals_make_consistent(inside=False)
     log("[Fix Normals] Made normals consistent (outward)")
 
-    # Flip if needed - check if majority face wrong way by sampling
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    # Force recalculate normals from faces
+    # In Blender 4.1+, normals are auto-calculated, no need for calc_normals()
+    # Just update the mesh to ensure normals are fresh
     mesh = obj.data
-    mesh.calc_normals()
+    mesh.update()
 
-    log(f"[Fix Normals] Normals recalculated for {len(mesh.polygons)} faces")
+    log(f"[Fix Normals] Normals updated for {len(mesh.polygons)} faces")
 
 
 # ============================================================================
@@ -711,13 +711,6 @@ if obj is None or obj.type != 'MESH':
 bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
 log(f"[BD Decimate V2] Selected object: {obj.name}")
-
-# Fix normals immediately after import (GLTF can flip them)
-bpy.ops.object.mode_set(mode='EDIT')
-bpy.ops.mesh.select_all(action='SELECT')
-bpy.ops.mesh.normals_make_consistent(inside=False)
-bpy.ops.object.mode_set(mode='OBJECT')
-log("[BD Decimate V2] Fixed normals after import")
 
 original_faces = get_face_count(obj)
 original_verts = get_vertex_count(obj)
@@ -792,6 +785,18 @@ if ref_obj and PRESERVE_COLORS:
 if FIX_NORMALS:
     log("\\n[STEP 10] Fixing normals...")
     fix_normals(obj)
+
+# STEP 11: Apply rotation to convert Z-up back to Y-up for PLY export
+# GLTF import converts Y-up to Z-up, we need to reverse this for PLY
+log("\\n[STEP 11] Converting Z-up to Y-up for output...")
+import mathutils
+bpy.context.view_layer.objects.active = obj
+obj.select_set(True)
+# Rotate -90 degrees around X axis (Z-up → Y-up)
+bpy.ops.transform.rotate(value=math.radians(-90), orient_axis='X', orient_type='GLOBAL')
+# Apply the rotation to mesh data
+bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+log("[Coordinate Fix] Applied -90° X rotation (Z-up → Y-up)")
 
 # Final stats
 final_faces = get_face_count(obj)
