@@ -800,7 +800,7 @@ if DEBUG_PATH:
 ext_out = os.path.splitext(OUTPUT_PATH)[1].lower()
 log(f"[BD Decimate V2] Exporting to {ext_out}...")
 if ext_out == '.ply':
-    bpy.ops.wm.ply_export(filepath=OUTPUT_PATH, export_colors='SRGB', ascii_format=False)
+    bpy.ops.wm.ply_export(filepath=OUTPUT_PATH, export_colors='SRGB', ascii_format=True)  # ASCII for better compatibility
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=OUTPUT_PATH)
 elif ext_out in ['.glb', '.gltf']:
