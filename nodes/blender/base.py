@@ -235,13 +235,13 @@ class BlenderNodeMixin:
                 os.remove(script_path)
 
     @classmethod
-    def _mesh_to_temp_file(cls, mesh, suffix: str = '.ply') -> str:
+    def _mesh_to_temp_file(cls, mesh, suffix: str = '.glb') -> str:
         """
         Save a trimesh mesh to a temporary file.
 
         Args:
             mesh: trimesh.Trimesh object
-            suffix: File extension (.ply, .obj, .glb)
+            suffix: File extension (.ply, .obj, .glb) - default GLB for best color support
 
         Returns:
             Path to temporary file
@@ -265,12 +265,9 @@ class BlenderNodeMixin:
                     has_colors = True
                     print(f"[BD Blender] Mesh has {len(colors)} vertex colors")
 
-        # Export - for PLY, use ply encoding that includes colors
-        if file_type == 'ply' and has_colors:
-            # Export PLY with vertex colors explicitly
-            mesh.export(path, file_type='ply', encoding='ascii')
-        else:
-            mesh.export(path, file_type=file_type)
+        # Export - prefer GLB for best color support
+        # GLB/GLTF preserves vertex colors reliably
+        mesh.export(path, file_type=file_type)
 
         file_size = os.path.getsize(path) / (1024 * 1024)
         color_status = "with colors" if has_colors else "NO colors"
@@ -371,7 +368,7 @@ if ext_out == '.ply':
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
-    bpy.ops.export_scene.gltf(filepath=output_path)
+    bpy.ops.export_scene.gltf(filepath=output_path, export_format='GLB', export_colors=True, export_yup=True)
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
@@ -444,7 +441,7 @@ if ext_out == '.ply':
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
-    bpy.ops.export_scene.gltf(filepath=output_path)
+    bpy.ops.export_scene.gltf(filepath=output_path, export_format='GLB', export_colors=True, export_yup=True)
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
@@ -531,7 +528,7 @@ if ext_out == '.ply':
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
-    bpy.ops.export_scene.gltf(filepath=output_path)
+    bpy.ops.export_scene.gltf(filepath=output_path, export_format='GLB', export_colors=True, export_yup=True)
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=output_path)
 
@@ -630,7 +627,7 @@ if ext_out == '.ply':
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=output_path)
 elif ext_out in ['.glb', '.gltf']:
-    bpy.ops.export_scene.gltf(filepath=output_path)
+    bpy.ops.export_scene.gltf(filepath=output_path, export_format='GLB', export_colors=True, export_yup=True)
 else:
     bpy.ops.wm.ply_export(filepath=output_path, export_colors='SRGB', ascii_format=False)
 

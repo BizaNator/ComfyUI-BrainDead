@@ -770,7 +770,8 @@ if DEBUG_PATH:
         bpy.ops.export_scene.gltf(
             filepath=DEBUG_PATH,
             export_format='GLB',
-            export_all_vertex_colors=True,
+            export_colors=True,
+            export_yup=True,  # GLTF standard Y-up (trimesh expects this)
         )
         log(f"[BD Decimate V2] Debug copy saved")
     except Exception as e:
@@ -787,7 +788,8 @@ elif ext_out in ['.glb', '.gltf']:
     bpy.ops.export_scene.gltf(
         filepath=OUTPUT_PATH,
         export_format='GLB',
-        export_all_vertex_colors=True,
+        export_colors=True,
+        export_yup=True,  # GLTF standard Y-up (trimesh expects this)
     )
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=OUTPUT_PATH)
@@ -978,7 +980,7 @@ Complete pipeline from Decimate_v1.py script.""",
         input_path = None
         output_path = None
         try:
-            input_path = cls._mesh_to_temp_file(mesh, suffix='.ply')
+            input_path = cls._mesh_to_temp_file(mesh, suffix='.glb')
             fd, output_path = tempfile.mkstemp(suffix='.glb')
             os.close(fd)
 
