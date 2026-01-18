@@ -635,12 +635,23 @@ def transfer_colors_from_reference(obj, ref_obj):
 # ============================================================================
 def fix_normals(obj):
     """Fix face normals to point outward."""
+    log("[Fix Normals] Starting normal fix...")
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
+
+    # First make consistent (all same direction)
     bpy.ops.mesh.normals_make_consistent(inside=False)
+    log("[Fix Normals] Made normals consistent (outward)")
+
+    # Flip if needed - check if majority face wrong way by sampling
     bpy.ops.object.mode_set(mode='OBJECT')
-    log("[Fix Normals] Normals recalculated")
+
+    # Force recalculate normals from faces
+    mesh = obj.data
+    mesh.calc_normals()
+
+    log(f"[Fix Normals] Normals recalculated for {len(mesh.polygons)} faces")
 
 
 # ============================================================================
@@ -700,6 +711,13 @@ if obj is None or obj.type != 'MESH':
 bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
 log(f"[BD Decimate V2] Selected object: {obj.name}")
+
+# Fix normals immediately after import (GLTF can flip them)
+bpy.ops.object.mode_set(mode='EDIT')
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.mesh.normals_make_consistent(inside=False)
+bpy.ops.object.mode_set(mode='OBJECT')
+log("[BD Decimate V2] Fixed normals after import")
 
 original_faces = get_face_count(obj)
 original_verts = get_vertex_count(obj)
