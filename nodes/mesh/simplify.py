@@ -70,6 +70,14 @@ Much faster than Blender for large meshes.""",
                     step=0.5,
                     tooltip="Angle threshold for marking edges as sharp (degrees). 7° works well for stylized meshes.",
                 ),
+                io.Float.Input(
+                    "color_edge_threshold",
+                    default=0.1,
+                    min=0.0,
+                    max=1.0,
+                    step=0.01,
+                    tooltip="Color difference threshold for marking edges as sharp (0-1). 0.1 = ~10% color change marks edge. 0 = disabled.",
+                ),
                 io.Boolean.Input(
                     "fill_holes",
                     default=True,
@@ -106,6 +114,7 @@ Much faster than Blender for large meshes.""",
         mesh,
         target_faces: int = 5000,
         sharp_angle: float = 7.0,
+        color_edge_threshold: float = 0.1,
         fill_holes: bool = True,
         fill_holes_perimeter: float = 0.03,
         preserve_colors: bool = True,
@@ -136,13 +145,34 @@ Much faster than Blender for large meshes.""",
                 print(f"[BD CuMesh] Found vertex colors: {orig_colors.shape}")
 
         try:
-            # Convert to torch tensors
-            vertices = torch.tensor(mesh.vertices, dtype=torch.float32).cuda()
-            faces = torch.tensor(mesh.faces, dtype=torch.int32).cuda()
+            # Check if mesh is "face-split" (no shared vertices)
+            # This happens when every face has unique vertices (3 verts per face)
+            verts_per_face = orig_verts / orig_faces if orig_faces > 0 else 0
+            is_face_split = verts_per_face > 2.9  # Should be ~3.0 for face-split
 
-            # Store original for color transfer
-            orig_vertices = vertices.clone()
-            orig_faces_tensor = faces.clone()
+            if is_face_split:
+                print(f"[BD CuMesh] Detected face-split mesh ({verts_per_face:.2f} verts/face)")
+                print("[BD CuMesh] Merging duplicate vertices for proper simplification...")
+
+                # Create a merged-vertex version for simplification
+                # Use trimesh's merge_vertices to combine coincident vertices
+                work_mesh = trimesh.Trimesh(
+                    vertices=mesh.vertices.copy(),
+                    faces=mesh.faces.copy(),
+                    process=False
+                )
+                work_mesh.merge_vertices()
+                merged_verts = len(work_mesh.vertices)
+                merged_faces = len(work_mesh.faces)
+                print(f"[BD CuMesh] After merge: {merged_verts:,} verts, {merged_faces:,} faces")
+
+                # Use merged mesh for simplification
+                vertices = torch.tensor(work_mesh.vertices, dtype=torch.float32).cuda()
+                faces = torch.tensor(work_mesh.faces, dtype=torch.int32).cuda()
+            else:
+                # Normal mesh with shared vertices
+                vertices = torch.tensor(mesh.vertices, dtype=torch.float32).cuda()
+                faces = torch.tensor(mesh.faces, dtype=torch.int32).cuda()
 
             # CuMesh expects Y-up, ComfyUI uses Z-up
             # Convert Z-up to Y-up: swap Y and Z, negate new Y
@@ -152,47 +182,70 @@ Much faster than Blender for large meshes.""",
             # Initialize CuMesh
             cu = cumesh.CuMesh()
             cu.init(vertices_yup, faces)
-            initial_faces = cu.num_faces
             print(f"[BD CuMesh] Initialized: {cu.num_vertices} verts, {cu.num_faces} faces")
 
             # Fill holes (be careful - can explode face count on bad meshes)
             if fill_holes:
                 pre_fill_faces = cu.num_faces
-                cu.fill_holes(max_hole_perimeter=fill_holes_perimeter)
-                post_fill_faces = cu.num_faces
-                # Sanity check: if fill_holes more than doubled face count, something is wrong
-                if post_fill_faces > pre_fill_faces * 2:
-                    print(f"[BD CuMesh] WARNING: fill_holes exploded faces ({pre_fill_faces} -> {post_fill_faces}), reinitializing...")
-                    cu = cumesh.CuMesh()
-                    cu.init(vertices_yup, faces)
-                else:
-                    print(f"[BD CuMesh] After fill holes: {cu.num_vertices} verts, {cu.num_faces} faces")
+                try:
+                    cu.fill_holes(max_hole_perimeter=fill_holes_perimeter)
+                    post_fill_faces = cu.num_faces
+                    # Sanity check: if fill_holes more than doubled face count, something is wrong
+                    if post_fill_faces > pre_fill_faces * 2:
+                        print(f"[BD CuMesh] WARNING: fill_holes exploded faces ({pre_fill_faces} -> {post_fill_faces}), reinitializing...")
+                        cu = cumesh.CuMesh()
+                        cu.init(vertices_yup, faces)
+                    else:
+                        print(f"[BD CuMesh] After fill holes: {cu.num_vertices} verts, {cu.num_faces} faces")
+                except Exception as e:
+                    print(f"[BD CuMesh] Warning: fill_holes failed: {e}")
 
             # Remove degenerate faces
-            cu.remove_degenerate_faces()
+            try:
+                cu.remove_degenerate_faces()
+            except Exception as e:
+                print(f"[BD CuMesh] Warning: remove_degenerate_faces failed: {e}")
 
-            # Unify face orientations before simplify (only if we have faces)
+            # Unify face orientations before simplify (can crash on complex meshes)
             if cu.num_faces > 0:
-                cu.unify_face_orientations()
-                print("[BD CuMesh] Unified face orientations")
+                try:
+                    cu.unify_face_orientations()
+                    print("[BD CuMesh] Unified face orientations")
+                except Exception as e:
+                    print(f"[BD CuMesh] Warning: unify_face_orientations failed (continuing anyway): {e}")
 
             # Simplify
             if cu.num_faces > target_faces:
                 print(f"[BD CuMesh] Simplifying to {target_faces} faces...")
-                cu.simplify(target_faces, verbose=True)
-                print(f"[BD CuMesh] After simplify: {cu.num_vertices} verts, {cu.num_faces} faces")
+                try:
+                    cu.simplify(target_faces, verbose=True)
+                    print(f"[BD CuMesh] After simplify: {cu.num_vertices} verts, {cu.num_faces} faces")
+                except Exception as e:
+                    print(f"[BD CuMesh] ERROR: simplify crashed: {e}")
+                    return io.NodeOutput(mesh, f"ERROR: CuMesh simplify failed - {e}")
+
+            # Check if simplify reduced to almost nothing (bad result)
+            if cu.num_faces < target_faces * 0.1:
+                print(f"[BD CuMesh] WARNING: Simplify reduced to only {cu.num_faces} faces (expected ~{target_faces})")
+                print("[BD CuMesh] This may indicate mesh topology issues.")
 
             # Check if simplify removed all faces (bad mesh or bug)
             if cu.num_faces == 0:
                 print("[BD CuMesh] ERROR: Simplify removed all faces! Returning original mesh.")
                 return io.NodeOutput(mesh, "ERROR: Simplify removed all faces - mesh may have issues")
 
-            # Unify orientations again (simplify can break it)
+            # Unify orientations again (simplify can break it) - optional, can fail
             if cu.num_faces > 0:
-                cu.unify_face_orientations()
+                try:
+                    cu.unify_face_orientations()
+                except Exception:
+                    pass  # Not critical
 
             # Remove unreferenced vertices
-            cu.remove_unreferenced_vertices()
+            try:
+                cu.remove_unreferenced_vertices()
+            except Exception:
+                pass  # Not critical
 
             # Read result
             out_verts, out_faces = cu.read()
@@ -216,10 +269,12 @@ Much faster than Blender for large meshes.""",
                     result, mesh, orig_colors, face_colors
                 )
 
-            # Mark sharp edges based on angle
-            if sharp_angle > 0:
-                sharp_count = cls._mark_sharp_edges(result, sharp_angle)
-                print(f"[BD CuMesh] Marked {sharp_count} sharp edges (>{sharp_angle}°)")
+            # Mark sharp edges based on angle AND color boundaries
+            if sharp_angle > 0 or color_edge_threshold > 0:
+                sharp_count, angle_count, color_count = cls._mark_sharp_edges(
+                    result, sharp_angle, color_edge_threshold
+                )
+                print(f"[BD CuMesh] Marked {sharp_count} sharp edges ({angle_count} by angle >{sharp_angle}°, {color_count} by color >{color_edge_threshold:.0%})")
 
             # Stats
             new_verts = len(result.vertices)
@@ -229,12 +284,11 @@ Much faster than Blender for large meshes.""",
             status = f"Simplified: {orig_faces:,} -> {new_faces:,} faces ({reduction:.1f}% reduction)"
             if has_colors:
                 status += " | colors preserved"
-            if sharp_angle > 0:
+            if sharp_angle > 0 or color_edge_threshold > 0:
                 status += f" | sharp edges marked"
 
             # Cleanup GPU
             del vertices, faces, vertices_yup, out_verts, out_faces, cu
-            del orig_vertices, orig_faces_tensor
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -307,36 +361,78 @@ Much faster than Blender for large meshes.""",
         return result
 
     @classmethod
-    def _mark_sharp_edges(cls, mesh, angle_threshold_deg):
-        """Mark edges as sharp where adjacent face normals differ by more than threshold."""
+    def _mark_sharp_edges(cls, mesh, angle_threshold_deg, color_threshold=0.1):
+        """
+        Mark edges as sharp based on geometry AND color boundaries.
+
+        An edge is marked sharp if:
+        - Adjacent face normals differ by more than angle_threshold_deg, OR
+        - Adjacent face colors differ by more than color_threshold (0-1 normalized)
+
+        This allows flat areas with same color to merge into single planes,
+        while preserving both geometric creases and color boundaries.
+
+        Returns: (total_sharp, angle_sharp, color_sharp) counts
+        """
         import numpy as np
 
-        angle_threshold_rad = np.radians(angle_threshold_deg)
-
-        # Get face normals
-        face_normals = mesh.face_normals
+        angle_threshold_rad = np.radians(angle_threshold_deg) if angle_threshold_deg > 0 else np.pi
 
         # Get face adjacency (which faces share each edge)
-        # trimesh stores this as face_adjacency: (n, 2) array of adjacent face indices
         if not hasattr(mesh, 'face_adjacency') or mesh.face_adjacency is None:
             print("[BD CuMesh] Computing face adjacency...")
             mesh._cache.clear()  # Force recompute
 
         face_adj = mesh.face_adjacency
         if face_adj is None or len(face_adj) == 0:
-            return 0
+            return 0, 0, 0
 
-        # Compute angle between adjacent face normals
-        n1 = face_normals[face_adj[:, 0]]
-        n2 = face_normals[face_adj[:, 1]]
+        # === ANGLE-BASED SHARP EDGES ===
+        angle_sharp_mask = np.zeros(len(face_adj), dtype=bool)
+        if angle_threshold_deg > 0:
+            face_normals = mesh.face_normals
+            n1 = face_normals[face_adj[:, 0]]
+            n2 = face_normals[face_adj[:, 1]]
 
-        # Dot product gives cos(angle)
-        dots = np.einsum('ij,ij->i', n1, n2)
-        dots = np.clip(dots, -1.0, 1.0)
-        angles = np.arccos(dots)
+            # Dot product gives cos(angle)
+            dots = np.einsum('ij,ij->i', n1, n2)
+            dots = np.clip(dots, -1.0, 1.0)
+            angles = np.arccos(dots)
 
-        # Mark edges where angle exceeds threshold
-        sharp_mask = angles > angle_threshold_rad
+            angle_sharp_mask = angles > angle_threshold_rad
+
+        # === COLOR-BASED SHARP EDGES ===
+        color_sharp_mask = np.zeros(len(face_adj), dtype=bool)
+        if color_threshold > 0:
+            # Get face colors (average of vertex colors for each face)
+            has_colors = (
+                hasattr(mesh.visual, 'vertex_colors') and
+                mesh.visual.vertex_colors is not None
+            )
+
+            if has_colors:
+                vertex_colors = mesh.visual.vertex_colors[:, :3].astype(np.float32) / 255.0  # RGB only, normalized
+
+                # Compute face colors as average of vertex colors
+                face_colors = vertex_colors[mesh.faces].mean(axis=1)  # (n_faces, 3)
+
+                # Get colors of adjacent faces
+                c1 = face_colors[face_adj[:, 0]]  # (n_edges, 3)
+                c2 = face_colors[face_adj[:, 1]]  # (n_edges, 3)
+
+                # Compute color difference (Euclidean distance in RGB space, normalized to 0-1)
+                # Max possible distance is sqrt(3) ≈ 1.73, so normalize by that
+                color_diff = np.linalg.norm(c1 - c2, axis=1) / np.sqrt(3)
+
+                color_sharp_mask = color_diff > color_threshold
+
+                print(f"[BD CuMesh] Color edge detection: max diff={color_diff.max():.3f}, mean={color_diff.mean():.3f}")
+
+        # === COMBINE: Sharp if angle OR color boundary ===
+        sharp_mask = angle_sharp_mask | color_sharp_mask
+
+        angle_count = np.sum(angle_sharp_mask)
+        color_only_count = np.sum(color_sharp_mask & ~angle_sharp_mask)  # Color edges not already angle edges
         sharp_count = np.sum(sharp_mask)
 
         # Store sharp edges in mesh metadata
@@ -344,8 +440,13 @@ Much faster than Blender for large meshes.""",
             sharp_edges = mesh.face_adjacency_edges[sharp_mask]
             mesh.metadata['sharp_edges'] = sharp_edges
             mesh.metadata['sharp_angle'] = angle_threshold_deg
+            mesh.metadata['sharp_color_threshold'] = color_threshold
 
-        return sharp_count
+            # Also store separate masks for debugging/analysis
+            mesh.metadata['angle_sharp_edges'] = mesh.face_adjacency_edges[angle_sharp_mask] if angle_count > 0 else np.array([])
+            mesh.metadata['color_sharp_edges'] = mesh.face_adjacency_edges[color_sharp_mask] if np.sum(color_sharp_mask) > 0 else np.array([])
+
+        return sharp_count, angle_count, color_only_count
 
 
 # V3 node list
