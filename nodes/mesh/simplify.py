@@ -1,11 +1,20 @@
 """
 BD_CuMeshSimplify - GPU-accelerated mesh simplification with color preservation.
 
-Uses CuMesh (from TRELLIS2) for fast simplification, then transfers
-vertex colors from the original mesh using BVH nearest-neighbor lookup.
+Uses CuMesh for fast simplification with optional dual-contouring remesh
+and sharp edge preservation (CuMesh PR #19).
+
+Features:
+- GPU-accelerated mesh simplification
+- Optional dual-contouring remesh for cleaner topology
+- Sharp edge preservation during remeshing (angle-based detection)
+- Mesh cleaning (fill holes, remove duplicates, repair non-manifold)
+- Vertex color transfer from original mesh via BVH lookup
+- Sharp edge marking based on geometry AND color boundaries
 """
 
 import gc
+import time
 import numpy as np
 
 from comfy_api.latest import io
@@ -22,8 +31,17 @@ except ImportError:
 try:
     import cumesh
     HAS_CUMESH = True
+    # Check for remeshing module with sharp edge support
+    HAS_REMESH = hasattr(cumesh, 'remeshing')
+    if HAS_REMESH:
+        from cumesh import _C
+        HAS_SHARP_DC = hasattr(_C, 'simple_dual_contour_sharp')
+    else:
+        HAS_SHARP_DC = False
 except ImportError:
     HAS_CUMESH = False
+    HAS_REMESH = False
+    HAS_SHARP_DC = False
 
 try:
     import trimesh
@@ -46,13 +64,20 @@ class BD_CuMeshSimplify(io.ComfyNode):
             node_id="BD_CuMeshSimplify",
             display_name="BD CuMesh Simplify",
             category="🧠BrainDead/Mesh",
-            description="""GPU-accelerated mesh simplification with color preservation.
+            description="""GPU-accelerated mesh simplification with color preservation and optional remeshing.
 
-Uses CuMesh (TRELLIS2) for fast GPU simplification.
-Preserves vertex colors via BVH nearest-neighbor transfer.
-Marks hard edges based on angle threshold.
+Features:
+- CuMesh GPU simplification (much faster than Blender)
+- Optional dual-contouring remesh for cleaner topology
+- Sharp edge preservation during remeshing (uses CuMesh PR #19)
+- Mesh cleaning: fill holes, remove duplicates, repair non-manifold
+- Vertex color transfer from original mesh
+- Sharp edge marking based on geometry AND color boundaries
 
-Much faster than Blender for large meshes.""",
+Typical workflow for TRELLIS2 output:
+1. Enable remesh + preserve_sharp_edges for low-poly stylized look
+2. Enable mesh cleaning to fix topology issues
+3. Target 5k-50k faces depending on use case""",
             inputs=[
                 TrimeshInput("mesh"),
                 io.Int.Input(
@@ -62,6 +87,87 @@ Much faster than Blender for large meshes.""",
                     max=1000000,
                     tooltip="Target number of faces after simplification",
                 ),
+                # === REMESH OPTIONS ===
+                io.Boolean.Input(
+                    "remesh",
+                    default=False,
+                    tooltip="Apply dual-contouring remesh before simplification for cleaner topology",
+                ),
+                io.Int.Input(
+                    "remesh_resolution",
+                    default=512,
+                    min=128,
+                    max=2048,
+                    step=64,
+                    tooltip="Voxel grid resolution for remeshing. Higher = more detail but slower.",
+                ),
+                io.Float.Input(
+                    "remesh_band",
+                    default=1.0,
+                    min=0.1,
+                    max=5.0,
+                    step=0.1,
+                    tooltip="Narrow band width in voxel units for remeshing",
+                ),
+                io.Boolean.Input(
+                    "preserve_sharp_edges_remesh",
+                    default=True,
+                    tooltip="Preserve sharp edges during remeshing (requires CuMesh PR #19)",
+                ),
+                io.Float.Input(
+                    "remesh_sharp_angle",
+                    default=30.0,
+                    min=10.0,
+                    max=90.0,
+                    step=5.0,
+                    tooltip="Angle threshold (degrees) for sharp edge detection during remeshing",
+                ),
+                io.Float.Input(
+                    "project_back",
+                    default=0.9,
+                    min=0.0,
+                    max=1.0,
+                    step=0.1,
+                    tooltip="How much to project remeshed vertices back to original surface (0=none, 1=full)",
+                ),
+                # === MESH CLEANING OPTIONS ===
+                io.Boolean.Input(
+                    "fill_holes",
+                    default=True,
+                    tooltip="Fill small holes before simplification",
+                ),
+                io.Float.Input(
+                    "fill_holes_perimeter",
+                    default=0.03,
+                    min=0.001,
+                    max=0.5,
+                    step=0.001,
+                    tooltip="Maximum hole perimeter to fill (mesh units)",
+                ),
+                io.Boolean.Input(
+                    "remove_duplicate_faces",
+                    default=True,
+                    tooltip="Remove duplicate/degenerate faces",
+                ),
+                io.Boolean.Input(
+                    "repair_non_manifold",
+                    default=True,
+                    tooltip="Repair non-manifold edges",
+                ),
+                io.Boolean.Input(
+                    "remove_small_components",
+                    default=True,
+                    tooltip="Remove small disconnected mesh components",
+                ),
+                io.Float.Input(
+                    "small_component_threshold",
+                    default=1e-5,
+                    min=0.0,
+                    max=0.1,
+                    step=1e-6,
+                    tooltip="Volume threshold for removing small components (as fraction of total)",
+                ),
+                # === OUTPUT OPTIONS ===
                 io.Float.Input(
                     "sharp_angle",
                     default=7.0,
@@ -77,19 +183,6 @@ Much faster than Blender for large meshes.""",
                     max=1.0,
                     step=0.01,
                     tooltip="Color difference threshold for marking edges as sharp (0-1). 0.1 = ~10% color change marks edge. 0 = disabled.",
-                ),
-                io.Boolean.Input(
-                    "fill_holes",
-                    default=True,
-                    tooltip="Fill small holes before simplification",
-                ),
-                io.Float.Input(
-                    "fill_holes_perimeter",
-                    default=0.03,
-                    min=0.001,
-                    max=0.5,
-                    step=0.001,
-                    tooltip="Maximum hole perimeter to fill (mesh units)",
                 ),
                 io.Boolean.Input(
                     "preserve_colors",
@@ -113,10 +206,23 @@ Much faster than Blender for large meshes.""",
         cls,
         mesh,
         target_faces: int = 5000,
-        sharp_angle: float = 7.0,
-        color_edge_threshold: float = 0.1,
+        # Remesh options
+        remesh: bool = False,
+        remesh_resolution: int = 512,
+        remesh_band: float = 1.0,
+        preserve_sharp_edges_remesh: bool = True,
+        remesh_sharp_angle: float = 30.0,
+        project_back: float = 0.9,
+        # Mesh cleaning options
         fill_holes: bool = True,
         fill_holes_perimeter: float = 0.03,
+        remove_duplicate_faces: bool = True,
+        repair_non_manifold: bool = True,
+        remove_small_components: bool = True,
+        small_component_threshold: float = 1e-5,
+        # Output options
+        sharp_angle: float = 7.0,
+        color_edge_threshold: float = 0.1,
         preserve_colors: bool = True,
         face_colors: bool = True,
     ) -> io.NodeOutput:
@@ -124,16 +230,26 @@ Much faster than Blender for large meshes.""",
         if not HAS_TORCH:
             return io.NodeOutput(mesh, "ERROR: torch not installed")
         if not HAS_CUMESH:
-            return io.NodeOutput(mesh, "ERROR: cumesh not installed (need TRELLIS2)")
+            return io.NodeOutput(mesh, "ERROR: cumesh not installed")
         if not HAS_TRIMESH:
             return io.NodeOutput(mesh, "ERROR: trimesh not installed")
 
         if mesh is None:
             return io.NodeOutput(None, "ERROR: No input mesh")
 
+        start_time = time.time()
         orig_verts = len(mesh.vertices)
         orig_faces = len(mesh.faces)
         print(f"[BD CuMesh] Input: {orig_verts:,} verts, {orig_faces:,} faces -> target {target_faces:,}")
+
+        # Check remesh capability
+        if remesh and not HAS_REMESH:
+            print("[BD CuMesh] WARNING: remesh requested but cumesh.remeshing not available")
+            remesh = False
+        if remesh and preserve_sharp_edges_remesh and not HAS_SHARP_DC:
+            print("[BD CuMesh] WARNING: preserve_sharp_edges_remesh requested but simple_dual_contour_sharp not available")
+            print("[BD CuMesh] Will use standard dual contouring (no edge preservation)")
+            preserve_sharp_edges_remesh = False
 
         # Check for vertex colors in original mesh
         has_colors = False
@@ -146,16 +262,13 @@ Much faster than Blender for large meshes.""",
 
         try:
             # Check if mesh is "face-split" (no shared vertices)
-            # This happens when every face has unique vertices (3 verts per face)
             verts_per_face = orig_verts / orig_faces if orig_faces > 0 else 0
-            is_face_split = verts_per_face > 2.9  # Should be ~3.0 for face-split
+            is_face_split = verts_per_face > 2.9
 
             if is_face_split:
                 print(f"[BD CuMesh] Detected face-split mesh ({verts_per_face:.2f} verts/face)")
                 print("[BD CuMesh] Merging duplicate vertices for proper simplification...")
 
-                # Create a merged-vertex version for simplification
-                # Use trimesh's merge_vertices to combine coincident vertices
                 work_mesh = trimesh.Trimesh(
                     vertices=mesh.vertices.copy(),
                     faces=mesh.faces.copy(),
@@ -166,11 +279,9 @@ Much faster than Blender for large meshes.""",
                 merged_faces = len(work_mesh.faces)
                 print(f"[BD CuMesh] After merge: {merged_verts:,} verts, {merged_faces:,} faces")
 
-                # Use merged mesh for simplification
                 vertices = torch.tensor(work_mesh.vertices, dtype=torch.float32).cuda()
                 faces = torch.tensor(work_mesh.faces, dtype=torch.int32).cuda()
             else:
-                # Normal mesh with shared vertices
                 vertices = torch.tensor(mesh.vertices, dtype=torch.float32).cuda()
                 faces = torch.tensor(mesh.faces, dtype=torch.int32).cuda()
 
@@ -184,13 +295,12 @@ Much faster than Blender for large meshes.""",
             cu.init(vertices_yup, faces)
             print(f"[BD CuMesh] Initialized: {cu.num_vertices} verts, {cu.num_faces} faces")
 
-            # Fill holes (be careful - can explode face count on bad meshes)
+            # === PHASE 1: INITIAL MESH CLEANING ===
             if fill_holes:
                 pre_fill_faces = cu.num_faces
                 try:
                     cu.fill_holes(max_hole_perimeter=fill_holes_perimeter)
                     post_fill_faces = cu.num_faces
-                    # Sanity check: if fill_holes more than doubled face count, something is wrong
                     if post_fill_faces > pre_fill_faces * 2:
                         print(f"[BD CuMesh] WARNING: fill_holes exploded faces ({pre_fill_faces} -> {post_fill_faces}), reinitializing...")
                         cu = cumesh.CuMesh()
@@ -200,13 +310,83 @@ Much faster than Blender for large meshes.""",
                 except Exception as e:
                     print(f"[BD CuMesh] Warning: fill_holes failed: {e}")
 
-            # Remove degenerate faces
-            try:
-                cu.remove_degenerate_faces()
-            except Exception as e:
-                print(f"[BD CuMesh] Warning: remove_degenerate_faces failed: {e}")
+            # === PHASE 2: REMESH (OPTIONAL) ===
+            did_remesh = False
+            if remesh and HAS_REMESH:
+                print(f"[BD CuMesh] Remeshing (resolution={remesh_resolution}, band={remesh_band}, sharp_edges={preserve_sharp_edges_remesh})...")
+                try:
+                    # Get current mesh state for remeshing
+                    curr_verts, curr_faces = cu.read()
 
-            # Unify face orientations before simplify (can crash on complex meshes)
+                    # Build BVH for remesh
+                    bvh = cumesh.cuBVH(curr_verts, curr_faces)
+
+                    # Calculate remesh parameters based on mesh bounds
+                    # Use standard AABB for normalized meshes
+                    aabb = torch.tensor([[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]], device='cuda', dtype=torch.float32)
+                    center = aabb.mean(dim=0)
+                    scale = (aabb[1] - aabb[0]).max().item()
+
+                    # Dual contour remesh with optional sharp edge preservation
+                    remesh_start = time.time()
+                    new_verts, new_faces = cumesh.remeshing.remesh_narrow_band_dc(
+                        curr_verts, curr_faces,
+                        center=center,
+                        scale=(remesh_resolution + 3 * remesh_band) / remesh_resolution * scale,
+                        resolution=remesh_resolution,
+                        band=remesh_band,
+                        project_back=project_back,
+                        verbose=True,
+                        bvh=bvh,
+                        preserve_sharp_edges=preserve_sharp_edges_remesh,
+                        sharp_angle_threshold=remesh_sharp_angle,
+                    )
+                    remesh_time = time.time() - remesh_start
+
+                    # Reinitialize CuMesh with remeshed geometry
+                    cu.init(new_verts, new_faces)
+                    did_remesh = True
+
+                    print(f"[BD CuMesh] After remesh: {cu.num_vertices} verts, {cu.num_faces} faces ({remesh_time:.1f}s)")
+
+                    # Clean up BVH
+                    del bvh, curr_verts, curr_faces, new_verts, new_faces
+                    torch.cuda.empty_cache()
+
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"[BD CuMesh] WARNING: Remesh failed: {e}")
+                    print("[BD CuMesh] Continuing with original mesh...")
+
+            # === PHASE 3: MESH CLEANING ===
+            if remove_duplicate_faces:
+                try:
+                    cu.remove_duplicate_faces()
+                    cu.remove_degenerate_faces()
+                except Exception as e:
+                    print(f"[BD CuMesh] Warning: remove_duplicate_faces failed: {e}")
+
+            if repair_non_manifold:
+                try:
+                    cu.repair_non_manifold_edges()
+                except Exception as e:
+                    print(f"[BD CuMesh] Warning: repair_non_manifold_edges failed: {e}")
+
+            if remove_small_components:
+                try:
+                    cu.remove_small_connected_components(small_component_threshold)
+                except Exception as e:
+                    print(f"[BD CuMesh] Warning: remove_small_connected_components failed: {e}")
+
+            # Fill holes again after cleaning (remesh can create new holes)
+            if fill_holes and did_remesh:
+                try:
+                    cu.fill_holes(max_hole_perimeter=fill_holes_perimeter)
+                except Exception:
+                    pass
+
+            # Unify face orientations before simplify
             if cu.num_faces > 0:
                 try:
                     cu.unify_face_orientations()
@@ -214,7 +394,7 @@ Much faster than Blender for large meshes.""",
                 except Exception as e:
                     print(f"[BD CuMesh] Warning: unify_face_orientations failed (continuing anyway): {e}")
 
-            # Simplify
+            # === PHASE 4: SIMPLIFY ===
             if cu.num_faces > target_faces:
                 print(f"[BD CuMesh] Simplifying to {target_faces} faces...")
                 try:
@@ -224,28 +404,25 @@ Much faster than Blender for large meshes.""",
                     print(f"[BD CuMesh] ERROR: simplify crashed: {e}")
                     return io.NodeOutput(mesh, f"ERROR: CuMesh simplify failed - {e}")
 
-            # Check if simplify reduced to almost nothing (bad result)
+            # Check for bad results
             if cu.num_faces < target_faces * 0.1:
                 print(f"[BD CuMesh] WARNING: Simplify reduced to only {cu.num_faces} faces (expected ~{target_faces})")
-                print("[BD CuMesh] This may indicate mesh topology issues.")
 
-            # Check if simplify removed all faces (bad mesh or bug)
             if cu.num_faces == 0:
                 print("[BD CuMesh] ERROR: Simplify removed all faces! Returning original mesh.")
                 return io.NodeOutput(mesh, "ERROR: Simplify removed all faces - mesh may have issues")
 
-            # Unify orientations again (simplify can break it) - optional, can fail
+            # === PHASE 5: FINAL CLEANUP ===
             if cu.num_faces > 0:
                 try:
                     cu.unify_face_orientations()
                 except Exception:
-                    pass  # Not critical
+                    pass
 
-            # Remove unreferenced vertices
             try:
                 cu.remove_unreferenced_vertices()
             except Exception:
-                pass  # Not critical
+                pass
 
             # Read result
             out_verts, out_faces = cu.read()
@@ -277,15 +454,21 @@ Much faster than Blender for large meshes.""",
                 print(f"[BD CuMesh] Marked {sharp_count} sharp edges ({angle_count} by angle >{sharp_angle}°, {color_count} by color >{color_edge_threshold:.0%})")
 
             # Stats
+            total_time = time.time() - start_time
             new_verts = len(result.vertices)
             new_faces = len(result.faces)
             reduction = (1 - new_faces / orig_faces) * 100 if orig_faces > 0 else 0
 
-            status = f"Simplified: {orig_faces:,} -> {new_faces:,} faces ({reduction:.1f}% reduction)"
+            status = f"{orig_faces:,} -> {new_faces:,} faces ({reduction:.1f}% reduction)"
+            if did_remesh:
+                status += " | remeshed"
+                if preserve_sharp_edges_remesh:
+                    status += " (sharp edges)"
             if has_colors:
-                status += " | colors preserved"
-            if sharp_angle > 0 or color_edge_threshold > 0:
-                status += f" | sharp edges marked"
+                status += " | colors"
+            status += f" | {total_time:.1f}s"
+
+            print(f"[BD CuMesh] Complete: {status}")
 
             # Cleanup GPU
             del vertices, faces, vertices_yup, out_verts, out_faces, cu
