@@ -1,7 +1,10 @@
 """
 V3 API TRELLIS2 conditioning node.
 
-BD_Trellis2GetConditioning - Extract DinoV3 features from image for 3D generation.
+BD_Trellis2GetConditioning - All-in-one node for model config + DinoV3 conditioning.
+
+Combines model loading config with DinoV3 feature extraction in a single node.
+For dual workflow, use two of these nodes with different settings.
 """
 
 import gc
@@ -13,14 +16,30 @@ import torch
 from comfy_api.latest import io
 
 from .utils import HAS_TRELLIS2
-from .utils.helpers import smart_crop_square
+from .utils.helpers import smart_crop_square, Trellis2ModelConfig
+
+
+# Resolution modes
+RESOLUTION_MODES = ['512', '1024_cascade', '1536_cascade']
+
+# Attention backend options
+ATTN_BACKENDS = ['flash_attn', 'xformers', 'sdpa']
+
+# VRAM usage modes
+VRAM_MODES = ['keep_loaded', 'cpu_offload']
 
 
 class BD_Trellis2GetConditioning(io.ComfyNode):
     """
-    Extract image conditioning using DinoV3 for TRELLIS2.
+    All-in-one TRELLIS2 conditioning node with built-in model config.
 
-    Runs in main ComfyUI process (no subprocess isolation).
+    Combines model configuration + DinoV3 feature extraction.
+    Outputs both model_config and conditioning for downstream nodes.
+
+    For dual workflow (different settings for shape vs texture):
+    - Use TWO of these nodes with different resolution settings
+    - First node (512) → Image to Shape (model_config, conditioning)
+    - Second node (1536_cascade) → Shape to Textured Mesh (texture_model_config, texture_conditioning)
     """
 
     @classmethod
@@ -29,30 +48,56 @@ class BD_Trellis2GetConditioning(io.ComfyNode):
             node_id="BD_Trellis2GetConditioning",
             display_name="BD TRELLIS.2 Get Conditioning",
             category="🧠BrainDead/TRELLIS2",
-            description="""Preprocess image and extract visual features using DinoV3.
+            description="""All-in-one TRELLIS2 conditioning with built-in model config.
 
-This node handles:
-1. Applying mask as alpha channel
-2. Cropping to object bounding box
-3. Alpha premultiplication with background color
-4. DinoV3 feature extraction at 512px (and optionally 1024px)
+Combines model configuration + DinoV3 feature extraction in one node.
+Outputs both model_config AND conditioning for downstream use.
 
-Parameters:
-- model_config: The TRELLIS2 config from BD Load Models node
-- image: Input image (RGB)
-- mask: Foreground mask (white=object, black=background)
-- include_1024: Also extract 1024px features (needed for cascade modes)
-- background_color: Background color for preprocessing
+SINGLE WORKFLOW:
+Just use one node, connect both outputs to Image to Shape and Shape to Textured Mesh.
 
-Use any background removal node (BiRefNet, rembg, etc.) to generate the mask.""",
+DUAL WORKFLOW (recommended for quality):
+1. First node: resolution=512 → fast shape generation
+   - Connect model_config → Image to Shape (model_config)
+   - Connect conditioning → Image to Shape (conditioning)
+
+2. Second node: resolution=1536_cascade, different image if desired
+   - Connect model_config → Shape to Textured Mesh (texture_model_config)
+   - Connect conditioning → Shape to Textured Mesh (texture_conditioning)
+
+This gives fast shape (~15s) with high-detail texture voxelgrid.
+
+Resolution modes:
+- 512: Fast (~15s), lower detail - good for shape
+- 1024_cascade: Balanced (~30s) - good default
+- 1536_cascade: Highest detail (~45s) - best for texture""",
             inputs=[
-                io.Custom("TRELLIS2_MODEL_CONFIG").Input("model_config"),
                 io.Image.Input("image"),
                 io.Mask.Input("mask"),
+                # Model config options (built-in)
+                io.Combo.Input(
+                    "resolution",
+                    options=RESOLUTION_MODES,
+                    default="1024_cascade",
+                    tooltip="Model resolution. Use 512 for fast shape, 1536_cascade for detailed texture."
+                ),
+                io.Combo.Input(
+                    "attn_backend",
+                    options=ATTN_BACKENDS,
+                    default="flash_attn",
+                    tooltip="Attention implementation"
+                ),
+                io.Combo.Input(
+                    "vram_mode",
+                    options=VRAM_MODES,
+                    default="keep_loaded",
+                    tooltip="VRAM usage strategy"
+                ),
+                # Conditioning options
                 io.Boolean.Input(
                     "include_1024",
                     default=True,
-                    tooltip="Also extract 1024px features (needed for cascade modes)"
+                    tooltip="Extract 1024px features (needed for cascade modes)"
                 ),
                 io.Combo.Input(
                     "background_color",
@@ -62,6 +107,7 @@ Use any background removal node (BiRefNet, rembg, etc.) to generate the mask."""
                 ),
             ],
             outputs=[
+                io.Custom("TRELLIS2_MODEL_CONFIG").Output(display_name="model_config"),
                 io.Custom("TRELLIS2_CONDITIONING").Output(display_name="conditioning"),
                 io.Image.Output(display_name="preprocessed_image"),
             ],
@@ -70,9 +116,11 @@ Use any background removal node (BiRefNet, rembg, etc.) to generate the mask."""
     @classmethod
     def execute(
         cls,
-        model_config,
         image: torch.Tensor,
         mask: torch.Tensor,
+        resolution: str = "1024_cascade",
+        attn_backend: str = "flash_attn",
+        vram_mode: str = "keep_loaded",
         include_1024: bool = True,
         background_color: str = "gray",
     ) -> io.NodeOutput:
@@ -81,7 +129,15 @@ Use any background removal node (BiRefNet, rembg, etc.) to generate the mask."""
 
         from .utils.model_manager import get_model_manager
 
-        print(f"[BD TRELLIS2] Running conditioning (include_1024={include_1024}, bg={background_color})...")
+        # Create model config
+        model_config = Trellis2ModelConfig(
+            model_name="microsoft/TRELLIS.2-4B",
+            resolution=resolution,
+            attn_backend=attn_backend,
+            vram_mode=vram_mode,
+        )
+
+        print(f"[BD TRELLIS2] Conditioning (resolution={resolution}, include_1024={include_1024}, bg={background_color})...")
 
         # Background color mapping
         bg_colors = {
@@ -165,9 +221,9 @@ Use any background removal node (BiRefNet, rembg, etc.) to generate the mask."""
         gc.collect()
         torch.cuda.empty_cache()
 
-        print(f"[BD TRELLIS2] Conditioning extracted (512: {cond_512.shape}, 1024: {cond_1024.shape if cond_1024 is not None else 'N/A'})")
+        print(f"[BD TRELLIS2] Conditioning ready (512: {cond_512.shape}, 1024: {cond_1024.shape if cond_1024 is not None else 'N/A'})")
 
-        return io.NodeOutput(conditioning, preprocessed_tensor)
+        return io.NodeOutput(model_config, conditioning, preprocessed_tensor)
 
 
 # V3 node list for extension
