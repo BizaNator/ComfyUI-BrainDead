@@ -14,15 +14,15 @@ from typing import Optional
 # Find Blender executable - check common locations
 # Prefer newer Blender versions first
 BLENDER_PATHS = [
-    # BrainDead bundled Blender 5.0.1 (preferred)
-    "/opt/comfyui/dev/custom_nodes/ComfyUI-BrainDead/lib/blender/blender-5.0.1-linux-x64/blender",
+    # BrainDead bundled Blender 5.0.1 (preferred - stable first)
     "/opt/comfyui/stable/custom_nodes/ComfyUI-BrainDead/lib/blender/blender-5.0.1-linux-x64/blender",
+    "/opt/comfyui/dev/custom_nodes/ComfyUI-BrainDead/lib/blender/blender-5.0.1-linux-x64/blender",
     # GeometryPack bundled Blender 4.2.3
-    "/opt/comfyui/dev/custom_nodes/ComfyUI-GeometryPack/_blender/blender-4.2.3-linux-x64/blender",
     "/opt/comfyui/stable/custom_nodes/ComfyUI-GeometryPack/_blender/blender-4.2.3-linux-x64/blender",
+    "/opt/comfyui/dev/custom_nodes/ComfyUI-GeometryPack/_blender/blender-4.2.3-linux-x64/blender",
     # UniRig bundled Blender 4.2.3
-    "/opt/comfyui/dev/custom_nodes/ComfyUI-UniRig/lib/blender/blender-4.2.3-linux-x64/blender",
     "/opt/comfyui/stable/custom_nodes/ComfyUI-UniRig/lib/blender/blender-4.2.3-linux-x64/blender",
+    "/opt/comfyui/dev/custom_nodes/ComfyUI-UniRig/lib/blender/blender-4.2.3-linux-x64/blender",
     # System Blender
     "/usr/bin/blender",
     "/usr/local/bin/blender",
@@ -297,7 +297,7 @@ class BlenderNodeMixin:
     @classmethod
     def _load_mesh_from_file(cls, path: str):
         """
-        Load a mesh from a file path.
+        Load a mesh from a file path, preserving vertex colors.
 
         Args:
             path: Path to mesh file
@@ -306,6 +306,7 @@ class BlenderNodeMixin:
             trimesh.Trimesh object
         """
         import os
+        import numpy as np
 
         if not HAS_TRIMESH:
             raise RuntimeError("trimesh not installed")
@@ -324,18 +325,57 @@ class BlenderNodeMixin:
         }
         file_type = file_type_map.get(ext, None)
 
-        if file_type:
-            mesh = trimesh.load(path, file_type=file_type, force='mesh')
-        else:
-            mesh = trimesh.load(path, force='mesh')
+        # For GLB, first try loading without force='mesh' to preserve colors
+        mesh = None
+        vertex_colors = None
 
-        # Handle scene vs single mesh
+        if file_type in ['glb', 'gltf']:
+            # Load as scene first to get full data including colors
+            try:
+                scene = trimesh.load(path, file_type=file_type)
+                if isinstance(scene, trimesh.Scene):
+                    meshes = [g for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                    if meshes:
+                        # Get colors from first mesh before concatenating
+                        for m in meshes:
+                            if hasattr(m, 'visual') and m.visual is not None:
+                                if hasattr(m.visual, 'vertex_colors') and m.visual.vertex_colors is not None:
+                                    vc = m.visual.vertex_colors
+                                    if vc is not None and len(vc) > 0:
+                                        print(f"[BD Blender] Found {len(vc)} vertex colors in scene mesh")
+                                        break
+                        mesh = trimesh.util.concatenate(meshes)
+                elif isinstance(scene, trimesh.Trimesh):
+                    mesh = scene
+            except Exception as e:
+                print(f"[BD Blender] Scene load failed, trying force='mesh': {e}")
+
+        # Fallback to standard loading
+        if mesh is None:
+            if file_type:
+                mesh = trimesh.load(path, file_type=file_type, force='mesh')
+            else:
+                mesh = trimesh.load(path, force='mesh')
+
+        # Handle scene vs single mesh (fallback case)
         if isinstance(mesh, trimesh.Scene):
             meshes = [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
             if meshes:
                 mesh = trimesh.util.concatenate(meshes)
             else:
                 raise RuntimeError("No meshes found in loaded file")
+
+        # Log vertex color status
+        has_colors = False
+        if hasattr(mesh, 'visual') and mesh.visual is not None:
+            if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                colors = mesh.visual.vertex_colors
+                if colors is not None and len(colors) > 0:
+                    has_colors = True
+                    print(f"[BD Blender] Output mesh has {len(colors)} vertex colors")
+
+        if not has_colors:
+            print("[BD Blender] WARNING: Output mesh has NO vertex colors!")
 
         print(f"[BD Blender] Loaded: {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces")
         return mesh

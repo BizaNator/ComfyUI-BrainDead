@@ -77,25 +77,52 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 | **BD Smart Decimate** | Edge-preserving decimation with pymeshlab |
 | **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ |
 | **BD CuMesh Simplify** | GPU-accelerated mesh simplification with color preservation |
+| **BD Planar Grouping** | Group faces by normal direction with boundary straightening |
+
+**BD Planar Grouping Features:**
+- **Normal-based grouping**: Clusters faces with similar normals into planar regions
+- **Boundary straightening**: Projects vertices onto plane intersections for clean edges
+- **Face-split mesh support**: Works with meshes where each face has unique vertices
+- **Configurable thresholds**: Angle threshold and minimum group size
+- **Visualization**: Optional color-coding by group
 
 ### Blender Nodes (`BrainDead/Blender`)
-Advanced mesh processing using Blender's geometry tools (requires Blender 4.2+).
+Advanced mesh processing using Blender's geometry tools (requires Blender 5.0+).
 
 | Node | Description |
 |------|-------------|
-| **BD Blender Decimate** | Basic Blender decimation with color preservation |
-| **BD Blender Decimate V2 (Full)** | Full-featured stylized low-poly decimation |
+| **BD Blender Decimate V3** | Full-featured decimation with edge preservation |
+| **BD Blender Edge Marking** | Detect and mark edges from colors/angles |
+| **BD Blender Merge Planes** | Merge geometry within marked regions |
 | **BD Blender Remesh** | Voxel/quad remeshing with Blender |
-| **BD Blender Repair** | Advanced mesh repair using Blender |
-| **BD Blender Transfer Colors** | BVH-based color transfer using Blender |
+| **BD Blender Cleanup** | Advanced mesh cleanup and repair |
+| **BD Blender Vertex Colors** | Vertex color operations (bake, transfer) |
+| **BD Blender Normals** | Normal fixing and recalculation |
 
-**BD Blender Decimate V2 Features:**
-- **Color Edge Detection**: Marks color boundaries as sharp/seam edges for preservation
-- **Planar Decimation**: Merges coplanar faces while respecting marked edges
-- **Collapse Decimation**: Reduces to target face count
-- **Face-Based Color Transfer**: No color bleeding at vertices
-- **Coordinate System Handling**: Automatic Y-up ↔ Z-up conversion
-- **Pre-cleanup**: Fixes non-manifold geometry before processing
+**Hard Edge Preservation Pipeline:**
+```
+[Input Mesh]
+    ↓
+[BD Planar Grouping] (straighten_boundaries=True)
+    ↓ Clean geometric boundaries
+[BD Blender Edge Marking] (FROM_COLORS_AND_ANGLE)
+    ↓ Mark SHARP/SEAM edges
+[BD Blender Merge Planes] (delimit_sharp=True)
+    ↓ Dissolve while respecting marks
+[Low-poly mesh with hard edges intact]
+```
+
+**BD Blender Edge Marking Operations:**
+- `FROM_COLORS`: Mark edges where vertex colors differ
+- `FROM_ANGLE`: Mark edges by dihedral angle threshold
+- `FROM_COLORS_AND_ANGLE`: Combine both methods
+- `CLEAR`: Remove existing edge marks
+
+**BD Blender Merge Planes Features:**
+- **Delimit options**: Respect SHARP, SEAM, MATERIAL, NORMAL edges
+- **Dissolve angle**: Control coplanar face merging threshold
+- **Region subdivision**: Proportional face density based on area
+- **Output topology**: TRI, QUAD, or NGON output
 
 ### Prompt Nodes (`BrainDead/Prompt`)
 Iterate through multiple prompts with automatic filename generation.

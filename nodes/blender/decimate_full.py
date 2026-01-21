@@ -864,7 +864,7 @@ class BD_BlenderDecimateV2(BlenderNodeMixin, io.ComfyNode):
         return io.Schema(
             node_id="BD_BlenderDecimateV2",
             display_name="BD Blender Decimate V2 (Full)",
-            category="BrainDead/Blender",
+            category="🧠BrainDead/Blender",
             description="""Full-featured stylized low-poly decimation.
 
 CRITICAL FEATURES:

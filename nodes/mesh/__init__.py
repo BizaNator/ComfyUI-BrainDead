@@ -14,6 +14,10 @@ Nodes:
 - BD_SmartDecimate - Edge-preserving decimation
 - BD_ExportMeshWithColors - Export mesh with vertex colors
 - BD_CuMeshSimplify - GPU-accelerated simplification with color preservation
+- BD_UVUnwrap - UV unwrap with xatlas (GPU) or Blender Smart UV
+- BD_BakeTextures - Bake PBR textures from voxelgrid
+- BD_MeshExportBundle - Export all meshes and textures as bundle
+- BD_PlanarGrouping - Structure-aware segmentation into planar regions
 """
 
 # Import TRIMESH type helpers for re-export
@@ -49,6 +53,26 @@ from .simplify import (
     SIMPLIFY_DISPLAY_NAMES,
     SIMPLIFY_V3_NODES,
 )
+from .unwrap import (
+    UNWRAP_NODES,
+    UNWRAP_DISPLAY_NAMES,
+    UNWRAP_V3_NODES,
+)
+from .bake import (
+    BAKE_NODES,
+    BAKE_DISPLAY_NAMES,
+    BAKE_V3_NODES,
+)
+from .export_bundle import (
+    EXPORT_BUNDLE_NODES,
+    EXPORT_BUNDLE_DISPLAY_NAMES,
+    EXPORT_BUNDLE_V3_NODES,
+)
+from .grouping import (
+    GROUPING_NODES,
+    GROUPING_DISPLAY_NAMES,
+    GROUPING_V3_NODES,
+)
 
 # Combine all mesh nodes
 NODE_CLASS_MAPPINGS = {
@@ -58,6 +82,10 @@ NODE_CLASS_MAPPINGS = {
     **MESH_PROCESSING_NODES,
     **MESH_EXPORT_NODES,
     **SIMPLIFY_NODES,
+    **UNWRAP_NODES,
+    **BAKE_NODES,
+    **EXPORT_BUNDLE_NODES,
+    **GROUPING_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -67,6 +95,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **MESH_PROCESSING_DISPLAY_NAMES,
     **MESH_EXPORT_DISPLAY_NAMES,
     **SIMPLIFY_DISPLAY_NAMES,
+    **UNWRAP_DISPLAY_NAMES,
+    **BAKE_DISPLAY_NAMES,
+    **EXPORT_BUNDLE_DISPLAY_NAMES,
+    **GROUPING_DISPLAY_NAMES,
 }
 
 # Export lists for external use
@@ -80,6 +112,10 @@ MESH_V3_NODES = [
     *MESH_PROCESSING_V3_NODES,
     *MESH_EXPORT_V3_NODES,
     *SIMPLIFY_V3_NODES,
+    *UNWRAP_V3_NODES,
+    *BAKE_V3_NODES,
+    *EXPORT_BUNDLE_V3_NODES,
+    *GROUPING_V3_NODES,
 ]
 
 __all__ = [

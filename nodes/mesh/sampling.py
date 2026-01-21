@@ -93,12 +93,17 @@ class BD_SampleVoxelgridColors(io.ComfyNode):
             node_id="BD_SampleVoxelgridColors",
             display_name="BD Sample Voxelgrid Colors",
             category="🧠BrainDead/Mesh",
-            description="Sample colors from TRELLIS2 voxelgrid to mesh. Face mode: ONE solid color per face with NO bleeding (splits vertices).",
+            description="""Sample colors from TRELLIS2 voxelgrid to mesh vertices.
+
+Modes:
+- face (CORNER): 1 solid color per face, NO bleeding. Works with BD_BlenderEdgeMarking. Splits vertices.
+- sharp (POINT/k=1): Per-vertex nearest neighbor. Colors shared at edges - edge marking won't detect boundaries.
+- smooth (POINT/k=4): Per-vertex blended. Smooth gradients - edge marking won't detect boundaries.""",
             inputs=[
                 TrimeshInput("mesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
                 io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
-                              tooltip="face=per-face no-bleed (RECOMMENDED), sharp=per-vertex k=1, smooth=per-vertex k=4"),
+                              tooltip="face=CORNER domain (edge marking works) | sharp=POINT k=1 | smooth=POINT k=4 blended"),
                 io.String.Input("default_color", default="0.5,0.5,0.5,1.0", optional=True),
                 io.Float.Input("distance_threshold", default=3.0, min=1.0, max=10.0, step=0.5, optional=True,
                               tooltip="Max voxels distance before using default color"),
@@ -374,12 +379,17 @@ class BD_SampleVoxelgridPBR(io.ComfyNode):
             node_id="BD_SampleVoxelgridPBR",
             display_name="BD Sample Voxelgrid PBR",
             category="🧠BrainDead/Mesh",
-            description="Sample full PBR (color, metallic, roughness) from TRELLIS2 voxelgrid. Face mode: ONE solid color per face with NO bleeding.",
+            description="""Sample full PBR (color, metallic, roughness) from TRELLIS2 voxelgrid.
+
+Modes:
+- face (CORNER): 1 solid color per face, NO bleeding. Works with BD_BlenderEdgeMarking. Splits vertices.
+- sharp (POINT/k=1): Per-vertex nearest neighbor. Colors shared at edges - edge marking won't detect boundaries.
+- smooth (POINT/k=4): Per-vertex blended. Smooth gradients - edge marking won't detect boundaries.""",
             inputs=[
                 TrimeshInput("mesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
                 io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
-                              tooltip="face=per-face no-bleed (RECOMMENDED), sharp=per-vertex k=1, smooth=per-vertex k=4"),
+                              tooltip="face=CORNER domain (edge marking works) | sharp=POINT k=1 | smooth=POINT k=4 blended"),
                 io.String.Input("default_color", default="0.5,0.5,0.5,1.0", optional=True),
                 io.Float.Input("default_metallic", default=0.0, min=0.0, max=1.0, step=0.05, optional=True),
                 io.Float.Input("default_roughness", default=0.5, min=0.0, max=1.0, step=0.05, optional=True),
