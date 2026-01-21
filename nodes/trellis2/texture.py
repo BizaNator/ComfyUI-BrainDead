@@ -20,6 +20,11 @@ from comfy_api.latest import io
 
 from .utils import HAS_TRELLIS2
 
+# TRIMESH type for compatibility with BD mesh nodes
+def TrimeshOutput(display_name: str = "mesh"):
+    """Create a TRIMESH output (matches BD mesh nodes)."""
+    return io.Custom("TRIMESH").Output(display_name=display_name)
+
 
 def _dict_to_sparse_tensor(d: Dict[str, Any], device: torch.device):
     """
@@ -82,34 +87,25 @@ Takes shape_result from "BD Image to Shape" node and generates PBR materials:
 DUAL-INPUT WORKFLOW (Advanced):
 
 1. Fast shape + detailed texture:
-   - Load Models at 512 → shape generation (fast)
-   - Load Models at 1536_cascade → texture_model_config (detailed voxelgrid)
+   - Get Conditioning at 512 → shape generation (fast)
+   - Get Conditioning at 1536_cascade → texture_conditioning (detailed voxelgrid)
 
 2. Different images for shape vs texture:
    - Get Conditioning with outline image → conditioning (for shape)
    - Get Conditioning with clean render → texture_conditioning (for texture)
-
-All four inputs (model_config, conditioning, texture_model_config, texture_conditioning)
-can be mixed for maximum control.
 
 Returns:
 - trimesh: The 3D mesh with PBR vertex attributes
 - voxelgrid: Sparse PBR voxel data for BD Bake Textures node
 - pbr_pointcloud: Debug point cloud with all 6 PBR channels""",
             inputs=[
-                io.Custom("TRELLIS2_MODEL_CONFIG").Input("model_config"),
                 io.Custom("TRELLIS2_CONDITIONING").Input("conditioning"),
                 io.Custom("TRELLIS2_SHAPE_RESULT").Input("shape_result"),
-                # DUAL INPUTS - the key customization
-                io.Custom("TRELLIS2_MODEL_CONFIG").Input(
-                    "texture_model_config",
-                    optional=True,
-                    tooltip="Optional: Separate model config for texture (e.g., 512 for shape, 1536_cascade for texture)"
-                ),
+                # DUAL INPUT - separate conditioning for texture (includes its own config)
                 io.Custom("TRELLIS2_CONDITIONING").Input(
                     "texture_conditioning",
                     optional=True,
-                    tooltip="Optional: Separate conditioning for texture (dual-image workflow)"
+                    tooltip="Optional: Separate conditioning for texture (different resolution/image)"
                 ),
                 io.Int.Input(
                     "seed",
@@ -135,19 +131,17 @@ Returns:
                 ),
             ],
             outputs=[
-                io.Mesh.Output(display_name="trimesh"),
+                TrimeshOutput(display_name="trimesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Output(display_name="voxelgrid"),
-                io.Mesh.Output(display_name="pbr_pointcloud"),
+                TrimeshOutput(display_name="pbr_pointcloud"),
             ],
         )
 
     @classmethod
     def execute(
         cls,
-        model_config,
         conditioning: Dict[str, torch.Tensor],
         shape_result: Dict[str, Any],
-        texture_model_config=None,
         texture_conditioning: Optional[Dict[str, torch.Tensor]] = None,
         seed: int = 0,
         tex_guidance_strength: float = 7.5,
@@ -160,15 +154,17 @@ Returns:
         from trellis2.representations.mesh import Mesh
         from .utils.model_manager import get_model_manager
 
-        # Use texture_model_config if provided, otherwise fall back to model_config
-        tex_config = texture_model_config if texture_model_config is not None else model_config
-
         # Use texture_conditioning if provided, otherwise fall back to conditioning
         tex_cond = texture_conditioning if texture_conditioning is not None else conditioning
 
-        print(f"[BD TRELLIS2] Running texture generation (seed={seed})...")
-        if texture_model_config is not None:
-            print(f"[BD TRELLIS2] Using separate texture config: {tex_config.resolution}")
+        # Extract model config from the conditioning we're using
+        config = tex_cond.get('_config', {})
+        model_name = config.get('model_name', 'microsoft/TRELLIS.2-4B')
+        resolution = config.get('resolution', '1024_cascade')
+        attn_backend = config.get('attn_backend', 'flash_attn')
+        vram_mode = config.get('vram_mode', 'keep_loaded')
+
+        print(f"[BD TRELLIS2] Running texture generation (seed={seed}, resolution={resolution})...")
         if texture_conditioning is not None:
             print(f"[BD TRELLIS2] Using separate texture conditioning")
 
@@ -195,10 +191,10 @@ Returns:
 
         # Get model manager and texture pipeline
         manager = get_model_manager(
-            tex_config.model_name,
-            tex_config.resolution,
-            tex_config.attn_backend,
-            tex_config.vram_mode,
+            model_name,
+            resolution,
+            attn_backend,
+            vram_mode,
         )
         pipeline = manager.get_texture_pipeline(device)
 

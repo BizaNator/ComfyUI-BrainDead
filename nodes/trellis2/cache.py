@@ -27,6 +27,17 @@ except ImportError:
     HAS_TRIMESH = False
 
 
+# TRIMESH type for compatibility with BD mesh nodes
+def TrimeshInput(name: str, **kwargs):
+    """Create a TRIMESH input (matches BD mesh nodes)."""
+    return io.Custom("TRIMESH").Input(name, **kwargs)
+
+
+def TrimeshOutput(display_name: str = "mesh"):
+    """Create a TRIMESH output (matches BD mesh nodes)."""
+    return io.Custom("TRIMESH").Output(display_name=display_name)
+
+
 class BD_CacheTrellis2Conditioning(io.ComfyNode):
     """Cache Trellis2 conditioning output to skip image preprocessing."""
 
@@ -118,7 +129,7 @@ class BD_CacheTrellis2Shape(io.ComfyNode):
             description="Cache Trellis2 shape result + mesh to skip expensive generation. Place AFTER Trellis2ImageToShape node. Saves ~30-60s per run!",
             inputs=[
                 io.Custom("TRELLIS2_SHAPE_RESULT").Input("shape_result", lazy=True),
-                io.Mesh.Input("mesh", lazy=True),
+                TrimeshInput("mesh", lazy=True),
                 io.String.Input("cache_name", default="trellis2_shape"),
                 io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
                 io.Boolean.Input("force_refresh", default=False),
@@ -126,7 +137,7 @@ class BD_CacheTrellis2Shape(io.ComfyNode):
             ],
             outputs=[
                 io.Custom("TRELLIS2_SHAPE_RESULT").Output(display_name="shape_result"),
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -216,18 +227,18 @@ class BD_CacheTrellis2Texture(io.ComfyNode):
             category="🧠BrainDead/TRELLIS2",
             description="Cache Trellis2 textured mesh outputs together. Place AFTER Trellis2ShapeToTexturedMesh node. Note: voxelgrid contains GPU tensors.",
             inputs=[
-                io.Mesh.Input("trimesh_out", lazy=True),
+                TrimeshInput("trimesh_out", lazy=True),
                 io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid", lazy=True),
-                io.Mesh.Input("pbr_pointcloud", lazy=True),
+                TrimeshInput("pbr_pointcloud", lazy=True),
                 io.String.Input("cache_name", default="trellis2_texture"),
                 io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
                 io.Boolean.Input("force_refresh", default=False),
                 io.String.Input("name_prefix", default="", optional=True),
             ],
             outputs=[
-                io.Mesh.Output(display_name="trimesh"),
+                TrimeshOutput(display_name="trimesh"),
                 io.Custom("TRELLIS2_VOXELGRID").Output(display_name="voxelgrid"),
-                io.Mesh.Output(display_name="pbr_pointcloud"),
+                TrimeshOutput(display_name="pbr_pointcloud"),
                 io.String.Output(display_name="status"),
             ],
         )

@@ -51,18 +51,16 @@ class BD_Trellis2GetConditioning(io.ComfyNode):
             description="""All-in-one TRELLIS2 conditioning with built-in model config.
 
 Combines model configuration + DinoV3 feature extraction in one node.
-Outputs both model_config AND conditioning for downstream use.
+Model config is embedded in conditioning - no separate config needed!
 
 SINGLE WORKFLOW:
-Just use one node, connect both outputs to Image to Shape and Shape to Textured Mesh.
+One node → connect conditioning to both Image to Shape and Shape to Textured Mesh.
 
 DUAL WORKFLOW (recommended for quality):
 1. First node: resolution=512 → fast shape generation
-   - Connect model_config → Image to Shape (model_config)
-   - Connect conditioning → Image to Shape (conditioning)
+   - Connect conditioning → Image to Shape
 
 2. Second node: resolution=1536_cascade, different image if desired
-   - Connect model_config → Shape to Textured Mesh (texture_model_config)
    - Connect conditioning → Shape to Textured Mesh (texture_conditioning)
 
 This gives fast shape (~15s) with high-detail texture voxelgrid.
@@ -107,7 +105,6 @@ Resolution modes:
                 ),
             ],
             outputs=[
-                io.Custom("TRELLIS2_MODEL_CONFIG").Output(display_name="model_config"),
                 io.Custom("TRELLIS2_CONDITIONING").Output(display_name="conditioning"),
                 io.Image.Output(display_name="preprocessed_image"),
             ],
@@ -204,10 +201,17 @@ Resolution modes:
         # Create negative conditioning (zeros)
         neg_cond = torch.zeros_like(cond_512)
 
-        # Build conditioning dict
+        # Build conditioning dict with embedded model config
         conditioning = {
             'cond_512': cond_512.cpu(),
             'neg_cond': neg_cond.cpu(),
+            # Embed model config so downstream nodes don't need separate input
+            '_config': {
+                'model_name': model_config.model_name,
+                'resolution': model_config.resolution,
+                'attn_backend': model_config.attn_backend,
+                'vram_mode': model_config.vram_mode,
+            }
         }
         if cond_1024 is not None:
             conditioning['cond_1024'] = cond_1024.cpu()
@@ -223,7 +227,7 @@ Resolution modes:
 
         print(f"[BD TRELLIS2] Conditioning ready (512: {cond_512.shape}, 1024: {cond_1024.shape if cond_1024 is not None else 'N/A'})")
 
-        return io.NodeOutput(model_config, conditioning, preprocessed_tensor)
+        return io.NodeOutput(conditioning, preprocessed_tensor)
 
 
 # V3 node list for extension

@@ -16,6 +16,11 @@ from comfy_api.latest import io
 
 from .utils import HAS_TRELLIS2
 
+# TRIMESH type for compatibility with BD mesh nodes
+def TrimeshOutput(display_name: str = "mesh"):
+    """Create a TRIMESH output (matches BD mesh nodes)."""
+    return io.Custom("TRIMESH").Output(display_name=display_name)
+
 
 def _sparse_tensor_to_dict(st) -> Dict[str, Any]:
     """
@@ -68,8 +73,7 @@ This node generates shape geometry (no texture/PBR).
 Connect shape_result to "BD Shape to Textured Mesh" for PBR materials.
 
 Parameters:
-- model_config: The TRELLIS2 config (resolution is set in Load Models node)
-- conditioning: DinoV3 conditioning from "BD Get Conditioning" node
+- conditioning: DinoV3 conditioning from "BD Get Conditioning" node (includes model config)
 - seed: Random seed for reproducibility
 - ss_*: Sparse structure sampling parameters
 - shape_*: Shape latent sampling parameters
@@ -79,7 +83,6 @@ Returns:
 - shape_result: Shape data for texture generation
 - mesh: Untextured mesh for preview/export (TRIMESH type)""",
             inputs=[
-                io.Custom("TRELLIS2_MODEL_CONFIG").Input("model_config"),
                 io.Custom("TRELLIS2_CONDITIONING").Input("conditioning"),
                 io.Int.Input(
                     "seed",
@@ -129,14 +132,13 @@ Returns:
             ],
             outputs=[
                 io.Custom("TRELLIS2_SHAPE_RESULT").Output(display_name="shape_result"),
-                io.Mesh.Output(display_name="mesh"),
+                TrimeshOutput(display_name="mesh"),
             ],
         )
 
     @classmethod
     def execute(
         cls,
-        model_config,
         conditioning: Dict[str, torch.Tensor],
         seed: int = 0,
         ss_guidance_strength: float = 7.5,
@@ -151,7 +153,14 @@ Returns:
         import cumesh as CuMesh
         from .utils.model_manager import get_model_manager
 
-        print(f"[BD TRELLIS2] Running shape generation (seed={seed}, resolution={model_config.resolution})...")
+        # Extract model config from conditioning
+        config = conditioning.get('_config', {})
+        model_name = config.get('model_name', 'microsoft/TRELLIS.2-4B')
+        resolution = config.get('resolution', '1024_cascade')
+        attn_backend = config.get('attn_backend', 'flash_attn')
+        vram_mode = config.get('vram_mode', 'keep_loaded')
+
+        print(f"[BD TRELLIS2] Running shape generation (seed={seed}, resolution={resolution})...")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -163,10 +172,10 @@ Returns:
 
         # Get model manager and shape pipeline
         manager = get_model_manager(
-            model_config.model_name,
-            model_config.resolution,
-            model_config.attn_backend,
-            model_config.vram_mode,
+            model_name,
+            resolution,
+            attn_backend,
+            vram_mode,
         )
         pipeline = manager.get_shape_pipeline(device)
 
@@ -187,7 +196,7 @@ Returns:
         meshes, shape_slat, subs, res = pipeline.run_shape(
             cond_on_device,
             seed=seed,
-            pipeline_type=model_config.resolution,
+            pipeline_type=resolution,
             max_num_tokens=max_tokens,
             **sampler_params
         )
@@ -221,7 +230,7 @@ Returns:
             'mesh_vertices': vertices,
             'mesh_faces': faces,
             'resolution': res,
-            'pipeline_type': model_config.resolution,
+            'pipeline_type': resolution,
             'raw_mesh_vertices': raw_mesh_vertices,
             'raw_mesh_faces': raw_mesh_faces,
         }
