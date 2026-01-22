@@ -7,7 +7,7 @@ Essential for preserving flat-shaded planes during decimation.
 
 import numpy as np
 from comfy_api.latest import io
-from .types import TrimeshInput, TrimeshOutput
+from .types import TrimeshInput, TrimeshOutput, EdgeMetadataOutput
 from .planar_grouping import planar_group_mesh, apply_grouping_to_trimesh
 
 
@@ -94,6 +94,7 @@ Parameters:
             ],
             outputs=[
                 TrimeshOutput(display_name="mesh"),
+                EdgeMetadataOutput(display_name="edge_metadata"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -113,7 +114,7 @@ Parameters:
         import trimesh
 
         if mesh is None:
-            return io.NodeOutput(None, "ERROR: No input mesh")
+            return io.NodeOutput(None, None, "ERROR: No input mesh")
 
         try:
             vertices = np.array(mesh.vertices)
@@ -218,12 +219,29 @@ Parameters:
 
             status = "\n".join(status_lines)
 
-            return io.NodeOutput(output_mesh, status)
+            # Build edge metadata for explicit passthrough
+            # Convert to native Python types for JSON serialization
+            # Include positions for position-based deduplication in CombineEdgeMetadata
+            edge_positions = []
+            for v1, v2 in boundary_edges:
+                p1 = vertices[v1].tolist()
+                p2 = vertices[v2].tolist()
+                edge_positions.append([p1, p2])
+
+            edge_metadata = {
+                'boundary_edges': [[int(v1), int(v2)] for v1, v2 in boundary_edges],
+                'boundary_edge_positions': edge_positions,  # For position-based deduplication
+                'num_groups': int(num_groups),
+                'source': 'planar_grouping',
+                'angle_threshold': float(angle_threshold),
+            }
+
+            return io.NodeOutput(output_mesh, edge_metadata, status)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return io.NodeOutput(mesh, f"ERROR: {e}")
+            return io.NodeOutput(mesh, None, f"ERROR: {e}")
 
 
 # V3 API exports

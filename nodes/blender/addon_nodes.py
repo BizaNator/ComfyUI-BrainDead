@@ -15,7 +15,7 @@ import tempfile
 
 from comfy_api.latest import io
 
-from ..mesh.types import TrimeshInput, TrimeshOutput
+from ..mesh.types import TrimeshInput, TrimeshOutput, EdgeMetadataInput, EdgeMetadataOutput
 from .base import BlenderNodeMixin, HAS_TRIMESH
 
 if HAS_TRIMESH:
@@ -1643,6 +1643,21 @@ elif OPERATION == 'CREASE_TO_SHARP':
 # Count final state
 stats['sharp_after'], stats['crease_after'] = count_edge_marks(bm)
 
+# Collect all marked edges for metadata output
+marked_edge_pairs = []
+for edge in bm.edges:
+    if not edge.smooth:  # Sharp edge
+        v1_idx = edge.verts[0].index
+        v2_idx = edge.verts[1].index
+        marked_edge_pairs.append(f"{v1_idx},{v2_idx}")
+
+# Output marked edges for parsing (limit to 50000 to avoid huge logs)
+if len(marked_edge_pairs) <= 50000:
+    log(f"[MARKED_EDGES] {';'.join(marked_edge_pairs)}")
+else:
+    log(f"[MARKED_EDGES] {';'.join(marked_edge_pairs[:50000])}")
+    log(f"[BD Edge Marking] WARNING: Truncated edge output ({len(marked_edge_pairs)} edges, showing first 50000)")
+
 bmesh.update_edit_mesh(obj.data)
 bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -1778,6 +1793,7 @@ Returns statistics including pre-existing edge marks.""",
             ],
             outputs=[
                 TrimeshOutput(display_name="mesh"),
+                EdgeMetadataOutput(display_name="edge_metadata"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -1797,14 +1813,14 @@ Returns statistics including pre-existing edge marks.""",
         timeout: int = 120,
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return io.NodeOutput(mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(mesh, None, "ERROR: trimesh not installed")
 
         available, msg = cls._check_blender()
         if not available:
-            return io.NodeOutput(mesh, f"ERROR: {msg}")
+            return io.NodeOutput(mesh, None, f"ERROR: {msg}")
 
         if mesh is None:
-            return io.NodeOutput(None, "ERROR: No input mesh")
+            return io.NodeOutput(None, None, "ERROR: No input mesh")
 
         input_path = None
         output_path = None
@@ -1896,12 +1912,56 @@ Returns statistics including pre-existing edge marks.""",
             # Combine stats and status
             combined_status = f"{status_line}\n\n{stats_str}"
 
-            return io.NodeOutput(result_mesh, combined_status)
+            # Parse marked edges from log output for edge_metadata
+            marked_edges = []
+            for line in log_lines:
+                if line.startswith('[MARKED_EDGES]'):
+                    # Format: [MARKED_EDGES] v1,v2;v1,v2;...
+                    edges_str = line.replace('[MARKED_EDGES] ', '').strip()
+                    if edges_str:
+                        for edge_pair in edges_str.split(';'):
+                            if ',' in edge_pair:
+                                v1, v2 = edge_pair.split(',')
+                                marked_edges.append([int(v1), int(v2)])
+
+            # Compute edge positions from result mesh for position-based deduplication
+            edge_positions = []
+            if hasattr(result_mesh, 'vertices') and len(marked_edges) > 0:
+                verts = np.array(result_mesh.vertices)
+                for v1, v2 in marked_edges:
+                    if v1 < len(verts) and v2 < len(verts):
+                        p1 = verts[v1].tolist()
+                        p2 = verts[v2].tolist()
+                        edge_positions.append([p1, p2])
+
+            # Build edge_metadata for downstream nodes
+            edge_metadata = {
+                'boundary_edges': marked_edges,
+                'boundary_edge_positions': edge_positions,  # For position-based deduplication
+                'num_groups': 0,  # Not applicable for edge marking
+                'source': 'edge_marking',
+                'operation': operation,
+                'color_threshold': color_threshold if 'COLOR' in operation else None,
+                'angle_threshold': angle_threshold if 'ANGLE' in operation else None,
+            }
+
+            print(f"[BD EdgeMarking] Outputting edge_metadata: {len(marked_edges)} edges ({len(edge_positions)} with positions)")
+
+            # Clear stale planar_grouping metadata so downstream nodes don't pick it up
+            # EdgeMarking supersedes PlanarGrouping - its edge_metadata should be used instead
+            if hasattr(result_mesh, 'metadata') and result_mesh.metadata:
+                if 'planar_grouping' in result_mesh.metadata:
+                    del result_mesh.metadata['planar_grouping']
+                    print(f"[BD EdgeMarking] Cleared stale planar_grouping metadata")
+                # Store our edge marking data in mesh metadata as fallback
+                result_mesh.metadata['edge_marking'] = edge_metadata
+
+            return io.NodeOutput(result_mesh, edge_metadata, combined_status)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return io.NodeOutput(mesh, f"ERROR: {e}")
+            return io.NodeOutput(mesh, None, f"ERROR: {e}")
 
         finally:
             if input_path and os.path.exists(input_path):
@@ -2282,18 +2342,21 @@ Methods:
 MERGE_PLANES_SCRIPT = ADDON_SETUP_SCRIPT + '''
 import math
 import numpy as np
+import json
 
 # Read settings
 DELIMIT_SHARP = get_env_bool('BLENDER_ARG_DELIMIT_SHARP', True)
 DELIMIT_SEAM = get_env_bool('BLENDER_ARG_DELIMIT_SEAM', False)
 DELIMIT_MATERIAL = get_env_bool('BLENDER_ARG_DELIMIT_MATERIAL', False)
-DELIMIT_NORMAL = get_env_bool('BLENDER_ARG_DELIMIT_NORMAL', False)
+DELIMIT_NORMAL = get_env_bool('BLENDER_ARG_DELIMIT_NORMAL', True)
 DISSOLVE_ANGLE = get_env_float('BLENDER_ARG_DISSOLVE_ANGLE', 5.0)
 MIN_FACES_PER_REGION = get_env_int('BLENDER_ARG_MIN_FACES_PER_REGION', 1)
 FACES_PER_AREA_PERCENT = get_env_float('BLENDER_ARG_FACES_PER_AREA_PERCENT', 1.0)
 MAX_FACES_PER_REGION = get_env_int('BLENDER_ARG_MAX_FACES_PER_REGION', 100)
 OUTPUT_TOPOLOGY = get_env_str('BLENDER_ARG_OUTPUT_TOPOLOGY', 'TRI')
 FLATTEN_REGIONS = get_env_bool('BLENDER_ARG_FLATTEN_REGIONS', True)
+MIN_SUBDIVIDE_AREA_PERCENT = get_env_float('BLENDER_ARG_MIN_SUBDIVIDE_AREA_PERCENT', 3.0)
+METADATA_PATH = os.environ.get('BLENDER_METADATA_PATH', '')
 
 original_faces = len(obj.data.polygons)
 original_verts = len(obj.data.vertices)
@@ -2310,6 +2373,74 @@ bpy.ops.object.mode_set(mode='OBJECT')
 
 log(f"[BD Merge Planes] Starting - {original_faces} faces, {original_verts} verts")
 log(f"[BD Merge Planes] Pre-existing marks: {sharp_count} sharp, {seam_count} seam edges")
+
+# ============================================================================
+# READ METADATA AND MARK BOUNDARY EDGES FROM PLANAR GROUPING
+# ============================================================================
+metadata_edges_marked = 0
+if METADATA_PATH and os.path.exists(METADATA_PATH):
+    log(f"[BD Merge Planes] Reading metadata from: {METADATA_PATH}")
+    try:
+        with open(METADATA_PATH, 'r') as f:
+            metadata = json.load(f)
+
+        if 'planar_grouping' in metadata:
+            pg = metadata['planar_grouping']
+            boundary_edges = pg.get('boundary_edges', [])
+            num_groups = pg.get('num_groups', 0)
+
+            log(f"[BD Merge Planes] Planar grouping: {num_groups} groups, {len(boundary_edges)} boundary edges")
+
+            if boundary_edges:
+                # Build edge lookup by vertex indices
+                mesh = obj.data
+                bpy.ops.object.mode_set(mode='EDIT')
+                bm = bmesh.from_edit_mesh(mesh)
+                bm.edges.ensure_lookup_table()
+                bm.verts.ensure_lookup_table()
+
+                # Create edge lookup: (min_vert, max_vert) -> edge
+                edge_lookup = {}
+                for edge in bm.edges:
+                    v1, v2 = edge.verts[0].index, edge.verts[1].index
+                    key = (min(v1, v2), max(v1, v2))
+                    edge_lookup[key] = edge
+
+                # Also build position-based lookup for face-split meshes
+                # Quantize to 6 decimal places
+                def quantize_pos(co, precision=6):
+                    scale = 10 ** precision
+                    return (int(round(co.x * scale)), int(round(co.y * scale)), int(round(co.z * scale)))
+
+                pos_edge_lookup = {}
+                for edge in bm.edges:
+                    p1 = quantize_pos(edge.verts[0].co)
+                    p2 = quantize_pos(edge.verts[1].co)
+                    key = tuple(sorted([p1, p2]))
+                    pos_edge_lookup[key] = edge
+
+                # Mark boundary edges as sharp
+                for edge_data in boundary_edges:
+                    v1, v2 = edge_data[0], edge_data[1]
+                    key = (min(v1, v2), max(v1, v2))
+
+                    edge = edge_lookup.get(key)
+                    if edge:
+                        edge.smooth = False  # Mark as sharp
+                        edge.seam = True     # Also mark as seam
+                        metadata_edges_marked += 1
+
+                bmesh.update_edit_mesh(mesh)
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+                log(f"[BD Merge Planes] Marked {metadata_edges_marked} edges from planar grouping metadata")
+                sharp_count += metadata_edges_marked
+                seam_count += metadata_edges_marked
+    except Exception as e:
+        log(f"[BD Merge Planes] WARNING: Failed to read metadata: {e}")
+else:
+    log(f"[BD Merge Planes] No metadata file provided")
+
 log(f"[BD Merge Planes] Delimit: sharp={DELIMIT_SHARP}, seam={DELIMIT_SEAM}, material={DELIMIT_MATERIAL}, normal={DELIMIT_NORMAL}")
 
 # Build delimit set
@@ -2358,6 +2489,41 @@ log(f"[BD Merge Planes] After dissolve: {dissolved_faces} faces (merged {pre_cle
 log("[BD Merge Planes] Post-cleanup: fixing potential issues...")
 bpy.ops.object.mode_set(mode='EDIT')
 bpy.ops.mesh.select_all(action='SELECT')
+
+# Remove duplicate/overlapping faces (faces with same vertices)
+bm = bmesh.from_edit_mesh(obj.data)
+bm.faces.ensure_lookup_table()
+
+# Build face signatures and find duplicates
+face_signatures = {}
+duplicate_faces = []
+for face in bm.faces:
+    # Signature = sorted tuple of vertex indices
+    sig = tuple(sorted([v.index for v in face.verts]))
+    if sig in face_signatures:
+        duplicate_faces.append(face)
+    else:
+        face_signatures[sig] = face
+
+# Delete duplicate faces
+if duplicate_faces:
+    log(f"[BD Merge Planes] Removing {len(duplicate_faces)} duplicate/overlapping faces")
+    for face in duplicate_faces:
+        bm.faces.remove(face)
+    bmesh.update_edit_mesh(obj.data)
+
+# Also check for degenerate faces (zero area)
+bm = bmesh.from_edit_mesh(obj.data)
+bm.faces.ensure_lookup_table()
+degenerate_faces = [f for f in bm.faces if f.calc_area() < 1e-8]
+if degenerate_faces:
+    log(f"[BD Merge Planes] Removing {len(degenerate_faces)} degenerate (zero-area) faces")
+    for face in degenerate_faces:
+        bm.faces.remove(face)
+    bmesh.update_edit_mesh(obj.data)
+
+bpy.ops.mesh.select_all(action='SELECT')
+
 # Fill any small holes that might have been created
 try:
     bpy.ops.mesh.fill_holes(sides=4)
@@ -2378,8 +2544,8 @@ if FACES_PER_AREA_PERCENT > 0 and dissolved_faces > 0:
 
     if total_area > 0:
         # Find faces that are large enough to warrant subdivision
-        # Only subdivide faces > 3% of total area (configurable via min threshold)
-        min_area_threshold = 0.03 * total_area  # 3% minimum to consider
+        # Only subdivide faces > X% of total area (configurable)
+        min_area_threshold = (MIN_SUBDIVIDE_AREA_PERCENT / 100.0) * total_area
 
         bpy.ops.object.mode_set(mode='EDIT')
         bm = bmesh.from_edit_mesh(mesh)
@@ -2428,7 +2594,7 @@ if FACES_PER_AREA_PERCENT > 0 and dissolved_faces > 0:
             log(f"[BD Merge Planes] Subdivided {subdivided_count} large regions (poke method)")
         else:
             bpy.ops.object.mode_set(mode='OBJECT')
-            log(f"[BD Merge Planes] No regions large enough to subdivide (threshold: 3% area)")
+            log(f"[BD Merge Planes] No regions large enough to subdivide (threshold: {MIN_SUBDIVIDE_AREA_PERCENT}% area)")
 else:
     log(f"[BD Merge Planes] Subdivision disabled (faces_per_area_percent=0)")
 
@@ -2493,6 +2659,7 @@ log(f"[STATS] sharp_before={sharp_count}")
 log(f"[STATS] sharp_after={final_sharp}")
 log(f"[STATS] seam_before={seam_count}")
 log(f"[STATS] seam_after={final_seam}")
+log(f"[STATS] metadata_edges_marked={metadata_edges_marked}")
 log(f"[STATS] faces_merged={original_faces - dissolved_faces}")
 
 # Convert Z-up to Y-up for PLY export
@@ -2520,23 +2687,30 @@ class BD_BlenderMergePlanes(BlenderNodeMixin, io.ComfyNode):
             node_id="BD_BlenderMergePlanes",
             display_name="BD Blender Merge Planes",
             category="🧠BrainDead/Blender",
-            description="""Merge geometry within marked planar regions.
+            description="""Merge geometry within planar regions.
 
-Uses Limited Dissolve to merge coplanar faces while respecting edge marks.
+Uses Limited Dissolve to merge coplanar faces while preserving hard edges.
 Then subdivides large regions proportionally for deformation flexibility.
 
+KEY: delimit_normal=True (default) auto-detects planar boundaries!
+No need for explicit SHARP marks - Blender detects them from face normals.
+
 Workflow:
-1. Mark edges with BD_PlanarGrouping or BD_BlenderEdgeMarking
-2. Pass to this node to merge faces within each region
-3. Result: clean geometry with controlled face density
+1. [Optional] BD_PlanarGrouping with straighten_boundaries for cleaner edges
+2. BD_BlenderMergePlanes (delimit_normal=True) → auto-preserves plane boundaries
+3. Result: clean low-poly with hard edges intact
 
 Parameters:
-- delimit_* : Which edge marks to respect (won't dissolve across these)
-- dissolve_angle: Max angle for faces to merge (like planar threshold)
-- faces_per_area_percent: Face density based on region size
+- delimit_normal: Auto-detect planes from face normals (RECOMMENDED)
+- delimit_sharp/seam: Respect explicit edge marks if present
+- dissolve_angle: Max angle for faces to merge
 - output_topology: NGON (fastest), TRI (compatible), QUAD (cleanest)""",
             inputs=[
                 TrimeshInput("mesh"),
+                EdgeMetadataInput(
+                    "edge_metadata",
+                    tooltip="Edge metadata from BD_PlanarGrouping or BD_BlenderEdgeMarking. If connected, edges will be marked before dissolve.",
+                ),
                 io.Boolean.Input(
                     "delimit_sharp",
                     default=True,
@@ -2554,8 +2728,8 @@ Parameters:
                 ),
                 io.Boolean.Input(
                     "delimit_normal",
-                    default=False,
-                    tooltip="Respect normal direction changes (auto-detect planes)",
+                    default=True,
+                    tooltip="Respect normal direction changes (auto-detect planes). Enable this to preserve planar group boundaries without needing explicit SHARP marks.",
                 ),
                 io.Float.Input(
                     "dissolve_angle",
@@ -2598,6 +2772,14 @@ Parameters:
                     default=True,
                     tooltip="Ensure faces stay coplanar within each region",
                 ),
+                io.Float.Input(
+                    "min_subdivide_area_percent",
+                    default=3.0,
+                    min=0.1,
+                    max=50.0,
+                    step=0.5,
+                    tooltip="Minimum face area (% of total) to consider for subdivision. Lower = more faces subdivided.",
+                ),
                 io.Int.Input(
                     "timeout",
                     default=300,
@@ -2617,16 +2799,18 @@ Parameters:
     def execute(
         cls,
         mesh,
+        edge_metadata: dict = None,
         delimit_sharp: bool = True,
         delimit_seam: bool = False,
         delimit_material: bool = False,
-        delimit_normal: bool = False,
+        delimit_normal: bool = True,
         dissolve_angle: float = 5.0,
         min_faces_per_region: int = 1,
         faces_per_area_percent: float = 0.0,
         max_faces_per_region: int = 100,
         output_topology: str = "TRI",
         flatten_regions: bool = True,
+        min_subdivide_area_percent: float = 3.0,
         timeout: int = 300,
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
@@ -2641,12 +2825,53 @@ Parameters:
 
         orig_faces = len(mesh.faces) if hasattr(mesh, 'faces') else 0
 
+        import json
+
         input_path = None
         output_path = None
+        metadata_path = None
         try:
-            input_path = cls._mesh_to_temp_file(mesh, suffix='.glb')
+            # Export mesh (without automatic metadata - we'll handle it manually)
+            input_path = cls._mesh_to_temp_file(mesh, suffix='.glb', export_metadata=False)
             fd, output_path = tempfile.mkstemp(suffix='.ply')
             os.close(fd)
+
+            # Handle edge metadata - prefer explicit input over mesh.metadata
+            if edge_metadata is not None:
+                # Use explicitly passed edge_metadata
+                fd, metadata_path = tempfile.mkstemp(suffix='.json')
+                os.close(fd)
+                with open(metadata_path, 'w') as f:
+                    json.dump({'planar_grouping': edge_metadata}, f)
+                print(f"[BD MergePlanes] Using explicit edge_metadata: {len(edge_metadata.get('boundary_edges', []))} edges from {edge_metadata.get('source', 'unknown')}")
+            elif hasattr(mesh, 'metadata') and mesh.metadata:
+                # Fall back to mesh.metadata (backward compatibility)
+                # Check for edge_marking first (from BD_BlenderEdgeMarking), then planar_grouping
+                source_data = None
+                source_name = None
+
+                if 'edge_marking' in mesh.metadata:
+                    source_data = mesh.metadata['edge_marking']
+                    source_name = 'edge_marking'
+                elif 'planar_grouping' in mesh.metadata:
+                    source_data = mesh.metadata['planar_grouping']
+                    source_name = 'planar_grouping'
+
+                if source_data:
+                    boundary_edges = source_data.get('boundary_edges', [])
+                    boundary_edges_native = [[int(v1), int(v2)] for v1, v2 in boundary_edges]
+                    metadata = {
+                        'planar_grouping': {
+                            'boundary_edges': boundary_edges_native,
+                            'num_groups': int(source_data.get('num_groups', 0)),
+                            'angle_threshold': float(source_data.get('angle_threshold', 15.0) if source_data.get('angle_threshold') else 15.0),
+                        }
+                    }
+                    fd, metadata_path = tempfile.mkstemp(suffix='.json')
+                    os.close(fd)
+                    with open(metadata_path, 'w') as f:
+                        json.dump(metadata, f)
+                    print(f"[BD MergePlanes] Using mesh.metadata['{source_name}']: {len(boundary_edges_native)} boundary edges")
 
             extra_args = {
                 'delimit_sharp': delimit_sharp,
@@ -2659,6 +2884,7 @@ Parameters:
                 'max_faces_per_region': max_faces_per_region,
                 'output_topology': output_topology,
                 'flatten_regions': flatten_regions,
+                'min_subdivide_area_percent': min_subdivide_area_percent,
             }
 
             success, message, log_lines = cls._run_blender_script(
@@ -2667,6 +2893,7 @@ Parameters:
                 output_path,
                 extra_args=extra_args,
                 timeout=timeout,
+                metadata_path=metadata_path,
             )
 
             if not success:
@@ -2689,13 +2916,18 @@ Parameters:
             # Build detailed status
             status_lines = []
 
+            # Metadata edges from planar grouping
+            metadata_edges = stats.get('metadata_edges_marked', 0)
+            if metadata_edges > 0:
+                status_lines.append(f"METADATA: {metadata_edges} boundary edges marked from planar grouping")
+
             # Pre-existing marks
             sharp_before = stats.get('sharp_before', 0)
             seam_before = stats.get('seam_before', 0)
             if sharp_before > 0 or seam_before > 0:
                 status_lines.append(f"PRE-EXISTING: {sharp_before} sharp, {seam_before} seam")
-            else:
-                status_lines.append("PRE-EXISTING: None")
+            elif metadata_edges == 0:
+                status_lines.append("PRE-EXISTING: None (use BD_PlanarGrouping to add boundary edges)")
 
             # Merge results
             faces_merged = stats.get('faces_merged', orig_faces - new_faces)
@@ -2728,6 +2960,8 @@ Parameters:
                 os.remove(input_path)
             if output_path and os.path.exists(output_path):
                 os.remove(output_path)
+            if metadata_path and os.path.exists(metadata_path):
+                os.remove(metadata_path)
 
 
 # ============================================================================
