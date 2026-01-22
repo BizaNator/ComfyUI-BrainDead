@@ -72,10 +72,9 @@ Features:
 - Sharp edge preservation during remeshing (uses CuMesh PR #19)
 - Mesh cleaning: fill holes, remove duplicates, repair non-manifold
 - Vertex color transfer from original mesh
-- Sharp edge marking based on geometry AND color boundaries
 
 Typical workflow for TRELLIS2 output:
-1. Enable remesh + preserve_sharp_edges for low-poly stylized look
+1. Enable remesh + preserve_sharp_edges for cleaner topology with hard edges
 2. Enable mesh cleaning to fix topology issues
 3. Target 5k-50k faces depending on use case
 
@@ -85,19 +84,17 @@ CuMesh GPU Functions (CUDA-accelerated):
 - target_faces → cu.simplify()
 - remesh → cumesh.remeshing.remesh_narrow_band_dc()
 - remesh_resolution, remesh_band, project_back → remesh parameters
-- preserve_sharp_edges_remesh, remesh_sharp_angle → remesh edge preservation
+- preserve_sharp_edges_remesh, remesh_sharp_angle → remesh edge preservation (geometry)
 - fill_holes → cu.fill_holes()
 - remove_duplicate_faces → cu.remove_duplicate_faces() + cu.remove_degenerate_faces()
 - repair_non_manifold → cu.repair_non_manifold_edges()
 - remove_small_components → cu.remove_small_connected_components()
 
 Python/trimesh/scipy (CPU post-processing):
-- sharp_angle → numpy face normal angle calculation
-- color_edge_threshold → numpy face color difference calculation
 - preserve_colors → scipy.spatial.cKDTree nearest-neighbor lookup
 - face_colors → Python face-split mesh building
 
-Note: Heavy operations (simplify, remesh, repair) use GPU. Color/edge marking is CPU post-processing.""",
+Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is CPU.""",
             inputs=[
                 TrimeshInput("mesh"),
                 io.Int.Input(
@@ -188,22 +185,6 @@ Note: Heavy operations (simplify, remesh, repair) use GPU. Color/edge marking is
                     tooltip="Volume threshold for removing small components (as fraction of total)",
                 ),
                 # === OUTPUT OPTIONS ===
-                io.Float.Input(
-                    "sharp_angle",
-                    default=7.0,
-                    min=0.0,
-                    max=90.0,
-                    step=0.5,
-                    tooltip="Angle threshold for marking edges as sharp (degrees). 7° works well for stylized meshes.",
-                ),
-                io.Float.Input(
-                    "color_edge_threshold",
-                    default=0.1,
-                    min=0.0,
-                    max=1.0,
-                    step=0.01,
-                    tooltip="Color difference threshold for marking edges as sharp (0-1). 0.1 = ~10% color change marks edge. 0 = disabled.",
-                ),
                 io.Boolean.Input(
                     "preserve_colors",
                     default=True,
@@ -241,8 +222,6 @@ Note: Heavy operations (simplify, remesh, repair) use GPU. Color/edge marking is
         remove_small_components: bool = True,
         small_component_threshold: float = 1e-5,
         # Output options
-        sharp_angle: float = 7.0,
-        color_edge_threshold: float = 0.1,
         preserve_colors: bool = True,
         face_colors: bool = True,
     ) -> io.NodeOutput:
@@ -483,13 +462,6 @@ Note: Heavy operations (simplify, remesh, repair) use GPU. Color/edge marking is
                     result, mesh, orig_colors, face_colors
                 )
 
-            # Mark sharp edges based on angle AND color boundaries
-            if sharp_angle > 0 or color_edge_threshold > 0:
-                sharp_count, angle_count, color_count = cls._mark_sharp_edges(
-                    result, sharp_angle, color_edge_threshold
-                )
-                print(f"[BD CuMesh] Marked {sharp_count} sharp edges ({angle_count} by angle >{sharp_angle}°, {color_count} by color >{color_edge_threshold:.0%})")
-
             # Stats
             total_time = time.time() - start_time
             new_verts = len(result.vertices)
@@ -579,94 +551,6 @@ Note: Heavy operations (simplify, remesh, repair) use GPU. Color/edge marking is
             print(f"[BD CuMesh] Vertex-based transfer: {len(target_mesh.faces)} faces")
 
         return result
-
-    @classmethod
-    def _mark_sharp_edges(cls, mesh, angle_threshold_deg, color_threshold=0.1):
-        """
-        Mark edges as sharp based on geometry AND color boundaries.
-
-        An edge is marked sharp if:
-        - Adjacent face normals differ by more than angle_threshold_deg, OR
-        - Adjacent face colors differ by more than color_threshold (0-1 normalized)
-
-        This allows flat areas with same color to merge into single planes,
-        while preserving both geometric creases and color boundaries.
-
-        Returns: (total_sharp, angle_sharp, color_sharp) counts
-        """
-        import numpy as np
-
-        angle_threshold_rad = np.radians(angle_threshold_deg) if angle_threshold_deg > 0 else np.pi
-
-        # Get face adjacency (which faces share each edge)
-        if not hasattr(mesh, 'face_adjacency') or mesh.face_adjacency is None:
-            print("[BD CuMesh] Computing face adjacency...")
-            mesh._cache.clear()  # Force recompute
-
-        face_adj = mesh.face_adjacency
-        if face_adj is None or len(face_adj) == 0:
-            return 0, 0, 0
-
-        # === ANGLE-BASED SHARP EDGES ===
-        angle_sharp_mask = np.zeros(len(face_adj), dtype=bool)
-        if angle_threshold_deg > 0:
-            face_normals = mesh.face_normals
-            n1 = face_normals[face_adj[:, 0]]
-            n2 = face_normals[face_adj[:, 1]]
-
-            # Dot product gives cos(angle)
-            dots = np.einsum('ij,ij->i', n1, n2)
-            dots = np.clip(dots, -1.0, 1.0)
-            angles = np.arccos(dots)
-
-            angle_sharp_mask = angles > angle_threshold_rad
-
-        # === COLOR-BASED SHARP EDGES ===
-        color_sharp_mask = np.zeros(len(face_adj), dtype=bool)
-        if color_threshold > 0:
-            # Get face colors (average of vertex colors for each face)
-            has_colors = (
-                hasattr(mesh.visual, 'vertex_colors') and
-                mesh.visual.vertex_colors is not None
-            )
-
-            if has_colors:
-                vertex_colors = mesh.visual.vertex_colors[:, :3].astype(np.float32) / 255.0  # RGB only, normalized
-
-                # Compute face colors as average of vertex colors
-                face_colors = vertex_colors[mesh.faces].mean(axis=1)  # (n_faces, 3)
-
-                # Get colors of adjacent faces
-                c1 = face_colors[face_adj[:, 0]]  # (n_edges, 3)
-                c2 = face_colors[face_adj[:, 1]]  # (n_edges, 3)
-
-                # Compute color difference (Euclidean distance in RGB space, normalized to 0-1)
-                # Max possible distance is sqrt(3) ≈ 1.73, so normalize by that
-                color_diff = np.linalg.norm(c1 - c2, axis=1) / np.sqrt(3)
-
-                color_sharp_mask = color_diff > color_threshold
-
-                print(f"[BD CuMesh] Color edge detection: max diff={color_diff.max():.3f}, mean={color_diff.mean():.3f}")
-
-        # === COMBINE: Sharp if angle OR color boundary ===
-        sharp_mask = angle_sharp_mask | color_sharp_mask
-
-        angle_count = np.sum(angle_sharp_mask)
-        color_only_count = np.sum(color_sharp_mask & ~angle_sharp_mask)  # Color edges not already angle edges
-        sharp_count = np.sum(sharp_mask)
-
-        # Store sharp edges in mesh metadata
-        if sharp_count > 0:
-            sharp_edges = mesh.face_adjacency_edges[sharp_mask]
-            mesh.metadata['sharp_edges'] = sharp_edges
-            mesh.metadata['sharp_angle'] = angle_threshold_deg
-            mesh.metadata['sharp_color_threshold'] = color_threshold
-
-            # Also store separate masks for debugging/analysis
-            mesh.metadata['angle_sharp_edges'] = mesh.face_adjacency_edges[angle_sharp_mask] if angle_count > 0 else np.array([])
-            mesh.metadata['color_sharp_edges'] = mesh.face_adjacency_edges[color_sharp_mask] if np.sum(color_sharp_mask) > 0 else np.array([])
-
-        return sharp_count, angle_count, color_only_count
 
 
 # V3 node list
