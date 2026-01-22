@@ -13,6 +13,7 @@ These nodes leverage the BrainDeadBlender Blender addon for advanced mesh operat
 import os
 import tempfile
 
+import numpy as np
 from comfy_api.latest import io
 
 from ..mesh.types import TrimeshInput, TrimeshOutput, EdgeMetadataInput, EdgeMetadataOutput
