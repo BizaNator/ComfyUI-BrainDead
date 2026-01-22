@@ -77,7 +77,27 @@ Features:
 Typical workflow for TRELLIS2 output:
 1. Enable remesh + preserve_sharp_edges for low-poly stylized look
 2. Enable mesh cleaning to fix topology issues
-3. Target 5k-50k faces depending on use case""",
+3. Target 5k-50k faces depending on use case
+
+=== IMPLEMENTATION BREAKDOWN ===
+
+CuMesh GPU Functions (CUDA-accelerated):
+- target_faces → cu.simplify()
+- remesh → cumesh.remeshing.remesh_narrow_band_dc()
+- remesh_resolution, remesh_band, project_back → remesh parameters
+- preserve_sharp_edges_remesh, remesh_sharp_angle → remesh edge preservation
+- fill_holes → cu.fill_holes()
+- remove_duplicate_faces → cu.remove_duplicate_faces() + cu.remove_degenerate_faces()
+- repair_non_manifold → cu.repair_non_manifold_edges()
+- remove_small_components → cu.remove_small_connected_components()
+
+Python/trimesh/scipy (CPU post-processing):
+- sharp_angle → numpy face normal angle calculation
+- color_edge_threshold → numpy face color difference calculation
+- preserve_colors → scipy.spatial.cKDTree nearest-neighbor lookup
+- face_colors → Python face-split mesh building
+
+Note: Heavy operations (simplify, remesh, repair) use GPU. Color/edge marking is CPU post-processing.""",
             inputs=[
                 TrimeshInput("mesh"),
                 io.Int.Input(
@@ -97,9 +117,9 @@ Typical workflow for TRELLIS2 output:
                     "remesh_resolution",
                     default=512,
                     min=128,
-                    max=2048,
+                    max=8192,
                     step=64,
-                    tooltip="Voxel grid resolution for remeshing. Higher = more detail but slower.",
+                    tooltip="Voxel grid resolution for remeshing. Higher = more detail but slower. VRAM usage scales with resolution^3.",
                 ),
                 io.Float.Input(
                     "remesh_band",
