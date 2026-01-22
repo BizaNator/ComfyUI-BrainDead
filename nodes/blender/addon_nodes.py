@@ -1707,6 +1707,95 @@ class BD_BlenderEdgeMarking(BlenderNodeMixin, io.ComfyNode):
     """
 
     @classmethod
+    def _generate_edge_preview(cls, vertices, edges, thickness: float = 0.002):
+        """
+        Generate a preview mesh showing marked edges as visible tubes.
+
+        Args:
+            vertices: Mesh vertices array
+            edges: List of [v1, v2] edge pairs
+            thickness: Tube radius
+
+        Returns:
+            trimesh.Trimesh with tube geometry along edges, or None on failure
+        """
+        import trimesh
+        from trimesh.creation import cylinder
+
+        if len(edges) == 0:
+            return None
+
+        verts = np.array(vertices)
+        meshes = []
+
+        # Limit edges for performance (preview shouldn't be too heavy)
+        max_edges = 5000
+        if len(edges) > max_edges:
+            print(f"[BD EdgeMarking] Preview limited to {max_edges} of {len(edges)} edges")
+            edges = edges[:max_edges]
+
+        for v1, v2 in edges:
+            if v1 >= len(verts) or v2 >= len(verts):
+                continue
+
+            p1 = verts[v1]
+            p2 = verts[v2]
+
+            # Skip degenerate edges
+            length = np.linalg.norm(p2 - p1)
+            if length < 1e-8:
+                continue
+
+            try:
+                # Create cylinder along edge
+                cyl = cylinder(radius=thickness, height=length, sections=6)
+
+                # Compute transformation to align cylinder with edge
+                direction = (p2 - p1) / length
+                midpoint = (p1 + p2) / 2
+
+                # Create rotation matrix to align Z-axis with edge direction
+                z_axis = np.array([0, 0, 1])
+                if np.abs(np.dot(direction, z_axis)) > 0.999:
+                    # Edge is nearly vertical, use simple translation
+                    rotation = np.eye(3) if direction[2] > 0 else np.diag([1, 1, -1])
+                else:
+                    # Compute rotation axis and angle
+                    axis = np.cross(z_axis, direction)
+                    axis = axis / np.linalg.norm(axis)
+                    angle = np.arccos(np.clip(np.dot(z_axis, direction), -1, 1))
+
+                    # Rodrigues rotation formula
+                    K = np.array([
+                        [0, -axis[2], axis[1]],
+                        [axis[2], 0, -axis[0]],
+                        [-axis[1], axis[0], 0]
+                    ])
+                    rotation = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
+
+                # Apply transformation
+                transform = np.eye(4)
+                transform[:3, :3] = rotation
+                transform[:3, 3] = midpoint
+                cyl.apply_transform(transform)
+
+                meshes.append(cyl)
+
+            except Exception:
+                continue  # Skip problematic edges
+
+        if not meshes:
+            return None
+
+        # Combine all cylinders into one mesh
+        combined = trimesh.util.concatenate(meshes)
+
+        # Apply bright color for visibility (magenta)
+        combined.visual.vertex_colors = np.full((len(combined.vertices), 4), [255, 0, 255, 255], dtype=np.uint8)
+
+        return combined
+
+    @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="BD_BlenderEdgeMarking",
@@ -1790,9 +1879,23 @@ Returns statistics including pre-existing edge marks.""",
                     optional=True,
                     tooltip="Maximum processing time",
                 ),
+                io.Boolean.Input(
+                    "generate_preview",
+                    default=True,
+                    tooltip="Generate edge preview mesh (visible wireframe of marked edges)",
+                ),
+                io.Float.Input(
+                    "preview_thickness",
+                    default=0.002,
+                    min=0.0005,
+                    max=0.02,
+                    step=0.0005,
+                    tooltip="Thickness of preview edge tubes (mesh units)",
+                ),
             ],
             outputs=[
                 TrimeshOutput(display_name="mesh"),
+                TrimeshOutput(display_name="edge_preview"),
                 EdgeMetadataOutput(display_name="edge_metadata"),
                 io.String.Output(display_name="status"),
             ],
@@ -1811,16 +1914,18 @@ Returns statistics including pre-existing edge marks.""",
         clear_sharp: bool = False,
         clear_crease: bool = False,
         timeout: int = 120,
+        generate_preview: bool = True,
+        preview_thickness: float = 0.002,
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return io.NodeOutput(mesh, None, "ERROR: trimesh not installed")
+            return io.NodeOutput(mesh, None, None, "ERROR: trimesh not installed")
 
         available, msg = cls._check_blender()
         if not available:
-            return io.NodeOutput(mesh, None, f"ERROR: {msg}")
+            return io.NodeOutput(mesh, None, None, f"ERROR: {msg}")
 
         if mesh is None:
-            return io.NodeOutput(None, None, "ERROR: No input mesh")
+            return io.NodeOutput(None, None, None, "ERROR: No input mesh")
 
         input_path = None
         output_path = None
@@ -1956,12 +2061,21 @@ Returns statistics including pre-existing edge marks.""",
                 # Store our edge marking data in mesh metadata as fallback
                 result_mesh.metadata['edge_marking'] = edge_metadata
 
-            return io.NodeOutput(result_mesh, edge_metadata, combined_status)
+            # Generate edge preview mesh (visible tubes along marked edges)
+            edge_preview = None
+            if generate_preview and len(marked_edges) > 0 and hasattr(result_mesh, 'vertices'):
+                edge_preview = cls._generate_edge_preview(
+                    result_mesh.vertices, marked_edges, preview_thickness
+                )
+                if edge_preview is not None:
+                    print(f"[BD EdgeMarking] Generated edge preview: {len(edge_preview.faces)} faces")
+
+            return io.NodeOutput(result_mesh, edge_preview, edge_metadata, combined_status)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return io.NodeOutput(mesh, None, f"ERROR: {e}")
+            return io.NodeOutput(mesh, None, None, f"ERROR: {e}")
 
         finally:
             if input_path and os.path.exists(input_path):
