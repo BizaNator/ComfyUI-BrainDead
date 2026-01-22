@@ -3,6 +3,20 @@ V3 API cache nodes for common ComfyUI data types.
 
 Each node caches a specific data type with lazy evaluation
 to skip expensive upstream generation when cache is valid.
+
+KNOWN BUG WORKAROUND (2026-01-22):
+    ComfyUI's V3 API lazy evaluation does not work correctly for MASK type inputs.
+    When a MASK input is marked with lazy=True in V3 define_schema(), ComfyUI fails
+    to call check_lazy_status() and instead raises "Required input is missing: mask"
+    during prompt validation - even when the input is connected but upstream is muted.
+
+    IMAGE type inputs with lazy=True work correctly in V3 API.
+
+    WORKAROUND: BD_CacheMask uses V1 API style (INPUT_TYPES dict) with the mask input
+    placed in the "optional" dict. This allows lazy evaluation to work properly.
+
+    If updating BD_CacheMask in an existing workflow, users must delete and re-add
+    the node to refresh the schema.
 """
 
 from comfy_api.latest import io
@@ -56,37 +70,68 @@ class BD_CacheImage(CacheNodeMixin, io.ComfyNode):
         return io.NodeOutput(result, status)
 
 
-class BD_CacheMask(CacheNodeMixin, io.ComfyNode):
-    """Cache MASK tensors to skip expensive mask generation."""
+class BD_CacheMask(CacheNodeMixin):
+    """
+    Cache MASK tensors to skip expensive mask generation.
+
+    Uses V1 API style as a WORKAROUND for ComfyUI bug where V3 lazy evaluation
+    does not work correctly for MASK type inputs. See module docstring for details.
+
+    First run: generates mask, saves to cache as grayscale PNG
+    Subsequent runs: loads from cache, SKIPS upstream generation!
+
+    NOTE: If updating from a previous version, delete and re-add this node
+    in your workflow to refresh the schema.
+    """
 
     input_name = "mask"
     serializer = MaskSerializer
     node_label = "BD Cache Mask"
 
     @classmethod
-    def define_schema(cls) -> io.Schema:
-        return io.Schema(
-            node_id="BD_CacheMask",
-            display_name="BD Cache Mask",
-            category="🧠BrainDead/Cache",
-            description="Cache masks with lazy evaluation - skips upstream generation when cache exists.",
-            inputs=[
-                io.Mask.Input("mask", lazy=True),
-                io.String.Input("cache_name", default="cached_mask"),
-                io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
-                io.Boolean.Input("force_refresh", default=False),
-                io.String.Input("name_prefix", default="", optional=True),
-            ],
-            outputs=[
-                io.Mask.Output(display_name="mask"),
-                io.String.Output(display_name="status"),
-            ],
-        )
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "cache_name": ("STRING", {"default": "cached_mask"}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "force_refresh": ("BOOLEAN", {"default": False, "tooltip": "Force regeneration even if cache exists"}),
+            },
+            "optional": {
+                # WORKAROUND: mask in optional dict for V1 API lazy evaluation
+                # V3 API lazy=True on MASK type does not work correctly
+                "mask": ("MASK", {"lazy": True, "tooltip": "Input mask - optional when cache exists"}),
+                "name_prefix": ("STRING", {"default": "", "tooltip": "Prefix for cache filename"}),
+            },
+        }
+
+    RETURN_TYPES = ("MASK", "STRING")
+    RETURN_NAMES = ("mask", "status")
+    FUNCTION = "execute"
+    CATEGORY = "🧠BrainDead/Cache"
+    DESCRIPTION = "Cache masks with lazy evaluation - skips upstream generation when cache exists."
 
     @classmethod
-    def execute(cls, mask, cache_name, seed, force_refresh, name_prefix="") -> io.NodeOutput:
-        result, status = cls._cache_data(mask, cache_name, seed, force_refresh, name_prefix)
-        return io.NodeOutput(result, status)
+    def check_lazy_status(cls, cache_name, seed, force_refresh, mask=None, name_prefix=""):
+        """
+        V1-style check_lazy_status with explicit parameters.
+
+        Returns [] to skip upstream evaluation (cache hit), or ["mask"] to request input.
+        """
+        if force_refresh:
+            return ["mask"]
+
+        cache_path = cls._get_cache_path(cache_name, seed, name_prefix)
+
+        from ...utils.shared import check_cache_exists
+        if check_cache_exists(cache_path, min_size=cls.min_cache_size):
+            print(f"[{cls.node_label}] Cache HIT - SKIPPING upstream")
+            return []
+
+        return ["mask"]
+
+    def execute(self, cache_name, seed, force_refresh, mask=None, name_prefix=""):
+        result, status = self._cache_data(mask, cache_name, seed, force_refresh, name_prefix)
+        return (result, status)
 
 
 class BD_CacheLatent(CacheNodeMixin, io.ComfyNode):
@@ -228,9 +273,10 @@ class BD_CacheAny(CacheNodeMixin, io.ComfyNode):
 
 
 # V3 node list for extension
+# Note: BD_CacheMask uses V1 API - ComfyUI V3 lazy evaluation broken for MASK type
 CACHE_CORE_V3_NODES = [
     BD_CacheImage,
-    BD_CacheMask,
+    # BD_CacheMask - V1 API (lazy eval workaround)
     BD_CacheLatent,
     BD_CacheAudio,
     BD_CacheString,

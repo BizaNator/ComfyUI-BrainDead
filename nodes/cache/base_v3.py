@@ -57,7 +57,6 @@ class CacheNodeMixin:
         name_prefix = kwargs.get('name_prefix', '')
 
         if force_refresh:
-            print(f"[{cls.node_label}] Force refresh - will run upstream")
             return [cls.input_name]
 
         cache_path = cls._get_cache_path(cache_name, seed, name_prefix)
@@ -66,7 +65,6 @@ class CacheNodeMixin:
             print(f"[{cls.node_label}] Cache HIT - SKIPPING upstream")
             return []  # Empty list = don't need input, skip upstream
 
-        print(f"[{cls.node_label}] No cache - will run upstream")
         return [cls.input_name]
 
     @classmethod
