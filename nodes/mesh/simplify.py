@@ -1,16 +1,14 @@
 """
-BD_CuMeshSimplify - GPU-accelerated mesh simplification with color preservation.
+BD_CuMeshSimplify - GPU-accelerated mesh simplification using CuMesh.
 
-Uses CuMesh for fast simplification with optional dual-contouring remesh
-and sharp edge preservation (CuMesh PR #19).
+All operations are CUDA-accelerated via CuMesh:
+- Mesh simplification (edge collapse)
+- Dual-contouring remesh with sharp edge preservation
+- Fill holes, remove duplicates, repair non-manifold edges
+- Remove small disconnected components
 
-Features:
-- GPU-accelerated mesh simplification
-- Optional dual-contouring remesh for cleaner topology
-- Sharp edge preservation during remeshing (angle-based detection)
-- Mesh cleaning (fill holes, remove duplicates, repair non-manifold)
-- Vertex color transfer from original mesh via BVH lookup
-- Sharp edge marking based on geometry AND color boundaries
+Note: CuMesh operates on geometry only - vertex colors are NOT preserved.
+Use BD_BakeTextures or similar for color/texture transfer after simplification.
 """
 
 import gc
@@ -52,10 +50,10 @@ except ImportError:
 
 class BD_CuMeshSimplify(io.ComfyNode):
     """
-    GPU-accelerated mesh simplification with vertex color preservation.
+    GPU-accelerated mesh simplification using CuMesh (CUDA).
 
-    Uses CuMesh for fast simplification, then transfers colors from
-    original mesh via BVH lookup. Also marks hard edges based on angle.
+    All operations are CUDA-accelerated. Geometry only - no color preservation.
+    Use BD_BakeTextures afterward for texture/color transfer.
     """
 
     @classmethod
@@ -64,37 +62,24 @@ class BD_CuMeshSimplify(io.ComfyNode):
             node_id="BD_CuMeshSimplify",
             display_name="BD CuMesh Simplify",
             category="🧠BrainDead/Mesh",
-            description="""GPU-accelerated mesh simplification with color preservation and optional remeshing.
+            description="""GPU-accelerated mesh simplification using CuMesh (CUDA).
 
-Features:
-- CuMesh GPU simplification (much faster than Blender)
-- Optional dual-contouring remesh for cleaner topology
-- Sharp edge preservation during remeshing (uses CuMesh PR #19)
-- Mesh cleaning: fill holes, remove duplicates, repair non-manifold
-- Vertex color transfer from original mesh
-
-Typical workflow for TRELLIS2 output:
-1. Enable remesh + preserve_sharp_edges for cleaner topology with hard edges
-2. Enable mesh cleaning to fix topology issues
-3. Target 5k-50k faces depending on use case
-
-=== IMPLEMENTATION BREAKDOWN ===
-
-CuMesh GPU Functions (CUDA-accelerated):
-- target_faces → cu.simplify()
+All operations are CUDA-accelerated:
+- target_faces → cu.simplify() edge collapse
 - remesh → cumesh.remeshing.remesh_narrow_band_dc()
-- remesh_resolution, remesh_band, project_back → remesh parameters
-- preserve_sharp_edges_remesh, remesh_sharp_angle → remesh edge preservation (geometry)
+- preserve_sharp_edges_remesh → sharp edge preservation during remesh
 - fill_holes → cu.fill_holes()
 - remove_duplicate_faces → cu.remove_duplicate_faces() + cu.remove_degenerate_faces()
 - repair_non_manifold → cu.repair_non_manifold_edges()
 - remove_small_components → cu.remove_small_connected_components()
 
-Python/trimesh/scipy (CPU post-processing):
-- preserve_colors → scipy.spatial.cKDTree nearest-neighbor lookup
-- face_colors → Python face-split mesh building
+Typical workflow for TRELLIS2 output:
+1. Enable remesh + preserve_sharp_edges for cleaner topology
+2. Enable mesh cleaning to fix topology issues
+3. Target 5k-50k faces depending on use case
+4. Use BD_BakeTextures afterward for texture transfer
 
-Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is CPU.""",
+Note: CuMesh operates on geometry only - vertex colors are NOT preserved.""",
             inputs=[
                 TrimeshInput("mesh"),
                 io.Int.Input(
@@ -184,17 +169,6 @@ Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is
                     step=1e-6,
                     tooltip="Volume threshold for removing small components (as fraction of total)",
                 ),
-                # === OUTPUT OPTIONS ===
-                io.Boolean.Input(
-                    "preserve_colors",
-                    default=True,
-                    tooltip="Transfer vertex colors from original mesh after simplification",
-                ),
-                io.Boolean.Input(
-                    "face_colors",
-                    default=True,
-                    tooltip="Use face-based colors (no bleeding) vs vertex-based (smoother)",
-                ),
             ],
             outputs=[
                 TrimeshOutput(display_name="mesh"),
@@ -221,9 +195,6 @@ Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is
         repair_non_manifold: bool = True,
         remove_small_components: bool = True,
         small_component_threshold: float = 1e-5,
-        # Output options
-        preserve_colors: bool = True,
-        face_colors: bool = True,
     ) -> io.NodeOutput:
         # Check dependencies
         if not HAS_TORCH:
@@ -249,15 +220,6 @@ Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is
             print("[BD CuMesh] WARNING: preserve_sharp_edges_remesh requested but simple_dual_contour_sharp not available")
             print("[BD CuMesh] Will use standard dual contouring (no edge preservation)")
             preserve_sharp_edges_remesh = False
-
-        # Check for vertex colors in original mesh
-        has_colors = False
-        orig_colors = None
-        if preserve_colors:
-            if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
-                has_colors = True
-                orig_colors = mesh.visual.vertex_colors.copy()
-                print(f"[BD CuMesh] Found vertex colors: {orig_colors.shape}")
 
         try:
             # Check if mesh is "face-split" (no shared vertices)
@@ -455,13 +417,6 @@ Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is
                 process=False
             )
 
-            # Transfer colors from original mesh
-            if has_colors and orig_colors is not None:
-                print("[BD CuMesh] Transferring colors from original mesh...")
-                result = cls._transfer_colors(
-                    result, mesh, orig_colors, face_colors
-                )
-
             # Stats
             total_time = time.time() - start_time
             new_verts = len(result.vertices)
@@ -473,8 +428,6 @@ Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is
                 status += " | remeshed"
                 if preserve_sharp_edges_remesh:
                     status += " (sharp edges)"
-            if has_colors:
-                status += " | colors"
             status += f" | {total_time:.1f}s"
 
             print(f"[BD CuMesh] Complete: {status}")
@@ -490,67 +443,6 @@ Note: All heavy operations (simplify, remesh, repair) use GPU. Color transfer is
             import traceback
             traceback.print_exc()
             return io.NodeOutput(mesh, f"ERROR: {e}")
-
-    @classmethod
-    def _transfer_colors(cls, target_mesh, source_mesh, source_colors, face_based=True):
-        """Transfer vertex colors from source to target mesh using nearest neighbor."""
-        from scipy.spatial import cKDTree
-
-        print(f"[BD CuMesh] Building KDTree from {len(source_mesh.vertices)} source vertices...")
-
-        if face_based:
-            # Face-based: compute face centers and colors, then transfer per-face
-            source_face_centers = source_mesh.triangles_center
-            source_face_colors = source_colors[source_mesh.faces].mean(axis=1)
-
-            tree = cKDTree(source_face_centers)
-
-            target_face_centers = target_mesh.triangles_center
-            _, indices = tree.query(target_face_centers)
-
-            # Assign face colors to vertices (split vertices for no bleeding)
-            new_verts = []
-            new_faces = []
-            new_colors = []
-
-            for i, face in enumerate(target_mesh.faces):
-                face_color = source_face_colors[indices[i]]
-                base_idx = len(new_verts)
-
-                for j, vert_idx in enumerate(face):
-                    new_verts.append(target_mesh.vertices[vert_idx])
-                    new_colors.append(face_color)
-
-                new_faces.append([base_idx, base_idx + 1, base_idx + 2])
-
-            new_verts = np.array(new_verts)
-            new_faces = np.array(new_faces)
-            new_colors = np.array(new_colors, dtype=np.uint8)
-
-            result = trimesh.Trimesh(
-                vertices=new_verts,
-                faces=new_faces,
-                vertex_colors=new_colors,
-                process=False
-            )
-            print(f"[BD CuMesh] Face-based transfer: {len(new_faces)} faces, {len(new_verts)} verts")
-
-        else:
-            # Vertex-based: direct nearest neighbor lookup
-            tree = cKDTree(source_mesh.vertices)
-            _, indices = tree.query(target_mesh.vertices)
-
-            new_colors = source_colors[indices]
-
-            result = trimesh.Trimesh(
-                vertices=target_mesh.vertices,
-                faces=target_mesh.faces,
-                vertex_colors=new_colors,
-                process=False
-            )
-            print(f"[BD CuMesh] Vertex-based transfer: {len(target_mesh.faces)} faces")
-
-        return result
 
 
 # V3 node list
