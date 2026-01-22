@@ -4,10 +4,9 @@ BrainDead TRELLIS2 nodes for ComfyUI.
 CATEGORY: BrainDead/TRELLIS2
 
 Inference Nodes (non-isolated, run in main process):
-- BD_LoadTrellis2Models - Create model configuration
-- BD_Trellis2GetConditioning - DinoV3 feature extraction
+- BD_Trellis2GetConditioning - DinoV3 feature extraction (includes model config)
 - BD_Trellis2ImageToShape - Shape generation
-- BD_Trellis2ShapeToTexturedMesh - Texture generation (with dual inputs!)
+- BD_Trellis2ShapeToTexturedMesh - Texture generation (with dual conditioning!)
 
 Cache Nodes:
 - BD_CacheTrellis2Conditioning - Cache conditioning to skip preprocessing
@@ -28,11 +27,6 @@ from .info import (
     TRELLIS2_INFO_DISPLAY_NAMES,
     TRELLIS2_INFO_V3_NODES,
 )
-from .loader import (
-    TRELLIS2_LOADER_NODES,
-    TRELLIS2_LOADER_DISPLAY_NAMES,
-    TRELLIS2_LOADER_V3_NODES,
-)
 from .conditioning import (
     TRELLIS2_CONDITIONING_NODES,
     TRELLIS2_CONDITIONING_DISPLAY_NAMES,
@@ -51,7 +45,6 @@ from .texture import (
 
 # Combine all TRELLIS2 nodes
 NODE_CLASS_MAPPINGS = {
-    **TRELLIS2_LOADER_NODES,
     **TRELLIS2_CONDITIONING_NODES,
     **TRELLIS2_SHAPE_NODES,
     **TRELLIS2_TEXTURE_NODES,
@@ -60,7 +53,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    **TRELLIS2_LOADER_DISPLAY_NAMES,
     **TRELLIS2_CONDITIONING_DISPLAY_NAMES,
     **TRELLIS2_SHAPE_DISPLAY_NAMES,
     **TRELLIS2_TEXTURE_DISPLAY_NAMES,
@@ -73,7 +65,6 @@ TRELLIS2_NODES = list(NODE_CLASS_MAPPINGS.values())
 
 # V3 node list for extension
 TRELLIS2_V3_NODES = [
-    *TRELLIS2_LOADER_V3_NODES,
     *TRELLIS2_CONDITIONING_V3_NODES,
     *TRELLIS2_SHAPE_V3_NODES,
     *TRELLIS2_TEXTURE_V3_NODES,

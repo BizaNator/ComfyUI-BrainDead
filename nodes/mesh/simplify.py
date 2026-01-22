@@ -321,18 +321,35 @@ Typical workflow for TRELLIS2 output:
                     # Build BVH for remesh
                     bvh = cumesh.cuBVH(curr_verts, curr_faces)
 
-                    # Calculate remesh parameters based on mesh bounds
-                    # Use standard AABB for normalized meshes
-                    aabb = torch.tensor([[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]], device='cuda', dtype=torch.float32)
-                    center = aabb.mean(dim=0)
-                    scale = (aabb[1] - aabb[0]).max().item()
+                    # Calculate remesh parameters from ACTUAL mesh bounds
+                    mesh_min = curr_verts.min(dim=0).values
+                    mesh_max = curr_verts.max(dim=0).values
+                    center = (mesh_min + mesh_max) / 2
+                    mesh_extent = (mesh_max - mesh_min).max().item()
+
+                    # Add small padding to avoid clipping
+                    scale = mesh_extent * 1.05
+
+                    print(f"[BD CuMesh] Mesh bounds: min={mesh_min.cpu().numpy()}, max={mesh_max.cpu().numpy()}, extent={mesh_extent:.4f}")
+
+                    # Warn if remesh resolution seems too high for mesh detail
+                    # Estimate: ~6 faces per voxel cell on surface is reasonable
+                    estimated_surface_voxels = curr_faces.shape[0] / 6
+                    estimated_resolution = int(estimated_surface_voxels ** (1/2))  # Rough estimate
+                    if remesh_resolution > estimated_resolution * 2:
+                        print(f"[BD CuMesh] WARNING: remesh_resolution={remesh_resolution} may be too high")
+                        print(f"[BD CuMesh]   Mesh has ~{curr_faces.shape[0]} faces, estimated detail supports ~{estimated_resolution} resolution")
+                        print(f"[BD CuMesh]   Consider using resolution <= {min(remesh_resolution, estimated_resolution * 2)} to avoid artifacts")
 
                     # Dual contour remesh with optional sharp edge preservation
+                    # Scale needs to account for band width expansion
+                    effective_scale = (remesh_resolution + 3 * remesh_band) / remesh_resolution * scale
+
                     remesh_start = time.time()
                     new_verts, new_faces = cumesh.remeshing.remesh_narrow_band_dc(
                         curr_verts, curr_faces,
                         center=center,
-                        scale=(remesh_resolution + 3 * remesh_band) / remesh_resolution * scale,
+                        scale=effective_scale,
                         resolution=remesh_resolution,
                         band=remesh_band,
                         project_back=project_back,
