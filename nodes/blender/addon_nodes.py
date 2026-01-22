@@ -1719,6 +1719,7 @@ class BD_BlenderEdgeMarking(BlenderNodeMixin, io.ComfyNode):
         Returns:
             trimesh.Trimesh with tube geometry along edges, or None on failure
         """
+        import numpy as np
         import trimesh
         from trimesh.creation import cylinder
 
@@ -2063,12 +2064,15 @@ Returns statistics including pre-existing edge marks.""",
 
             # Generate edge preview mesh (visible tubes along marked edges)
             edge_preview = None
-            if generate_preview and len(marked_edges) > 0 and hasattr(result_mesh, 'vertices'):
-                edge_preview = cls._generate_edge_preview(
-                    result_mesh.vertices, marked_edges, preview_thickness
-                )
-                if edge_preview is not None:
-                    print(f"[BD EdgeMarking] Generated edge preview: {len(edge_preview.faces)} faces")
+            if generate_preview and len(marked_edges) > 0 and result_mesh is not None and hasattr(result_mesh, 'vertices') and result_mesh.vertices is not None:
+                try:
+                    edge_preview = cls._generate_edge_preview(
+                        result_mesh.vertices, marked_edges, preview_thickness
+                    )
+                    if edge_preview is not None:
+                        print(f"[BD EdgeMarking] Generated edge preview: {len(edge_preview.faces)} faces")
+                except Exception as preview_error:
+                    print(f"[BD EdgeMarking] Warning: Failed to generate preview: {preview_error}")
 
             return io.NodeOutput(result_mesh, edge_preview, edge_metadata, combined_status)
 
