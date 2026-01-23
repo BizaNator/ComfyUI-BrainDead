@@ -98,8 +98,8 @@ class BD_MeshInspector(io.ComfyNode):
             inputs=[
                 TrimeshInput("mesh", optional=True),
                 MeshBundleInput("bundle", optional=True),
-                io.String.Input("glb_path", default="", optional=True, multiline=False,
-                                tooltip="Path to a GLB/glTF file to inspect directly"),
+                io.String.Input("mesh_path", default="", optional=True, multiline=False,
+                                tooltip="Path to a mesh file (GLB, PLY, OBJ, FBX, STL, OFF, etc.)"),
                 io.Combo.Input("initial_mode", options=VIEW_MODES, default="full_material",
                                tooltip="Initial view mode for the 3D viewer"),
                 io.String.Input("metallic_json", default="", optional=True, multiline=False,
@@ -121,7 +121,7 @@ class BD_MeshInspector(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, mesh=None, bundle=None, glb_path="",
+    def execute(cls, mesh=None, bundle=None, mesh_path="",
                 initial_mode="full_material",
                 metallic_json="", roughness_json="", normal_map=None,
                 emissive_map=None, alpha_map=None, diffuse_map=None) -> io.NodeOutput:
@@ -145,20 +145,20 @@ class BD_MeshInspector(io.ComfyNode):
             if diffuse_map is None and bundle.get('diffuse') is not None:
                 diffuse_map = bundle.get('diffuse')  # numpy array
 
-        # Load from GLB path if no mesh from direct input or bundle
-        if mesh is None and glb_path and glb_path.strip():
-            glb_path = glb_path.strip()
-            if os.path.isfile(glb_path):
+        # Load from file path if no mesh from direct input or bundle
+        if mesh is None and mesh_path and mesh_path.strip():
+            mesh_path = mesh_path.strip()
+            if os.path.isfile(mesh_path):
                 try:
-                    mesh = trimesh.load(glb_path, file_type='glb', force='mesh')
-                    print(f"[BD Inspector] Loaded mesh from GLB: {glb_path}")
+                    mesh = trimesh.load(mesh_path, force='mesh')
+                    print(f"[BD Inspector] Loaded mesh from file: {mesh_path}")
                 except Exception as e:
-                    return io.NodeOutput(f"ERROR: Failed to load GLB - {e}")
+                    return io.NodeOutput(f"ERROR: Failed to load mesh - {e}")
             else:
-                return io.NodeOutput(f"ERROR: GLB file not found - {glb_path}")
+                return io.NodeOutput(f"ERROR: Mesh file not found - {mesh_path}")
 
         if mesh is None:
-            return io.NodeOutput("ERROR: No mesh (provide mesh, bundle, or glb_path)")
+            return io.NodeOutput("ERROR: No mesh (provide mesh, bundle, or mesh_path). If connected, check upstream node produced a valid mesh.")
 
         # Generate unique filename for this preview
         filename = f"bd_inspector_{uuid.uuid4().hex[:8]}.glb"
@@ -256,8 +256,8 @@ class BD_MeshInspector(io.ComfyNode):
 
         if bundle is not None and mesh is bundle.get('mesh'):
             source = "bundle"
-        elif glb_path and glb_path.strip():
-            source = "glb"
+        elif mesh_path and mesh_path.strip():
+            source = "file"
         else:
             source = "mesh"
         status = (
