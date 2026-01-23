@@ -28,3 +28,4 @@ ENV/
 *.swo
 .DS_Store
 *_v1_backup.py
+node_modules/
