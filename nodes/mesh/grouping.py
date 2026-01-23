@@ -38,7 +38,7 @@ BOUNDARY STRAIGHTENING (Option 2):
 
 Use BEFORE decimation to preserve flat-shaded planes:
 1. BD_PlanarGrouping → marks group boundaries (+ optional straightening)
-2. BD_BlenderDecimateV3 → preserves marked edges with delimit
+2. BD_BlenderDecimate → preserves marked edges with delimit
 
 Parameters:
 - angle_threshold: Max angle between normals in same group (lower = more groups)

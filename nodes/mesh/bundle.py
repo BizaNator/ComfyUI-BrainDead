@@ -157,17 +157,12 @@ Textures are extracted from mesh material if not provided explicitly.""",
         if mesh is None:
             return io.NodeOutput(None, "ERROR: No input mesh")
 
-        # Extract vertex colors from metadata if present
+        # Extract vertex colors from native mesh.visual.vertex_colors
         vertex_colors = None
-        if hasattr(mesh, 'metadata') and mesh.metadata:
-            vertex_colors = mesh.metadata.get('vertex_colors')
-
-        # If no vertex_colors in metadata, try from ColorVisuals
-        if vertex_colors is None and hasattr(mesh, 'visual'):
-            if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
-                vc = mesh.visual.vertex_colors
-                if isinstance(vc, np.ndarray) and len(vc) > 0:
-                    vertex_colors = vc if vc.dtype == np.uint8 else (vc * 255).clip(0, 255).astype(np.uint8)
+        if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+            vc = mesh.visual.vertex_colors
+            if isinstance(vc, np.ndarray) and len(vc) > 0:
+                vertex_colors = vc if vc.dtype == np.uint8 else (vc * 255).clip(0, 255).astype(np.uint8)
 
         # Convert explicit texture inputs
         tex_diffuse = _image_tensor_to_numpy(diffuse)

@@ -8,7 +8,7 @@ const BD_NODES = [
     "BD_UVUnwrap",
     "BD_BakeTextures",
     "BD_CuMeshSimplify",
-    "BD_BlenderDecimateV2",
+    "BD_BlenderDecimate",
     "BD_BlenderMergePlanes",
     "BD_MeshExportBundle",
     "BD_SampleVoxelgridColors",

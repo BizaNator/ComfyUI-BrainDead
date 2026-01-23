@@ -107,7 +107,7 @@ Modes:
                     "preserve_material",
                     default=True,
                     optional=True,
-                    tooltip="Keep existing PBR material/UVs intact. Colors stored in metadata for edge detection nodes.",
+                    tooltip="Save original UVs in metadata for downstream PBR reconstruction. Colors always applied natively to mesh.visual.vertex_colors.",
                 ),
                 io.String.Input(
                     "default_color",
@@ -211,7 +211,7 @@ Modes:
             and mesh.visual.material is not None
         )
         if has_material and preserve_material:
-            print(f"[BD ApplyColorField] Mesh has PBR material - preserving (colors in metadata)")
+            print(f"[BD ApplyColorField] Mesh has PBR material - preserving UVs in metadata, applying colors natively")
 
         if sampling_mode == "face" and mesh_faces is not None:
             # Face mode: sample at face centers
@@ -232,30 +232,15 @@ Modes:
             far_pct = 100 * far_faces.sum() / num_faces
 
             if has_material and preserve_material:
-                # Preserve material: store face colors in metadata, expand to vertex colors
-                # Expand face colors to per-vertex (each vertex gets its face's color)
-                vertex_face_colors = np.zeros((len(mesh_verts), 4), dtype=np.float32)
-                face_count = np.zeros(len(mesh_verts), dtype=np.int32)
-                for fi in range(num_faces):
-                    for vi in mesh_faces[fi]:
-                        vertex_face_colors[vi] += face_colors[fi]
-                        face_count[vi] += 1
-                face_count = np.maximum(face_count, 1)
-                vertex_face_colors /= face_count[:, None]
+                # Apply colors natively via split vertices (solid per-face colors)
+                # Store old UVs in metadata for potential downstream PBR reconstruction
+                new_mesh = split_vertices_by_face_with_colors(mesh, face_colors)
+                if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                    new_mesh.metadata['preserved_uvs'] = mesh.visual.uv.copy()
+                if hasattr(mesh.visual, 'material') and mesh.visual.material is not None:
+                    new_mesh.metadata['had_pbr_material'] = True
 
-                vertex_colors_uint8 = (vertex_face_colors * 255).clip(0, 255).astype(np.uint8)
-
-                # Store in metadata for downstream nodes (edge detection, decimation)
-                new_mesh = trimesh.Trimesh(
-                    vertices=mesh.vertices.copy(),
-                    faces=mesh_faces.copy(),
-                    process=False,
-                )
-                new_mesh.visual = mesh.visual  # Preserve original material/UVs
-                new_mesh.metadata['vertex_colors'] = vertex_colors_uint8
-                new_mesh.metadata['face_colors'] = (face_colors * 255).clip(0, 255).astype(np.uint8)
-
-                status = f"Face mode (material preserved): {num_faces} faces ({unique_colors} unique colors), {far_pct:.1f}% beyond threshold, {total_time:.1f}s"
+                status = f"Face mode (UVs preserved in metadata): {num_faces} faces ({unique_colors} unique colors), {far_pct:.1f}% beyond threshold, {total_time:.1f}s"
             else:
                 # Create face-split mesh with solid colors (replaces material)
                 new_mesh = split_vertices_by_face_with_colors(mesh, face_colors)
@@ -277,25 +262,22 @@ Modes:
 
             vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
 
+            new_mesh = trimesh.Trimesh(
+                vertices=mesh.vertices.copy(),
+                faces=mesh_faces.copy() if mesh_faces is not None else None,
+                process=False,
+            )
+            new_mesh.visual = trimesh.visual.ColorVisuals(
+                mesh=new_mesh,
+                vertex_colors=vertex_colors_uint8,
+            )
+
             if has_material and preserve_material:
-                # Preserve material: store colors in metadata
-                new_mesh = trimesh.Trimesh(
-                    vertices=mesh.vertices.copy(),
-                    faces=mesh_faces.copy() if mesh_faces is not None else None,
-                    process=False,
-                )
-                new_mesh.visual = mesh.visual  # Preserve original material/UVs
-                new_mesh.metadata['vertex_colors'] = vertex_colors_uint8
-            else:
-                new_mesh = trimesh.Trimesh(
-                    vertices=mesh.vertices.copy(),
-                    faces=mesh_faces.copy() if mesh_faces is not None else None,
-                    process=False,
-                )
-                new_mesh.visual = trimesh.visual.ColorVisuals(
-                    mesh=new_mesh,
-                    vertex_colors=vertex_colors_uint8,
-                )
+                # Store old UVs in metadata for potential downstream PBR reconstruction
+                if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                    new_mesh.metadata['preserved_uvs'] = mesh.visual.uv.copy()
+                if hasattr(mesh.visual, 'material') and mesh.visual.material is not None:
+                    new_mesh.metadata['had_pbr_material'] = True
 
             if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
                 new_mesh.vertex_normals = mesh.vertex_normals.copy()
@@ -303,7 +285,7 @@ Modes:
             total_time = time.time() - start_time
             unique_colors = len(np.unique(vertex_colors_uint8.view(np.uint32).reshape(-1)))
 
-            mat_note = " (material preserved)" if (has_material and preserve_material) else ""
+            mat_note = " (UVs preserved in metadata)" if (has_material and preserve_material) else ""
             status = f"Sharp mode{mat_note}: {len(mesh_verts)} verts ({unique_colors} unique colors), {far_pct:.1f}% beyond threshold, {total_time:.1f}s"
             print(f"[BD ApplyColorField] {status}")
 
@@ -329,25 +311,22 @@ Modes:
 
             vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
 
+            new_mesh = trimesh.Trimesh(
+                vertices=mesh.vertices.copy(),
+                faces=mesh_faces.copy() if mesh_faces is not None else None,
+                process=False,
+            )
+            new_mesh.visual = trimesh.visual.ColorVisuals(
+                mesh=new_mesh,
+                vertex_colors=vertex_colors_uint8,
+            )
+
             if has_material and preserve_material:
-                # Preserve material: store colors in metadata
-                new_mesh = trimesh.Trimesh(
-                    vertices=mesh.vertices.copy(),
-                    faces=mesh_faces.copy() if mesh_faces is not None else None,
-                    process=False,
-                )
-                new_mesh.visual = mesh.visual  # Preserve original material/UVs
-                new_mesh.metadata['vertex_colors'] = vertex_colors_uint8
-            else:
-                new_mesh = trimesh.Trimesh(
-                    vertices=mesh.vertices.copy(),
-                    faces=mesh_faces.copy() if mesh_faces is not None else None,
-                    process=False,
-                )
-                new_mesh.visual = trimesh.visual.ColorVisuals(
-                    mesh=new_mesh,
-                    vertex_colors=vertex_colors_uint8,
-                )
+                # Store old UVs in metadata for potential downstream PBR reconstruction
+                if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                    new_mesh.metadata['preserved_uvs'] = mesh.visual.uv.copy()
+                if hasattr(mesh.visual, 'material') and mesh.visual.material is not None:
+                    new_mesh.metadata['had_pbr_material'] = True
 
             if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
                 new_mesh.vertex_normals = mesh.vertex_normals.copy()
@@ -355,7 +334,7 @@ Modes:
             total_time = time.time() - start_time
             unique_colors = len(np.unique(vertex_colors_uint8.view(np.uint32).reshape(-1)))
 
-            mat_note = " (material preserved)" if (has_material and preserve_material) else ""
+            mat_note = " (UVs preserved in metadata)" if (has_material and preserve_material) else ""
             status = f"Smooth mode{mat_note}: {len(mesh_verts)} verts ({unique_colors} unique colors), {far_pct:.1f}% beyond threshold, {total_time:.1f}s"
             print(f"[BD ApplyColorField] {status}")
 

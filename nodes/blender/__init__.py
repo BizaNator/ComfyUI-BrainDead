@@ -2,9 +2,7 @@
 Blender-based mesh processing nodes for ComfyUI.
 
 Provides high-quality mesh operations using Blender headlessly:
-- BD_BlenderDecimate: Basic decimation
-- BD_BlenderDecimateV2: Full-featured decimation (Decimate_v1.py port)
-- BD_BlenderDecimateV3: Full decimation using BrainDeadBlender addon
+- BD_BlenderDecimate: Full-featured stylized decimation (color field, planar grouping, edge preservation)
 - BD_BlenderRemesh: Voxel/quad remeshing (native + addon)
 - BD_BlenderCleanup: Smart mesh cleanup using addon
 - BD_BlenderEdgeMarking: Edge marking from colors/angles
@@ -14,14 +12,8 @@ Provides high-quality mesh operations using Blender headlessly:
 - BD_BlenderTransferColors: BVH-based vertex color transfer
 """
 
-from .decimate import (
-    BD_BlenderDecimate,
-    DECIMATE_V3_NODES,
-    DECIMATE_NODES,
-    DECIMATE_DISPLAY_NAMES,
-)
 from .decimate_full import (
-    BD_BlenderDecimateV2,
+    BD_BlenderDecimate,
     DECIMATE_FULL_V3_NODES,
     DECIMATE_FULL_NODES,
     DECIMATE_FULL_DISPLAY_NAMES,
@@ -45,7 +37,6 @@ from .transfer import (
     TRANSFER_DISPLAY_NAMES,
 )
 from .addon_nodes import (
-    BD_BlenderDecimateV3,
     BD_BlenderRemesh,
     BD_BlenderCleanup,
     BD_BlenderEdgeMarking,
@@ -64,7 +55,6 @@ from .export_mesh import (
 
 # V3 node list for extension
 BLENDER_V3_NODES = [
-    *DECIMATE_V3_NODES,
     *DECIMATE_FULL_V3_NODES,
     *REMESH_BASIC_V3_NODES,
     *REPAIR_V3_NODES,
@@ -75,7 +65,6 @@ BLENDER_V3_NODES = [
 
 # V1 compatibility - NODE_CLASS_MAPPINGS dict
 BLENDER_NODES = {
-    **DECIMATE_NODES,
     **DECIMATE_FULL_NODES,
     **REMESH_BASIC_NODES,
     **REPAIR_NODES,
@@ -85,7 +74,6 @@ BLENDER_NODES = {
 }
 
 BLENDER_DISPLAY_NAMES = {
-    **DECIMATE_DISPLAY_NAMES,
     **DECIMATE_FULL_DISPLAY_NAMES,
     **REMESH_BASIC_DISPLAY_NAMES,
     **REPAIR_DISPLAY_NAMES,
@@ -99,8 +87,6 @@ __all__ = [
     "BLENDER_V3_NODES",
     # Individual classes - Decimate
     "BD_BlenderDecimate",
-    "BD_BlenderDecimateV2",
-    "BD_BlenderDecimateV3",
     # Individual classes - Addon-based
     "BD_BlenderRemesh",
     "BD_BlenderCleanup",

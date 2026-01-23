@@ -1,12 +1,14 @@
 """
-BD_BlenderDecimateV2 - Full-featured stylized low-poly mesh decimation using Blender.
+BD_BlenderDecimate - Full-featured stylized low-poly mesh decimation using Blender.
 
-Complete port of Decimate_v1.py with all features:
+Consolidated from V1/V2/V3 into a single node with all features:
+- Color field spatial sampling (on clean topology, no face splitting)
+- Planar grouping (structure-aware boundary detection from normals)
+- Color edge detection (marks color boundaries as sharp/seams)
 - Pre-cleanup (fix non-manifold geometry)
-- Color edge detection (marks color boundaries as sharp/seams - CRITICAL for edge preservation)
 - Hole filling
 - Internal geometry removal (raycast or simple)
-- Planar decimation with edge preservation (respects sharp/seam marks)
+- Planar decimation with edge preservation (respects sharp/seam marks via delimit)
 - Collapse decimation
 - Face-based vertex color transfer (no bleeding)
 - Sharp edge marking by angle
@@ -101,6 +103,11 @@ DEBUG_PATH = get_env_str('BLENDER_ARG_DEBUG_PATH', '')
 
 # Color field spatial sampling (alternative to pre-baked vertex colors)
 COLOR_FIELD_PATH = get_env_str('BLENDER_ARG_COLOR_FIELD_PATH', '')
+
+# Planar grouping (structure-aware boundary detection from normals)
+USE_PLANAR_GROUPING = get_env_bool('BLENDER_ARG_USE_PLANAR_GROUPING', False)
+PLANAR_GROUP_ANGLE = get_env_float('BLENDER_ARG_PLANAR_GROUP_ANGLE', 15.0)
+PLANAR_GROUP_MIN_SIZE = get_env_int('BLENDER_ARG_PLANAR_GROUP_MIN_SIZE', 10)
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -218,6 +225,153 @@ def apply_color_field_from_file(obj, cf_path):
     obj.data.update()
     log(f"[Color Field] Applied {n_verts} vertex colors (POINT domain)")
     return True
+
+
+# ============================================================================
+# PLANAR GROUPING (structure-aware boundary detection from normals)
+# ============================================================================
+def compute_face_normals_np(vertices, faces):
+    """Compute normalized face normals using numpy."""
+    v0 = vertices[faces[:, 0]]
+    v1 = vertices[faces[:, 1]]
+    v2 = vertices[faces[:, 2]]
+    normals = np.cross(v1 - v0, v2 - v0)
+    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    lengths = np.maximum(lengths, 1e-10)
+    return normals / lengths
+
+
+def build_face_adjacency(faces):
+    """Build face adjacency from shared edges."""
+    from collections import defaultdict
+    edge_to_faces = defaultdict(list)
+    for face_idx, face in enumerate(faces):
+        n = len(face)
+        for i in range(n):
+            edge = tuple(sorted([face[i], face[(i + 1) % n]]))
+            edge_to_faces[edge].append(face_idx)
+
+    adjacency = {i: [] for i in range(len(faces))}
+    for edge, face_list in edge_to_faces.items():
+        if len(face_list) == 2:
+            adjacency[face_list[0]].append(face_list[1])
+            adjacency[face_list[1]].append(face_list[0])
+    return adjacency
+
+
+def cluster_faces_by_normal(faces, normals, adjacency, angle_threshold):
+    """Cluster connected faces with similar normals into planar groups."""
+    from collections import deque
+    num_faces = len(faces)
+    group_labels = np.full(num_faces, -1, dtype=np.int32)
+    current_group = 0
+
+    for start_face in range(num_faces):
+        if group_labels[start_face] >= 0:
+            continue
+        queue = deque([start_face])
+        while queue:
+            face_idx = queue.popleft()
+            if group_labels[face_idx] >= 0:
+                continue
+            group_labels[face_idx] = current_group
+            for neighbor_idx in adjacency[face_idx]:
+                if group_labels[neighbor_idx] >= 0:
+                    continue
+                dot = np.clip(np.dot(normals[face_idx], normals[neighbor_idx]), -1.0, 1.0)
+                angle = np.degrees(np.arccos(dot))
+                if angle <= angle_threshold:
+                    queue.append(neighbor_idx)
+        current_group += 1
+
+    return group_labels, current_group
+
+
+def apply_planar_grouping(obj, angle_threshold, min_group_size):
+    """
+    Detect planar groups and mark boundary edges as sharp/seam.
+
+    Groups faces by normal similarity (BFS flood fill).
+    Edges between different groups are structural boundaries.
+    """
+    ensure_object_mode()
+    mesh = obj.data
+
+    vertices = np.array([v.co[:] for v in mesh.vertices])
+    faces = np.array([[v for v in p.vertices] for p in mesh.polygons])
+
+    log(f"[Planar Group] Input: {len(faces)} faces, angle={angle_threshold}°, min_size={min_group_size}")
+
+    normals = compute_face_normals_np(vertices, faces)
+    adjacency = build_face_adjacency(faces)
+    group_labels, num_groups = cluster_faces_by_normal(faces, normals, adjacency, angle_threshold)
+
+    # Merge small groups into largest neighbor
+    if min_group_size > 1:
+        from collections import Counter
+        group_sizes = Counter(group_labels.tolist())
+        small_groups = {g for g, s in group_sizes.items() if s < min_group_size}
+        if small_groups:
+            for face_idx in range(len(faces)):
+                if group_labels[face_idx] in small_groups:
+                    neighbor_groups = Counter()
+                    for n_idx in adjacency[face_idx]:
+                        ng = group_labels[n_idx]
+                        if ng not in small_groups:
+                            neighbor_groups[ng] += 1
+                    if neighbor_groups:
+                        group_labels[face_idx] = neighbor_groups.most_common(1)[0][0]
+            # Renumber
+            unique = np.unique(group_labels)
+            remap = {old: new for new, old in enumerate(unique)}
+            group_labels = np.array([remap[g] for g in group_labels], dtype=np.int32)
+            num_groups = len(unique)
+
+    # Find boundary edges (edges between different groups)
+    boundary_edges = []
+    for face_idx, face in enumerate(faces):
+        n = len(face)
+        for i in range(n):
+            edge_key = tuple(sorted([face[i], face[(i + 1) % n]]))
+            # Check if this edge is shared with a face in a different group
+            # (only add once per edge pair)
+            if face[i] < face[(i + 1) % n]:  # Avoid duplicates
+                for n_idx in adjacency[face_idx]:
+                    n_face = faces[n_idx]
+                    if edge_key == tuple(sorted([n_face[0], n_face[1]])) or \
+                       edge_key == tuple(sorted([n_face[1], n_face[2]])) or \
+                       edge_key == tuple(sorted([n_face[2], n_face[0]])):
+                        if group_labels[face_idx] != group_labels[n_idx]:
+                            boundary_edges.append(edge_key)
+                        break
+
+    log(f"[Planar Group] Found {num_groups} groups, {len(boundary_edges)} boundary edges")
+
+    # Mark boundary edges as sharp + seam in Blender
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(mesh)
+    bm.edges.ensure_lookup_table()
+
+    # Build edge lookup
+    edge_lookup = {}
+    for edge in bm.edges:
+        key = tuple(sorted([edge.verts[0].index, edge.verts[1].index]))
+        edge_lookup[key] = edge
+
+    marked = 0
+    for edge_key in boundary_edges:
+        if edge_key in edge_lookup:
+            edge = edge_lookup[edge_key]
+            edge.smooth = False  # Sharp
+            edge.seam = True     # Seam (for UV + delimit)
+            marked += 1
+
+    bmesh.update_edit_mesh(mesh)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    log(f"[Planar Group] Marked {marked} boundary edges as sharp/seam")
+    return num_groups, marked
 
 
 # ============================================================================
@@ -758,8 +912,8 @@ def fix_normals(obj):
 # ============================================================================
 # MAIN PIPELINE
 # ============================================================================
-log("[BD Decimate V2] Starting full pipeline...")
-log(f"[BD Decimate V2] Settings:")
+log("[BD Decimate] Starting full pipeline...")
+log(f"[BD Decimate] Settings:")
 log(f"  Pre-cleanup: {PRE_CLEANUP}")
 log(f"  Detect color edges: {DETECT_COLOR_EDGES} (threshold: {COLOR_EDGE_THRESHOLD})")
 log(f"  Fill holes: {FILL_HOLES}")
@@ -776,13 +930,13 @@ bpy.ops.object.delete()
 
 # Import mesh
 ext = os.path.splitext(INPUT_PATH)[1].lower()
-log(f"[BD Decimate V2] Importing {ext} from {INPUT_PATH}")
+log(f"[BD Decimate] Importing {ext} from {INPUT_PATH}")
 
 # Check file exists and has content
 if not os.path.exists(INPUT_PATH):
     raise ValueError(f"Input file not found: {INPUT_PATH}")
 file_size = os.path.getsize(INPUT_PATH)
-log(f"[BD Decimate V2] Input file size: {file_size} bytes")
+log(f"[BD Decimate] Input file size: {file_size} bytes")
 if file_size == 0:
     raise ValueError(f"Input file is empty: {INPUT_PATH}")
 
@@ -798,38 +952,38 @@ else:
     raise ValueError(f"Unsupported format: {ext}")
 
 # Get imported object - GLTF can create hierarchies, need to find mesh
-log(f"[BD Decimate V2] Scene objects after import: {[o.name for o in bpy.context.scene.objects]}")
+log(f"[BD Decimate] Scene objects after import: {[o.name for o in bpy.context.scene.objects]}")
 
 obj = bpy.context.active_object
 if obj is None or obj.type != 'MESH':
     # Find first mesh object
     mesh_objects = [o for o in bpy.context.scene.objects if o.type == 'MESH']
-    log(f"[BD Decimate V2] Found {len(mesh_objects)} mesh objects")
+    log(f"[BD Decimate] Found {len(mesh_objects)} mesh objects")
     if not mesh_objects:
         raise ValueError("No mesh objects found after import!")
     obj = mesh_objects[0]
 
 bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
-log(f"[BD Decimate V2] Selected object: {obj.name}")
+log(f"[BD Decimate] Selected object: {obj.name}")
 
 original_faces = get_face_count(obj)
 original_verts = get_vertex_count(obj)
-log(f"[BD Decimate V2] Input: {original_verts} verts, {original_faces} faces")
+log(f"[BD Decimate] Input: {original_verts} verts, {original_faces} faces")
 
 # Apply color field if provided (samples colors spatially on clean topology)
 if COLOR_FIELD_PATH and os.path.exists(COLOR_FIELD_PATH):
-    log(f"\\n[BD Decimate V2] Sampling colors from color_field...")
+    log(f"\\n[BD Decimate] Sampling colors from color_field...")
     apply_color_field_from_file(obj, COLOR_FIELD_PATH)
 
 # Check for colors
 has_colors = False
 if obj.data.vertex_colors:
     has_colors = True
-    log(f"[BD Decimate V2] Found vertex_colors: {len(obj.data.vertex_colors)} layers")
+    log(f"[BD Decimate] Found vertex_colors: {len(obj.data.vertex_colors)} layers")
 if obj.data.color_attributes:
     has_colors = True
-    log(f"[BD Decimate V2] Found color_attributes: {len(obj.data.color_attributes)} layers")
+    log(f"[BD Decimate] Found color_attributes: {len(obj.data.color_attributes)} layers")
     for attr in obj.data.color_attributes:
         log(f"  - {attr.name}: domain={attr.domain}, type={attr.data_type}")
 
@@ -843,19 +997,27 @@ if PRE_CLEANUP:
     log("\\n[STEP 1] Pre-cleanup...")
     pre_cleanup_mesh(obj)
 
-# STEP 2: Detect color edges (CRITICAL for edge preservation)
+# STEP 2: Planar grouping (structure-aware boundary detection from normals)
+if USE_PLANAR_GROUPING:
+    log("\\n[STEP 2] Planar grouping (normal-based boundary detection)...")
+    try:
+        num_groups, edges_marked = apply_planar_grouping(obj, PLANAR_GROUP_ANGLE, PLANAR_GROUP_MIN_SIZE)
+    except Exception as e:
+        log(f"[Planar Group] Error: {e}")
+
+# STEP 3: Detect color edges (CRITICAL for edge preservation)
 if DETECT_COLOR_EDGES and has_colors:
-    log("\\n[STEP 2] Detecting color edges...")
+    log("\\n[STEP 3] Detecting color edges...")
     detect_color_edges_from_vertex_colors(obj)
 
 # STEP 3: Fill holes
 if FILL_HOLES:
-    log("\\n[STEP 3] Filling holes...")
+    log("\\n[STEP 4] Filling holes...")
     fill_holes_simple(obj)
 
 # STEP 4: Remove internal geometry
 if REMOVE_INTERNAL:
-    log("\\n[STEP 4] Removing internal geometry...")
+    log("\\n[STEP 5] Removing internal geometry...")
     if INTERNAL_REMOVAL_METHOD == 'RAYCAST':
         remove_internal_raycast(obj)
     else:
@@ -863,38 +1025,38 @@ if REMOVE_INTERNAL:
 
 # STEP 5: Planar decimate (merges coplanar faces, preserves marked edges)
 if PLANAR_ANGLE > 0:
-    log("\\n[STEP 5] Planar decimate...")
+    log("\\n[STEP 6] Planar decimate...")
     apply_planar_decimate(obj)
 
 # STEP 6: Triangulate n-gons before collapse
-log("\\n[STEP 6] Triangulating n-gons...")
+log("\\n[STEP 7] Triangulating n-gons...")
 triangulate_ngons(obj)
 
 # STEP 7: Collapse decimate
 if TARGET_FACES > 0:
-    log("\\n[STEP 7] Collapse decimate...")
+    log("\\n[STEP 8] Collapse decimate...")
     apply_collapse_decimate(obj, TARGET_FACES)
 
 # STEP 8: Mark sharp edges by angle
 if SHARP_ANGLE > 0:
-    log("\\n[STEP 8] Marking sharp edges...")
+    log("\\n[STEP 9] Marking sharp edges...")
     mark_sharp_edges(obj)
 
 # STEP 9: Transfer colors back from reference
 if ref_obj and PRESERVE_COLORS:
-    log("\\n[STEP 9] Transferring colors from reference...")
+    log("\\n[STEP 10] Transferring colors from reference...")
     transfer_colors_from_reference(obj, ref_obj)
     # Clean up reference
     bpy.data.objects.remove(ref_obj, do_unlink=True)
 
 # STEP 10: Fix normals
 if FIX_NORMALS:
-    log("\\n[STEP 10] Fixing normals...")
+    log("\\n[STEP 11] Fixing normals...")
     fix_normals(obj)
 
 # STEP 11: Apply rotation to convert Z-up back to Y-up for PLY export
 # GLTF import converts Y-up to Z-up, we need to reverse this for PLY
-log("\\n[STEP 11] Converting Z-up to Y-up for output...")
+log("\\n[STEP 12] Converting Z-up to Y-up for output...")
 import mathutils
 bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
@@ -908,12 +1070,12 @@ log("[Coordinate Fix] Applied -90° X rotation (Z-up → Y-up)")
 final_faces = get_face_count(obj)
 final_verts = get_vertex_count(obj)
 reduction = (1 - final_faces / original_faces) * 100 if original_faces > 0 else 0
-log(f"\\n[BD Decimate V2] COMPLETE: {original_faces} -> {final_faces} faces ({reduction:.1f}% reduction)")
-log(f"[BD Decimate V2] Final: {final_verts} verts, {final_faces} faces")
+log(f"\\n[BD Decimate] COMPLETE: {original_faces} -> {final_faces} faces ({reduction:.1f}% reduction)")
+log(f"[BD Decimate] Final: {final_verts} verts, {final_faces} faces")
 
 # Debug output
 if DEBUG_PATH:
-    log(f"[BD Decimate V2] Saving debug copy to: {DEBUG_PATH}")
+    log(f"[BD Decimate] Saving debug copy to: {DEBUG_PATH}")
     try:
         bpy.ops.export_scene.gltf(
             filepath=DEBUG_PATH,
@@ -921,13 +1083,13 @@ if DEBUG_PATH:
             export_attributes=True,  # Include vertex colors/attributes
             export_yup=True,  # GLTF standard Y-up (trimesh expects this)
         )
-        log(f"[BD Decimate V2] Debug copy saved")
+        log(f"[BD Decimate] Debug copy saved")
     except Exception as e:
-        log(f"[BD Decimate V2] Warning: Could not save debug: {e}")
+        log(f"[BD Decimate] Warning: Could not save debug: {e}")
 
 # Export result
 ext_out = os.path.splitext(OUTPUT_PATH)[1].lower()
-log(f"[BD Decimate V2] Exporting to {ext_out}...")
+log(f"[BD Decimate] Exporting to {ext_out}...")
 if ext_out == '.ply':
     bpy.ops.wm.ply_export(filepath=OUTPUT_PATH, export_colors='SRGB', ascii_format=True)  # ASCII for better compatibility
 elif ext_out == '.obj':
@@ -942,23 +1104,25 @@ elif ext_out in ['.glb', '.gltf']:
 elif ext_out == '.stl':
     bpy.ops.wm.stl_export(filepath=OUTPUT_PATH)
 
-log(f"[BD Decimate V2] Saved to {OUTPUT_PATH}")
+log(f"[BD Decimate] Saved to {OUTPUT_PATH}")
 '''
 
 
 # ============================================================================
 # COMFYUI NODE
 # ============================================================================
-class BD_BlenderDecimateV2(BlenderNodeMixin, io.ComfyNode):
+class BD_BlenderDecimate(BlenderNodeMixin, io.ComfyNode):
     """
     Full-featured stylized low-poly decimation using Blender.
 
-    Complete port of Decimate_v1.py with all features:
+    Consolidated from V1/V2/V3 into a single node with all features:
+    - Color field spatial sampling (on clean topology, no face splitting)
+    - Planar grouping (structure-aware boundary detection from normals)
+    - Color edge detection (marks color boundaries as sharp/seams)
     - Pre-cleanup (fix non-manifold geometry)
-    - Color edge detection (marks color boundaries as sharp/seams - CRITICAL)
     - Hole filling
     - Internal geometry removal
-    - Planar decimation with edge preservation
+    - Planar decimation with edge preservation (delimit)
     - Collapse decimation
     - Face-based color transfer (no bleeding)
     - Sharp edge marking
@@ -968,13 +1132,14 @@ class BD_BlenderDecimateV2(BlenderNodeMixin, io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
-            node_id="BD_BlenderDecimateV2",
-            display_name="BD Blender Decimate V2 (Full)",
+            node_id="BD_BlenderDecimate",
+            display_name="BD Blender Decimate",
             category="🧠BrainDead/Blender",
             description="""Full-featured stylized low-poly decimation.
 
 CRITICAL FEATURES:
 - Color Field Input: Sample colors spatially on CLEAN topology (no face splitting)
+- Planar Grouping: Structure-aware boundary detection from face normals
 - Color Edge Detection: Marks color boundaries as sharp/seam edges
 - Planar Decimate with Delimit: Preserves marked edges during decimation
 - Face-Based Color Transfer: NO color bleeding at vertices
@@ -1071,6 +1236,29 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
                     tooltip="Recalculate normals to face outward",
                 ),
 
+                # Planar grouping (structure-aware boundaries)
+                io.Boolean.Input(
+                    "use_planar_grouping",
+                    default=False,
+                    tooltip="Detect planar groups from face normals and mark boundaries as sharp/seam",
+                ),
+                io.Float.Input(
+                    "planar_group_angle",
+                    default=15.0,
+                    min=1.0,
+                    max=90.0,
+                    step=1.0,
+                    tooltip="Max angle between normals in same planar group (lower = more groups = more preserved edges)",
+                ),
+                io.Int.Input(
+                    "planar_group_min_size",
+                    default=10,
+                    min=1,
+                    max=1000,
+                    step=1,
+                    tooltip="Minimum faces per group (smaller groups merged into neighbors)",
+                ),
+
                 # Timeout and debug
                 io.Int.Input(
                     "timeout",
@@ -1110,6 +1298,9 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
         preserve_boundaries: bool = True,
         preserve_colors: bool = True,
         fix_normals: bool = True,
+        use_planar_grouping: bool = False,
+        planar_group_angle: float = 15.0,
+        planar_group_min_size: int = 10,
         timeout: int = 600,
         debug_path: str = "",
     ) -> io.NodeOutput:
@@ -1149,11 +1340,11 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
                              positions=positions,
                              colors=colors,
                              voxel_size=np.array([voxel_size]))
-                    print(f"[BD Decimate V2] Color field: {len(positions):,} voxels -> spatial sampling in Blender")
+                    print(f"[BD Decimate] Color field: {len(positions):,} voxels -> spatial sampling in Blender")
 
-            print(f"[BD Decimate V2] Input mesh: {orig_verts:,} verts, {orig_faces:,} faces")
-            print(f"[BD Decimate V2] Target: {target_faces} faces")
-            print(f"[BD Decimate V2] Color edge detection: {detect_color_edges} (threshold: {color_edge_threshold})")
+            print(f"[BD Decimate] Input mesh: {orig_verts:,} verts, {orig_faces:,} faces")
+            print(f"[BD Decimate] Target: {target_faces} faces")
+            print(f"[BD Decimate] Color edge detection: {detect_color_edges} (threshold: {color_edge_threshold})")
 
             # Build extra args
             extra_args = {
@@ -1175,11 +1366,14 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
                 'preserve_seams': True,
                 'preserve_colors': preserve_colors,
                 'fix_normals': fix_normals,
+                'use_planar_grouping': use_planar_grouping,
+                'planar_group_angle': planar_group_angle,
+                'planar_group_min_size': planar_group_min_size,
             }
 
             if debug_path:
                 extra_args['debug_path'] = debug_path
-                print(f"[BD Decimate V2] Debug output: {debug_path}")
+                print(f"[BD Decimate] Debug output: {debug_path}")
 
             if color_field_path:
                 extra_args['color_field_path'] = color_field_path
@@ -1195,9 +1389,9 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
 
             if not success:
                 error_context = '\n'.join(log_lines[-10:]) if log_lines else ''
-                print(f"[BD Decimate V2] FAILED: {message}")
+                print(f"[BD Decimate] FAILED: {message}")
                 if error_context:
-                    print(f"[BD Decimate V2] Log tail:\n{error_context}")
+                    print(f"[BD Decimate] Log tail:\n{error_context}")
                 return io.NodeOutput(mesh, f"ERROR: {message}")
 
             # Load result
@@ -1208,11 +1402,13 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
             new_faces = len(result_mesh.faces)
             reduction = (1 - new_faces / orig_faces) * 100 if orig_faces > 0 else 0
 
-            status = f"V2 Decimated: {orig_faces:,} -> {new_faces:,} faces ({reduction:.1f}% reduction)"
+            status = f"Decimated: {orig_faces:,} -> {new_faces:,} faces ({reduction:.1f}% reduction)"
             if color_field_path:
                 status += " | color_field sampled"
+            if use_planar_grouping:
+                status += " | planar groups"
             if detect_color_edges:
-                status += " | color edges detected"
+                status += " | color edges"
             if preserve_colors:
                 status += " | colors preserved"
 
@@ -1234,13 +1430,13 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
 
 
 # V3 node list
-DECIMATE_FULL_V3_NODES = [BD_BlenderDecimateV2]
+DECIMATE_FULL_V3_NODES = [BD_BlenderDecimate]
 
 # V1 compatibility
 DECIMATE_FULL_NODES = {
-    "BD_BlenderDecimateV2": BD_BlenderDecimateV2,
+    "BD_BlenderDecimate": BD_BlenderDecimate,
 }
 
 DECIMATE_FULL_DISPLAY_NAMES = {
-    "BD_BlenderDecimateV2": "BD Blender Decimate V2 (Full)",
+    "BD_BlenderDecimate": "BD Blender Decimate",
 }

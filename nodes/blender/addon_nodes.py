@@ -3138,7 +3138,6 @@ Parameters:
 
 # V3 node list
 ADDON_V3_NODES = [
-    BD_BlenderDecimateV3,
     BD_BlenderRemesh,
     BD_BlenderCleanup,
     BD_BlenderEdgeMarking,
@@ -3149,7 +3148,6 @@ ADDON_V3_NODES = [
 
 # V1 compatibility
 ADDON_NODES = {
-    "BD_BlenderDecimateV3": BD_BlenderDecimateV3,
     "BD_BlenderRemesh": BD_BlenderRemesh,
     "BD_BlenderCleanup": BD_BlenderCleanup,
     "BD_BlenderEdgeMarking": BD_BlenderEdgeMarking,
@@ -3159,7 +3157,6 @@ ADDON_NODES = {
 }
 
 ADDON_DISPLAY_NAMES = {
-    "BD_BlenderDecimateV3": "BD Blender Decimate V3",
     "BD_BlenderRemesh": "BD Blender Remesh",
     "BD_BlenderCleanup": "BD Blender Cleanup",
     "BD_BlenderEdgeMarking": "BD Blender Edge Marking",

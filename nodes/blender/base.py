@@ -273,20 +273,7 @@ class BlenderNodeMixin:
                     has_colors = True
                     print(f"[BD Blender] Mesh has {len(colors)} vertex colors")
 
-        # If no visual colors, check metadata (from BD_ApplyColorField with preserve_material)
-        if not has_colors and hasattr(mesh, 'metadata') and mesh.metadata:
-            meta_colors = mesh.metadata.get('vertex_colors')
-            if meta_colors is not None and len(meta_colors) > 0:
-                num_verts = len(mesh.vertices) if hasattr(mesh, 'vertices') else 0
-                if len(meta_colors) == num_verts:
-                    print(f"[BD Blender] Applying {len(meta_colors)} colors from metadata for export")
-                    from trimesh.visual import ColorVisuals
-                    mesh.visual = ColorVisuals(vertex_colors=meta_colors)
-                    has_colors = True
-                else:
-                    print(f"[BD Blender] Metadata colors count mismatch: {len(meta_colors)} vs {num_verts} verts")
-
-        # Export - try GLB first, fall back to PLY if it fails
+        # Export - try requested format first, fall back to PLY if it fails
         try:
             mesh.export(path, file_type=file_type)
             file_size = os.path.getsize(path)

@@ -218,7 +218,7 @@ class BD_UVUnwrap(BlenderNodeMixin, io.ComfyNode):
     - xatlas (GPU-accelerated via CuMesh) - fast, good for game assets
     - Blender Smart UV Project - quality unwrap, respects seams
 
-    Sharp edges (from color detection in BD_BlenderDecimateV2) can
+    Sharp edges (from color detection in BD_BlenderDecimate) can
     automatically become UV seams for clean texture boundaries.
     """
 
