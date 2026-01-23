@@ -171,6 +171,22 @@ class BD_MeshInspector(io.ComfyNode):
 
         filepath = os.path.join(output_dir, filename)
 
+        # Apply metadata vertex colors if mesh has no visual colors
+        # (BD_ApplyColorField stores colors in metadata when preserving PBR material)
+        if hasattr(mesh, 'metadata') and mesh.metadata:
+            meta_colors = mesh.metadata.get('vertex_colors')
+            if meta_colors is not None and len(meta_colors) > 0:
+                has_visual_colors = (
+                    hasattr(mesh, 'visual')
+                    and hasattr(mesh.visual, 'vertex_colors')
+                    and mesh.visual.vertex_colors is not None
+                    and len(mesh.visual.vertex_colors) > 0
+                )
+                if not has_visual_colors and len(meta_colors) == len(mesh.vertices):
+                    print(f"[BD Inspector] Applying {len(meta_colors)} colors from metadata")
+                    from trimesh.visual import ColorVisuals
+                    mesh.visual = ColorVisuals(vertex_colors=meta_colors)
+
         # Export mesh to GLB (preserves vertex colors and UVs)
         try:
             mesh.export(filepath, file_type='glb')
@@ -237,7 +253,12 @@ class BD_MeshInspector(io.ComfyNode):
         # Build status string
         vert_count = len(mesh.vertices)
         face_count = len(mesh.faces) if hasattr(mesh, 'faces') and mesh.faces is not None else 0
-        has_colors = hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors')
+        has_colors = (
+            (hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors')
+             and mesh.visual.vertex_colors is not None and len(mesh.visual.vertex_colors) > 0)
+            or (hasattr(mesh, 'metadata') and mesh.metadata
+                and mesh.metadata.get('vertex_colors') is not None)
+        )
         channels = []
         if metallic_out or metallic_map_b64:
             channels.append("metallic")
