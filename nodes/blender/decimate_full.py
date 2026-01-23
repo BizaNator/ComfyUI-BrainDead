@@ -16,10 +16,11 @@ Complete port of Decimate_v1.py with all features:
 import os
 import tempfile
 
+import numpy as np
 from comfy_api.latest import io
 
-# Import custom TRIMESH type (matches TRELLIS2)
-from ..mesh.types import TrimeshInput, TrimeshOutput
+# Import custom types
+from ..mesh.types import TrimeshInput, TrimeshOutput, ColorFieldInput
 
 from .base import BlenderNodeMixin, HAS_TRIMESH
 
@@ -98,6 +99,9 @@ PRESERVE_COLORS = get_env_bool('BLENDER_ARG_PRESERVE_COLORS', True)
 # Debug output
 DEBUG_PATH = get_env_str('BLENDER_ARG_DEBUG_PATH', '')
 
+# Color field spatial sampling (alternative to pre-baked vertex colors)
+COLOR_FIELD_PATH = get_env_str('BLENDER_ARG_COLOR_FIELD_PATH', '')
+
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
@@ -118,6 +122,103 @@ def get_face_count(obj):
 def get_vertex_count(obj):
     """Get vertex count from mesh."""
     return len(obj.data.vertices)
+
+# ============================================================================
+# COLOR FIELD SAMPLING (spatial lookup from raw voxelgrid data)
+# ============================================================================
+def apply_color_field_from_file(obj, cf_path):
+    """
+    Sample colors from a color_field .npz file and apply as vertex colors.
+
+    This avoids needing pre-baked vertex colors (which require face splitting).
+    Colors are sampled spatially using KDTree on the clean mesh topology.
+    """
+    import numpy as np
+
+    data = np.load(cf_path)
+    cf_positions = data['positions']  # (N, 3) voxel positions
+    cf_colors = data['colors']        # (N, 3) RGB [0-1]
+    voxel_size = float(data['voxel_size'][0]) if 'voxel_size' in data else 0.001
+
+    log(f"[Color Field] Loaded {len(cf_positions)} voxels, voxel_size={voxel_size:.6f}")
+
+    # Get vertex positions from Blender mesh
+    mesh_data = obj.data
+    n_verts = len(mesh_data.vertices)
+    blender_verts = np.zeros(n_verts * 3, dtype=np.float32)
+    mesh_data.vertices.foreach_get('co', blender_verts)
+    blender_verts = blender_verts.reshape(-1, 3)
+
+    # Transform Blender vertex positions to voxel space
+    # The GLB roundtrip: trimesh (Z-up) -> GLB -> Blender import (applies Y-up -> Z-up)
+    # So Blender verts are already in the same axis orientation as voxel space.
+    # Only need +0.5 offset to align with voxel centers.
+    verts_voxel = blender_verts + 0.5
+
+    # KDTree sampling
+    max_dist = voxel_size * 5.0  # Beyond this = no color data
+
+    try:
+        from scipy.spatial import cKDTree
+        tree = cKDTree(cf_positions)
+        distances, indices = tree.query(verts_voxel, k=1, workers=-1)
+        sampled_colors = cf_colors[indices].copy()
+        far_mask = distances > max_dist
+        if far_mask.any():
+            log(f"[Color Field] {far_mask.sum()} verts beyond threshold ({max_dist:.4f})")
+            sampled_colors[far_mask] = [0.5, 0.5, 0.5]  # Neutral gray for far verts
+        log(f"[Color Field] Sampled {n_verts} colors via scipy KDTree")
+    except ImportError:
+        # Numpy fallback - grid-based nearest neighbor
+        log("[Color Field] scipy not available, using numpy grid fallback")
+        cf_min = cf_positions.min(axis=0)
+        cf_max = cf_positions.max(axis=0)
+        cf_range = cf_max - cf_min
+        grid_res = max(1, int(round(cf_range.max() / voxel_size)))
+
+        # Quantize positions to grid cells
+        norm_cf = (cf_positions - cf_min) / (cf_range + 1e-10)
+        grid_cf = (norm_cf * (grid_res - 1)).astype(np.int32).clip(0, grid_res - 1)
+
+        norm_verts = (verts_voxel - cf_min) / (cf_range + 1e-10)
+        grid_verts = (norm_verts * (grid_res - 1)).astype(np.int32).clip(0, grid_res - 1)
+
+        # Build lookup: grid cell -> color (last write wins, fast approximation)
+        cell_keys_cf = grid_cf[:, 0] * grid_res * grid_res + grid_cf[:, 1] * grid_res + grid_cf[:, 2]
+        cell_keys_verts = grid_verts[:, 0] * grid_res * grid_res + grid_verts[:, 1] * grid_res + grid_verts[:, 2]
+
+        sort_idx = np.argsort(cell_keys_cf)
+        sorted_keys = cell_keys_cf[sort_idx]
+        sorted_colors = cf_colors[sort_idx]
+
+        indices = np.searchsorted(sorted_keys, cell_keys_verts).clip(0, len(sorted_keys) - 1)
+        sampled_colors = sorted_colors[indices]
+        log(f"[Color Field] Sampled {n_verts} colors via grid fallback")
+
+    # Create vertex color layer (POINT domain for per-vertex)
+    ensure_object_mode()
+    bpy.context.view_layer.objects.active = obj
+
+    # Remove existing color attributes to avoid conflicts
+    while obj.data.color_attributes:
+        obj.data.color_attributes.remove(obj.data.color_attributes[0])
+
+    # Create new POINT-domain color attribute
+    color_attr = obj.data.color_attributes.new(
+        name="Col",
+        type='FLOAT_COLOR',
+        domain='POINT'
+    )
+
+    # Set colors using foreach_set (RGBA)
+    rgba = np.ones((n_verts, 4), dtype=np.float32)
+    rgba[:, :3] = sampled_colors[:, :3].clip(0, 1)
+    color_attr.data.foreach_set('color', rgba.ravel())
+
+    obj.data.update()
+    log(f"[Color Field] Applied {n_verts} vertex colors (POINT domain)")
+    return True
+
 
 # ============================================================================
 # PRE-CLEANUP FUNCTIONS
@@ -716,6 +817,11 @@ original_faces = get_face_count(obj)
 original_verts = get_vertex_count(obj)
 log(f"[BD Decimate V2] Input: {original_verts} verts, {original_faces} faces")
 
+# Apply color field if provided (samples colors spatially on clean topology)
+if COLOR_FIELD_PATH and os.path.exists(COLOR_FIELD_PATH):
+    log(f"\\n[BD Decimate V2] Sampling colors from color_field...")
+    apply_color_field_from_file(obj, COLOR_FIELD_PATH)
+
 # Check for colors
 has_colors = False
 if obj.data.vertex_colors:
@@ -868,13 +974,16 @@ class BD_BlenderDecimateV2(BlenderNodeMixin, io.ComfyNode):
             description="""Full-featured stylized low-poly decimation.
 
 CRITICAL FEATURES:
+- Color Field Input: Sample colors spatially on CLEAN topology (no face splitting)
 - Color Edge Detection: Marks color boundaries as sharp/seam edges
 - Planar Decimate with Delimit: Preserves marked edges during decimation
 - Face-Based Color Transfer: NO color bleeding at vertices
 
-Complete pipeline from Decimate_v1.py script.""",
+Connect color_field directly (from BD_UnpackBundle or BD_SampleVoxelgridColors)
+to avoid pre-applying colors which splits faces and breaks topology.""",
             inputs=[
                 TrimeshInput("mesh"),
+                ColorFieldInput("color_field", optional=True),
 
                 # Target
                 io.Int.Input(
@@ -988,7 +1097,8 @@ Complete pipeline from Decimate_v1.py script.""",
     def execute(
         cls,
         mesh,
-        target_faces: int,
+        color_field=None,
+        target_faces: int = 5000,
         pre_cleanup: bool = True,
         detect_color_edges: bool = True,
         color_edge_threshold: float = 0.15,
@@ -1021,10 +1131,25 @@ Complete pipeline from Decimate_v1.py script.""",
         # Save input mesh to temp file
         input_path = None
         output_path = None
+        color_field_path = None
         try:
             input_path = cls._mesh_to_temp_file(mesh, suffix='.glb')
             fd, output_path = tempfile.mkstemp(suffix='.ply')  # PLY preserves vertex colors better than GLB
             os.close(fd)
+
+            # Save color_field as .npz if provided
+            if color_field is not None:
+                positions = color_field.get('positions')
+                colors = color_field.get('colors')
+                voxel_size = color_field.get('voxel_size', 0.001)
+                if positions is not None and colors is not None:
+                    fd2, color_field_path = tempfile.mkstemp(suffix='.npz')
+                    os.close(fd2)
+                    np.savez(color_field_path,
+                             positions=positions,
+                             colors=colors,
+                             voxel_size=np.array([voxel_size]))
+                    print(f"[BD Decimate V2] Color field: {len(positions):,} voxels -> spatial sampling in Blender")
 
             print(f"[BD Decimate V2] Input mesh: {orig_verts:,} verts, {orig_faces:,} faces")
             print(f"[BD Decimate V2] Target: {target_faces} faces")
@@ -1056,6 +1181,9 @@ Complete pipeline from Decimate_v1.py script.""",
                 extra_args['debug_path'] = debug_path
                 print(f"[BD Decimate V2] Debug output: {debug_path}")
 
+            if color_field_path:
+                extra_args['color_field_path'] = color_field_path
+
             # Run Blender
             success, message, log_lines = cls._run_blender_script(
                 FULL_DECIMATE_SCRIPT,
@@ -1081,6 +1209,8 @@ Complete pipeline from Decimate_v1.py script.""",
             reduction = (1 - new_faces / orig_faces) * 100 if orig_faces > 0 else 0
 
             status = f"V2 Decimated: {orig_faces:,} -> {new_faces:,} faces ({reduction:.1f}% reduction)"
+            if color_field_path:
+                status += " | color_field sampled"
             if detect_color_edges:
                 status += " | color edges detected"
             if preserve_colors:
@@ -1099,6 +1229,8 @@ Complete pipeline from Decimate_v1.py script.""",
                 os.remove(input_path)
             if output_path and os.path.exists(output_path):
                 os.remove(output_path)
+            if color_field_path and os.path.exists(color_field_path):
+                os.remove(color_field_path)
 
 
 # V3 node list

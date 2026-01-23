@@ -131,6 +131,11 @@ class BD_CacheMesh(io.ComfyNode):
         if check_cache_exists(cache_path, min_size=100):
             print(f"[BD Cache Mesh] Cache exists - SKIPPING upstream execution")
             return []
+        # Check legacy PLY cache
+        ply_path = cache_path.replace(".glb", ".ply")
+        if os.path.exists(ply_path) and os.path.getsize(ply_path) > 100:
+            print(f"[BD Cache Mesh] Legacy PLY cache found - SKIPPING upstream")
+            return []
         print(f"[BD Cache Mesh] No cache found - will run upstream")
         return ["mesh"]
 

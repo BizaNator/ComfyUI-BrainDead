@@ -232,15 +232,17 @@ For topology-based fixing via Blender, use BD_BlenderNormals instead.""",
             elif method == "trimesh":
                 faces, total_flipped = _fix_normals_trimesh(mesh)
             elif method == "both":
-                # Centroid first, then trimesh for any remaining
+                # Centroid first (consistent outward orientation)
                 faces, flipped1 = _fix_normals_centroid(vertices, faces)
-                # Apply centroid fix to mesh for trimesh pass
+                # Trimesh second (merge-based adjacency consistency)
                 temp_mesh = trimesh.Trimesh(
                     vertices=vertices, faces=faces, process=False
                 )
                 faces2, flipped2 = _fix_normals_trimesh(temp_mesh)
                 faces = faces2
-                total_flipped = flipped1 + flipped2
+                # Report actual net flipped (not sum, which can exceed 100%)
+                total_flipped = flipped1  # Centroid is primary
+                print(f"[BD FixNormals] both breakdown: centroid={flipped1:,}, trimesh={flipped2:,}")
 
             # Apply fixed faces to output mesh (preserve everything else)
             new_mesh = trimesh.Trimesh(

@@ -1,5 +1,6 @@
 """
 BD_PackBundle - Pack mesh + textures + colors into a MESH_BUNDLE.
+BD_UnpackBundle - Unpack a MESH_BUNDLE into individual components.
 BD_CacheBundle - Cache a MESH_BUNDLE to skip expensive upstream computation.
 
 MESH_BUNDLE is a container carrying:
@@ -32,8 +33,8 @@ from ...utils.shared import (
 )
 
 from .types import (
-    TrimeshInput,
-    ColorFieldInput,
+    TrimeshInput, TrimeshOutput,
+    ColorFieldInput, ColorFieldOutput,
     MeshBundleInput, MeshBundleOutput,
 )
 
@@ -216,6 +217,101 @@ Textures are extracted from mesh material if not provided explicitly.""",
         status = " | ".join(parts)
         print(f"[BD PackBundle] {status}")
         return io.NodeOutput(bundle, status)
+
+
+class BD_UnpackBundle(io.ComfyNode):
+    """
+    Unpack a MESH_BUNDLE into its individual components.
+
+    Extracts mesh, color_field, textures, and name for individual processing.
+    Useful for re-processing the high-poly mesh (e.g. decimate, re-UV, re-texture).
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_UnpackBundle",
+            display_name="BD Unpack Bundle",
+            category="🧠BrainDead/Mesh",
+            description="""Unpack a MESH_BUNDLE into its individual components.
+
+Outputs all bundle contents as separate connections:
+- mesh: The TRIMESH geometry (with material/UVs if present)
+- color_field: COLOR_FIELD data for reapplication to processed mesh
+- diffuse/normal/metallic/roughness/alpha: PBR textures as images
+- name: Bundle name string
+
+Use this to extract the cached high-poly mesh for further processing
+(decimation, UV unwrap, texture bake) then re-pack for export.""",
+            inputs=[
+                MeshBundleInput("bundle"),
+            ],
+            outputs=[
+                TrimeshOutput(display_name="mesh"),
+                ColorFieldOutput(display_name="color_field"),
+                io.Image.Output(display_name="diffuse"),
+                io.Image.Output(display_name="normal"),
+                io.Image.Output(display_name="metallic"),
+                io.Image.Output(display_name="roughness"),
+                io.Image.Output(display_name="alpha"),
+                io.String.Output(display_name="name"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, bundle) -> io.NodeOutput:
+        if bundle is None:
+            return io.NodeOutput(None, None, None, None, None, None, None, "", "ERROR: No bundle")
+
+        mesh = bundle.get('mesh')
+        color_field = bundle.get('color_field')
+        name = bundle.get('name', 'mesh')
+
+        # Convert numpy textures to ComfyUI IMAGE tensors [B,H,W,C] float32
+        def _numpy_to_image_tensor(arr):
+            if arr is None:
+                return None
+            if not isinstance(arr, np.ndarray):
+                return None
+            # Ensure 3D: (H, W, C)
+            if arr.ndim == 2:
+                arr = arr[:, :, np.newaxis]
+            # Ensure 3 channels for IMAGE type
+            if arr.shape[2] == 1:
+                arr = np.repeat(arr, 3, axis=2)
+            elif arr.shape[2] == 4:
+                arr = arr[:, :, :3]  # Drop alpha channel for IMAGE
+            # Convert to float32 [0-1] and add batch dim
+            tensor = torch.from_numpy(arr.astype(np.float32) / 255.0).unsqueeze(0)
+            return tensor
+
+        diffuse = _numpy_to_image_tensor(bundle.get('diffuse'))
+        normal = _numpy_to_image_tensor(bundle.get('normal'))
+        metallic = _numpy_to_image_tensor(bundle.get('metallic'))
+        roughness = _numpy_to_image_tensor(bundle.get('roughness'))
+        alpha = _numpy_to_image_tensor(bundle.get('alpha'))
+
+        # Status
+        parts = [f"Unpacked: {name}"]
+        if mesh is not None:
+            n_verts = len(mesh.vertices) if hasattr(mesh, 'vertices') else 0
+            n_faces = len(mesh.faces) if hasattr(mesh, 'faces') and mesh.faces is not None else 0
+            parts.append(f"{n_verts:,} verts, {n_faces:,} faces")
+            has_mat = hasattr(mesh, 'visual') and hasattr(mesh.visual, 'material') and mesh.visual.material is not None
+            if has_mat:
+                parts.append("+material")
+        if color_field is not None:
+            n_vox = color_field.get('num_voxels', len(color_field.get('positions', [])))
+            parts.append(f"color_field({n_vox:,})")
+        tex_count = sum(1 for t in [diffuse, normal, metallic, roughness, alpha] if t is not None)
+        if tex_count > 0:
+            parts.append(f"{tex_count} textures")
+
+        status = " | ".join(parts)
+        print(f"[BD UnpackBundle] {status}")
+
+        return io.NodeOutput(mesh, color_field, diffuse, normal, metallic, roughness, alpha, name, status)
 
 
 class BD_CacheBundle(io.ComfyNode):
@@ -421,15 +517,17 @@ On cache hit, loads everything back as a complete MESH_BUNDLE.""",
 
 
 # V3 node list
-BUNDLE_V3_NODES = [BD_PackBundle, BD_CacheBundle]
+BUNDLE_V3_NODES = [BD_PackBundle, BD_UnpackBundle, BD_CacheBundle]
 
 # V1 compatibility
 BUNDLE_NODES = {
     "BD_PackBundle": BD_PackBundle,
+    "BD_UnpackBundle": BD_UnpackBundle,
     "BD_CacheBundle": BD_CacheBundle,
 }
 
 BUNDLE_DISPLAY_NAMES = {
     "BD_PackBundle": "BD Pack Bundle",
+    "BD_UnpackBundle": "BD Unpack Bundle",
     "BD_CacheBundle": "BD Cache Bundle",
 }
