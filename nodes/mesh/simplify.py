@@ -169,6 +169,12 @@ Note: CuMesh operates on geometry only - vertex colors are NOT preserved.""",
                     step=1e-6,
                     tooltip="Volume threshold for removing small components (as fraction of total)",
                 ),
+                # === MULTI-STAGE SIMPLIFICATION ===
+                io.Boolean.Input(
+                    "multi_stage",
+                    default=True,
+                    tooltip="Progressive simplification: 3x target → clean → 1x target → clean. Better topology than single pass.",
+                ),
             ],
             outputs=[
                 TrimeshOutput(display_name="mesh"),
@@ -195,6 +201,8 @@ Note: CuMesh operates on geometry only - vertex colors are NOT preserved.""",
         repair_non_manifold: bool = True,
         remove_small_components: bool = True,
         small_component_threshold: float = 1e-5,
+        # Multi-stage
+        multi_stage: bool = True,
     ) -> io.NodeOutput:
         # Check dependencies
         if not HAS_TORCH:
@@ -374,13 +382,45 @@ Note: CuMesh operates on geometry only - vertex colors are NOT preserved.""",
 
             # === PHASE 4: SIMPLIFY ===
             if cu.num_faces > target_faces:
-                print(f"[BD CuMesh] Simplifying to {target_faces} faces...")
-                try:
-                    cu.simplify(target_faces, verbose=True)
-                    print(f"[BD CuMesh] After simplify: {cu.num_vertices} verts, {cu.num_faces} faces")
-                except Exception as e:
-                    print(f"[BD CuMesh] ERROR: simplify crashed: {e}")
-                    return io.NodeOutput(mesh, f"ERROR: CuMesh simplify failed - {e}")
+                if multi_stage and cu.num_faces > target_faces * 3:
+                    # Multi-stage progressive simplification (from o_voxel reference):
+                    # Stage 1: 3x target → clean
+                    # Stage 2: 1x target → clean
+                    intermediate_target = target_faces * 3
+                    print(f"[BD CuMesh] Multi-stage: {cu.num_faces} → {intermediate_target} → {target_faces} faces")
+                    try:
+                        # Stage 1: coarse reduction
+                        cu.simplify(intermediate_target, verbose=True)
+                        print(f"[BD CuMesh] Stage 1 result: {cu.num_vertices} verts, {cu.num_faces} faces")
+
+                        # Intermediate cleanup
+                        try:
+                            cu.remove_duplicate_faces()
+                            cu.remove_degenerate_faces()
+                            cu.repair_non_manifold_edges()
+                            cu.remove_small_connected_components(small_component_threshold)
+                            cu.fill_holes(max_hole_perimeter=fill_holes_perimeter)
+                            cu.unify_face_orientations()
+                        except Exception:
+                            pass  # Non-critical cleanup
+
+                        # Stage 2: fine reduction to target
+                        if cu.num_faces > target_faces:
+                            cu.simplify(target_faces, verbose=True)
+                            print(f"[BD CuMesh] Stage 2 result: {cu.num_vertices} verts, {cu.num_faces} faces")
+
+                    except Exception as e:
+                        print(f"[BD CuMesh] ERROR: multi-stage simplify crashed: {e}")
+                        return io.NodeOutput(mesh, f"ERROR: CuMesh simplify failed - {e}")
+                else:
+                    # Single-pass simplification
+                    print(f"[BD CuMesh] Simplifying to {target_faces} faces...")
+                    try:
+                        cu.simplify(target_faces, verbose=True)
+                        print(f"[BD CuMesh] After simplify: {cu.num_vertices} verts, {cu.num_faces} faces")
+                    except Exception as e:
+                        print(f"[BD CuMesh] ERROR: simplify crashed: {e}")
+                        return io.NodeOutput(mesh, f"ERROR: CuMesh simplify failed - {e}")
 
             # Check for bad results
             if cu.num_faces < target_faces * 0.1:

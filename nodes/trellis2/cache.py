@@ -217,6 +217,7 @@ class BD_CacheTrellis2Shape(io.ComfyNode):
 class BD_CacheTrellis2Texture(io.ComfyNode):
     """
     Cache Trellis2 textured mesh output (trimesh + voxelgrid + pointcloud).
+    Now also supports shape_voxelgrid and shape_pbr_pointcloud for dual conditioning workflows.
     """
 
     @classmethod
@@ -225,11 +226,13 @@ class BD_CacheTrellis2Texture(io.ComfyNode):
             node_id="BD_CacheTrellis2Texture",
             display_name="BD Cache Trellis2 Texture",
             category="🧠BrainDead/TRELLIS2",
-            description="Cache Trellis2 textured mesh outputs together. Place AFTER Trellis2ShapeToTexturedMesh node. Note: voxelgrid contains GPU tensors.",
+            description="Cache Trellis2 textured mesh outputs together. Place AFTER Trellis2ShapeToTexturedMesh node. Supports both texture and shape voxelgrids for dual conditioning workflows.",
             inputs=[
                 TrimeshInput("trimesh_out", lazy=True),
-                io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid", lazy=True),
+                io.Custom("VOXELGRID").Input("voxelgrid", lazy=True),
                 TrimeshInput("pbr_pointcloud", lazy=True),
+                io.Custom("VOXELGRID").Input("shape_voxelgrid", lazy=True, optional=True),
+                TrimeshInput("shape_pbr_pointcloud", lazy=True, optional=True),
                 io.String.Input("cache_name", default="trellis2_texture"),
                 io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
                 io.Boolean.Input("force_refresh", default=False),
@@ -237,8 +240,10 @@ class BD_CacheTrellis2Texture(io.ComfyNode):
             ],
             outputs=[
                 TrimeshOutput(display_name="trimesh"),
-                io.Custom("TRELLIS2_VOXELGRID").Output(display_name="voxelgrid"),
+                io.Custom("VOXELGRID").Output(display_name="voxelgrid"),
                 TrimeshOutput(display_name="pbr_pointcloud"),
+                io.Custom("VOXELGRID").Output(display_name="shape_voxelgrid"),
+                TrimeshOutput(display_name="shape_pbr_pointcloud"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -246,6 +251,7 @@ class BD_CacheTrellis2Texture(io.ComfyNode):
     @classmethod
     def fingerprint_inputs(cls, cache_name: str, seed: int, force_refresh: bool,
                            trimesh_out=None, voxelgrid=None, pbr_pointcloud=None,
+                           shape_voxelgrid=None, shape_pbr_pointcloud=None,
                            name_prefix: str = "") -> str:
         if force_refresh:
             return f"force_{time.time()}"
@@ -254,11 +260,12 @@ class BD_CacheTrellis2Texture(io.ComfyNode):
     @classmethod
     def check_lazy_status(cls, cache_name: str, seed: int, force_refresh: bool,
                           trimesh_out=None, voxelgrid=None, pbr_pointcloud=None,
+                          shape_voxelgrid=None, shape_pbr_pointcloud=None,
                           name_prefix: str = "") -> list[str]:
-        """Return [] to skip upstream, ['trimesh_out', 'voxelgrid', 'pbr_pointcloud'] to evaluate upstream."""
+        """Return [] to skip upstream, list of inputs to evaluate upstream."""
         if force_refresh:
             print(f"[BD Trellis2 Texture] Force refresh - will run upstream")
-            return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
+            return ["trimesh_out", "voxelgrid", "pbr_pointcloud", "shape_voxelgrid", "shape_pbr_pointcloud"]
 
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
@@ -268,10 +275,12 @@ class BD_CacheTrellis2Texture(io.ComfyNode):
             print(f"[BD Trellis2 Texture] Cache exists - SKIPPING upstream execution")
             return []  # Empty list = don't need inputs, skip upstream
         print(f"[BD Trellis2 Texture] No cache found - will run upstream")
-        return ["trimesh_out", "voxelgrid", "pbr_pointcloud"]
+        return ["trimesh_out", "voxelgrid", "pbr_pointcloud", "shape_voxelgrid", "shape_pbr_pointcloud"]
 
     @classmethod
-    def execute(cls, trimesh_out, voxelgrid, pbr_pointcloud, cache_name: str, seed: int,
+    def execute(cls, trimesh_out, voxelgrid, pbr_pointcloud,
+                shape_voxelgrid, shape_pbr_pointcloud,
+                cache_name: str, seed: int,
                 force_refresh: bool, name_prefix: str = "") -> io.NodeOutput:
         full_name = f"{name_prefix}_{cache_name}" if name_prefix else cache_name
         cache_hash = hash_from_seed(seed)
@@ -281,34 +290,54 @@ class BD_CacheTrellis2Texture(io.ComfyNode):
             try:
                 cached_data = PickleSerializer.load(cache_path)
                 if cached_data and 'trimesh' in cached_data and 'voxelgrid' in cached_data:
-                    return io.NodeOutput(cached_data['trimesh'], cached_data['voxelgrid'],
-                           cached_data['pointcloud'], f"Cache HIT: texture data")
-            except:
+                    shape_vg = cached_data.get('shape_voxelgrid')
+                    shape_pc = cached_data.get('shape_pointcloud')
+                    has_shape = shape_vg is not None
+                    print(f"[BD Trellis2 Texture] Cache HIT - has shape_voxelgrid: {has_shape}")
+                    if not has_shape:
+                        print(f"[BD Trellis2 Texture] WARNING: Old cache without shape_voxelgrid. Use force_refresh=True to regenerate.")
+                    return io.NodeOutput(
+                        cached_data['trimesh'],
+                        cached_data['voxelgrid'],
+                        cached_data['pointcloud'],
+                        shape_vg,
+                        shape_pc,
+                        f"Cache HIT: texture data (shape_voxelgrid={'present' if has_shape else 'MISSING'})"
+                    )
+            except Exception as e:
+                print(f"[BD Trellis2 Texture] Cache load error: {e}")
                 pass
 
         if trimesh_out is None or voxelgrid is None:
-            return io.NodeOutput(trimesh_out, voxelgrid, pbr_pointcloud, "Input is None - cannot cache")
+            return io.NodeOutput(trimesh_out, voxelgrid, pbr_pointcloud,
+                                 shape_voxelgrid, shape_pbr_pointcloud,
+                                 "Input is None - cannot cache")
 
         try:
             print(f"[BD Trellis2 Texture] Saving new cache...")
             cache_data = {
                 'trimesh': trimesh_out,
                 'voxelgrid': voxelgrid,
-                'pointcloud': pbr_pointcloud
+                'pointcloud': pbr_pointcloud,
+                'shape_voxelgrid': shape_voxelgrid,
+                'shape_pointcloud': shape_pbr_pointcloud,
             }
             PickleSerializer.save(cache_path, cache_data)
             # Get voxelgrid info if available
             voxel_info = ""
-            if isinstance(voxelgrid, dict):
-                if 'coords' in voxelgrid:
-                    voxel_info = f" ({len(voxelgrid['coords'])} voxels)"
-            status = f"SAVED: texture data{voxel_info}"
+            if isinstance(voxelgrid, dict) and 'coords' in voxelgrid:
+                voxel_info = f" ({len(voxelgrid['coords'])} voxels)"
+            shape_info = ""
+            if isinstance(shape_voxelgrid, dict) and 'coords' in shape_voxelgrid:
+                shape_info = f" + shape ({len(shape_voxelgrid['coords'])} voxels)"
+            status = f"SAVED: texture data{voxel_info}{shape_info}"
             print(f"[BD Trellis2 Texture] Cache saved: {cache_path}")
         except Exception as e:
             status = f"Save failed: {e}"
             print(f"[BD Trellis2 Texture] Cache save failed: {e}")
 
-        return io.NodeOutput(trimesh_out, voxelgrid, pbr_pointcloud, status)
+        return io.NodeOutput(trimesh_out, voxelgrid, pbr_pointcloud,
+                             shape_voxelgrid, shape_pbr_pointcloud, status)
 
 
 # V3 node list for extension

@@ -140,3 +140,106 @@ class Trellis2ModelConfig:
 
     def __repr__(self):
         return f"Trellis2ModelConfig(resolution={self.resolution}, vram_mode={self.vram_mode})"
+
+
+def fix_normals_outward(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """
+    Fix face normals to point outward after CuMesh unify_face_orientations.
+
+    CuMesh.unify_face_orientations() ensures consistent winding per connected
+    component, but does NOT guarantee outward-facing normals. This function
+    checks each component and flips it if normals point inward.
+
+    Uses connected-component analysis with a centroid-based heuristic:
+    for each component, if the average face normal points toward the mesh
+    center rather than away, flip all faces in that component.
+
+    Args:
+        vertices: (V, 3) float32 mesh vertices
+        faces: (F, 3) int mesh faces
+
+    Returns:
+        faces: (F, 3) with corrected winding order
+    """
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    n_faces = len(faces)
+    if n_faces == 0:
+        return faces
+
+    faces = faces.copy()
+
+    # Compute face normals via cross product
+    v0 = vertices[faces[:, 0]]
+    v1 = vertices[faces[:, 1]]
+    v2 = vertices[faces[:, 2]]
+    edge1 = v1 - v0
+    edge2 = v2 - v0
+    face_normals = np.cross(edge1, edge2)
+
+    # Normalize (avoid division by zero)
+    norms = np.linalg.norm(face_normals, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-10)
+    face_normals = face_normals / norms
+
+    # Compute face centers
+    face_centers = (v0 + v1 + v2) / 3.0
+
+    # Build face adjacency graph from shared edges
+    # Each edge is represented by sorted vertex pair
+    edge_to_faces = {}
+    for fi in range(n_faces):
+        for ei in range(3):
+            e = tuple(sorted([faces[fi, ei], faces[fi, (ei + 1) % 3]]))
+            if e in edge_to_faces:
+                edge_to_faces[e].append(fi)
+            else:
+                edge_to_faces[e] = [fi]
+
+    # Build sparse adjacency matrix
+    rows, cols = [], []
+    for edge_faces in edge_to_faces.values():
+        if len(edge_faces) == 2:
+            rows.extend([edge_faces[0], edge_faces[1]])
+            cols.extend([edge_faces[1], edge_faces[0]])
+
+    if not rows:
+        # No adjacency — use global heuristic
+        mesh_center = vertices.mean(axis=0)
+        to_outside = face_centers - mesh_center
+        dots = np.sum(face_normals * to_outside, axis=1)
+        if dots.mean() < 0:
+            faces = faces[:, ::-1]
+            print(f"[BD TRELLIS2] fix_normals_outward: flipped all {n_faces} faces (no adjacency)")
+        return faces
+
+    data = np.ones(len(rows))
+    graph = csr_matrix((data, (rows, cols)), shape=(n_faces, n_faces))
+    n_comp, labels = connected_components(graph, directed=False)
+
+    # For each component, check if normals point outward
+    mesh_center = vertices.mean(axis=0)
+    total_flipped = 0
+
+    for c in range(n_comp):
+        comp_mask = labels == c
+        comp_centers = face_centers[comp_mask]
+        comp_normals = face_normals[comp_mask]
+
+        # Direction from mesh center to face center = "outward"
+        to_outside = comp_centers - mesh_center
+        dots = np.sum(comp_normals * to_outside, axis=1)
+
+        if dots.mean() < 0:
+            # Majority of normals point inward — flip this component
+            idx = np.where(comp_mask)[0]
+            faces[idx] = faces[idx][:, ::-1]
+            total_flipped += len(idx)
+
+    if total_flipped > 0:
+        print(f"[BD TRELLIS2] fix_normals_outward: flipped {total_flipped}/{n_faces} faces ({100*total_flipped/n_faces:.1f}%) across {n_comp} components")
+    else:
+        print(f"[BD TRELLIS2] fix_normals_outward: all {n_faces} faces OK ({n_comp} components)")
+
+    return faces

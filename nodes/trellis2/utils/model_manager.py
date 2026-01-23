@@ -75,6 +75,7 @@ SHAPE_MODELS_BY_RESOLUTION = {
 }
 
 # Texture models needed for each resolution mode
+# NOTE: Cascade modes need BOTH 512 and 1024 models for run_texture_with_subs
 TEXTURE_MODELS_BY_RESOLUTION = {
     '512': [
         'tex_slat_decoder',
@@ -82,10 +83,12 @@ TEXTURE_MODELS_BY_RESOLUTION = {
     ],
     '1024_cascade': [
         'tex_slat_decoder',
+        'tex_slat_flow_model_512',  # Required for cascade texture generation
         'tex_slat_flow_model_1024',
     ],
     '1536_cascade': [
         'tex_slat_decoder',
+        'tex_slat_flow_model_512',  # Required for cascade texture generation
         'tex_slat_flow_model_1024',
     ],
 }

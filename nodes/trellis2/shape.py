@@ -220,6 +220,10 @@ Returns:
         faces = unified_faces.cpu().numpy()
         del cumesh, unified_verts, unified_faces
 
+        # Fix normals to point outward (unify only ensures consistent winding, not direction)
+        from .utils.helpers import fix_normals_outward
+        faces = fix_normals_outward(vertices, faces)
+
         # Coordinate system conversion (Y-up to Z-up) for output mesh
         vertices[:, 1], vertices[:, 2] = vertices[:, 2].copy(), -vertices[:, 1].copy()
 

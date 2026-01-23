@@ -208,37 +208,67 @@ def cluster_faces_by_normal(
 
     num_groups = current_group
 
-    # Handle small groups - merge into nearest large group
+    # Handle small groups - merge into nearest group iteratively
+    # Run multiple passes until no small groups remain or no progress is made
     if min_group_size > 1:
-        group_sizes = np.bincount(group_labels, minlength=num_groups)
-        small_groups = np.where(group_sizes < min_group_size)[0]
+        max_iterations = 50  # Prevent infinite loops
+        for iteration in range(max_iterations):
+            group_sizes = np.bincount(group_labels, minlength=num_groups)
+            small_groups = np.where(group_sizes < min_group_size)[0]
 
-        for small_group in small_groups:
-            small_faces = np.where(group_labels == small_group)[0]
+            if len(small_groups) == 0:
+                break  # All groups are large enough
 
-            for face_idx in small_faces:
-                # Find best neighboring group
-                best_group = -1
-                best_angle = float('inf')
+            merged_any = False
 
-                for neighbor_idx in adjacency[face_idx]:
-                    neighbor_group = group_labels[neighbor_idx]
-                    if neighbor_group == small_group:
-                        continue
-                    if group_sizes[neighbor_group] < min_group_size:
-                        continue  # Don't merge into another small group
+            for small_group in small_groups:
+                if group_sizes[small_group] == 0:
+                    continue  # Already emptied
 
-                    angle = angle_between_normals(
-                        normals[face_idx],
-                        normals[neighbor_idx]
-                    )
+                small_faces = np.where(group_labels == small_group)[0]
 
-                    if angle < best_angle:
-                        best_angle = angle
-                        best_group = neighbor_group
+                for face_idx in small_faces:
+                    # Find best neighboring group - prefer large groups, but accept any
+                    best_group = -1
+                    best_angle = float('inf')
+                    best_is_large = False
 
-                if best_group >= 0:
-                    group_labels[face_idx] = best_group
+                    for neighbor_idx in adjacency[face_idx]:
+                        neighbor_group = group_labels[neighbor_idx]
+                        if neighbor_group == small_group:
+                            continue
+
+                        neighbor_is_large = group_sizes[neighbor_group] >= min_group_size
+
+                        angle = angle_between_normals(
+                            normals[face_idx],
+                            normals[neighbor_idx]
+                        )
+
+                        # Prefer large groups; if same size category, prefer better angle
+                        if neighbor_is_large and not best_is_large:
+                            # Large group beats any small group
+                            best_angle = angle
+                            best_group = neighbor_group
+                            best_is_large = True
+                        elif neighbor_is_large == best_is_large and angle < best_angle:
+                            # Same category, better angle
+                            best_angle = angle
+                            best_group = neighbor_group
+                            best_is_large = neighbor_is_large
+
+                    if best_group >= 0:
+                        old_group = group_labels[face_idx]
+                        group_labels[face_idx] = best_group
+                        group_sizes[old_group] -= 1
+                        group_sizes[best_group] += 1
+                        merged_any = True
+
+            if not merged_any:
+                break  # No progress, stop iterating
+
+        if iteration > 0:
+            print(f"[PlanarGrouping] Small group merging: {iteration + 1} iterations")
 
     # Renumber groups to be contiguous
     unique_groups = np.unique(group_labels)
@@ -372,8 +402,11 @@ def straighten_boundaries(
     faces: np.ndarray,
     group_labels: np.ndarray,
     group_planes: List[Tuple[np.ndarray, np.ndarray]],
+    group_sizes: np.ndarray,
     project_interior: bool = True,
     boundary_weight: float = 1.0,
+    max_displacement: float = 0.0,
+    min_group_size_for_straighten: int = 10,
 ) -> np.ndarray:
     """
     Straighten boundary edges by projecting vertices onto plane intersections.
@@ -388,8 +421,11 @@ def straighten_boundaries(
         faces: (M, 3) face indices
         group_labels: (M,) group ID for each face
         group_planes: List of (centroid, normal) for each group
+        group_sizes: (num_groups,) face count per group
         project_interior: If True, project interior vertices onto their plane
         boundary_weight: How much to move boundary vertices (0-1, 1=fully straighten)
+        max_displacement: Maximum distance a vertex can move (0=auto based on mesh size)
+        min_group_size_for_straighten: Only straighten boundaries between groups >= this size
 
     Returns:
         (N, 3) modified vertex positions with straightened boundaries
@@ -397,8 +433,15 @@ def straighten_boundaries(
     new_vertices = vertices.copy()
     num_verts = len(vertices)
 
+    # Auto-calculate max displacement if not set (use 5% of mesh bounding box diagonal)
+    if max_displacement <= 0:
+        bbox_min = vertices.min(axis=0)
+        bbox_max = vertices.max(axis=0)
+        bbox_diagonal = np.linalg.norm(bbox_max - bbox_min)
+        max_displacement = bbox_diagonal * 0.05
+        print(f"[PlanarGrouping] Auto max_displacement: {max_displacement:.4f} (5% of bbox diagonal)")
+
     # Step 1: Build vertex -> groups mapping
-    # For each vertex, track which groups it belongs to
     vertex_groups = [set() for _ in range(num_verts)]
 
     for face_idx, face in enumerate(faces):
@@ -410,6 +453,8 @@ def straighten_boundaries(
     single_group_count = 0
     two_group_count = 0
     multi_group_count = 0
+    skipped_small_group = 0
+    clamped_count = 0
 
     # Step 2: Process each vertex based on how many groups it touches
     for vert_idx in range(num_verts):
@@ -423,14 +468,35 @@ def straighten_boundaries(
             # Interior vertex - optionally project to plane
             single_group_count += 1
             if project_interior:
-                centroid, normal = group_planes[groups[0]]
+                group_id = groups[0]
+                # Skip small groups - their planes are unreliable
+                if group_sizes[group_id] < min_group_size_for_straighten:
+                    skipped_small_group += 1
+                    continue
+
+                centroid, normal = group_planes[group_id]
                 # Project point onto plane: p' = p - ((p - c) · n) * n
                 dist = np.dot(pos - centroid, normal)
-                new_vertices[vert_idx] = pos - dist * normal
+                displacement = -dist * normal
+
+                # Clamp displacement
+                disp_mag = np.linalg.norm(displacement)
+                if disp_mag > max_displacement:
+                    displacement = displacement * (max_displacement / disp_mag)
+                    clamped_count += 1
+
+                new_vertices[vert_idx] = pos + displacement
 
         elif len(groups) == 2:
             # Boundary vertex between two groups - project to intersection line
             two_group_count += 1
+
+            # Skip if either group is too small
+            if (group_sizes[groups[0]] < min_group_size_for_straighten or
+                group_sizes[groups[1]] < min_group_size_for_straighten):
+                skipped_small_group += 1
+                continue
+
             c1, n1 = group_planes[groups[0]]
             c2, n2 = group_planes[groups[1]]
 
@@ -438,51 +504,57 @@ def straighten_boundaries(
             line_dir = np.cross(n1, n2)
             line_dir_norm = np.linalg.norm(line_dir)
 
-            if line_dir_norm < 1e-10:
-                # Planes are parallel - just project to average plane
+            if line_dir_norm < 1e-6:
+                # Planes are nearly parallel - just project to average plane
                 avg_normal = (n1 + n2) / 2
-                avg_normal /= np.linalg.norm(avg_normal)
+                norm_len = np.linalg.norm(avg_normal)
+                if norm_len < 1e-10:
+                    continue
+                avg_normal /= norm_len
                 avg_centroid = (c1 + c2) / 2
                 dist = np.dot(pos - avg_centroid, avg_normal)
-                new_pos = pos - dist * avg_normal
+                displacement = -dist * avg_normal
             else:
                 line_dir = line_dir / line_dir_norm
-
-                # Find a point on the intersection line
-                # Use the formula: point = c1 + t * n1 where t makes it also on plane 2
-                # Actually, compute point on line closest to centroid midpoint
-                # A point on line: line_point = c1 + d1*n1 = c2 + d2*n2 (solving for line)
-
-                # Simpler approach: find point on line closest to current vertex
-                # First find any point on the intersection line
-                # Using the formula: point = ((c1·n1)n2 - (c2·n2)n1 + ((c2-c1)·(n1×n2))(n1×n2)) / |n1×n2|²
 
                 d1 = np.dot(c1, n1)
                 d2 = np.dot(c2, n2)
 
-                # Point on line: solve system to find point on both planes
-                # Use pseudo-inverse approach
+                # Solve for point on line closest to current vertex
                 A = np.array([n1, n2])
                 b = np.array([d1, d2])
-
-                # Add the line direction as third equation (with current position dot)
-                # We want point closest to 'pos' on the line
                 A_full = np.vstack([A, line_dir])
                 b_full = np.append(b, np.dot(pos, line_dir))
 
                 try:
-                    line_point, _, _, _ = np.linalg.lstsq(A_full, b_full, rcond=None)
+                    line_point, residuals, rank, s = np.linalg.lstsq(A_full, b_full, rcond=None)
+
+                    # Check if solution is valid (rank should be 3 for unique solution)
+                    if rank < 3:
+                        continue
+
+                    displacement = boundary_weight * (line_point - pos)
                 except:
-                    line_point = pos  # Fallback
+                    continue  # Skip on error
 
-                # Blend between original and projected position
-                new_pos = pos + boundary_weight * (line_point - pos)
+            # Clamp displacement
+            disp_mag = np.linalg.norm(displacement)
+            if disp_mag > max_displacement:
+                displacement = displacement * (max_displacement / disp_mag)
+                clamped_count += 1
 
-            new_vertices[vert_idx] = new_pos
+            new_vertices[vert_idx] = pos + displacement
 
         else:
-            # Multi-group junction (corner vertex) - find intersection point
+            # Multi-group junction (corner vertex) - these are tricky, skip for now
+            # Corner vertices where 3+ groups meet often produce bad results
             multi_group_count += 1
+
+            # Only process if ALL groups are large enough
+            all_large = all(group_sizes[g] >= min_group_size_for_straighten for g in groups)
+            if not all_large:
+                skipped_small_group += 1
+                continue
 
             # Build system of plane equations and solve for intersection
             planes_n = np.array([group_planes[g][1] for g in groups])
@@ -490,14 +562,28 @@ def straighten_boundaries(
 
             try:
                 # Least squares solution for over-determined system
-                corner_point, _, _, _ = np.linalg.lstsq(planes_n, planes_d, rcond=None)
-                new_pos = pos + boundary_weight * (corner_point - pos)
-                new_vertices[vert_idx] = new_pos
+                corner_point, residuals, rank, s = np.linalg.lstsq(planes_n, planes_d, rcond=None)
+
+                # Check solution quality - high residual means planes don't intersect well
+                if len(residuals) > 0 and residuals[0] > 0.1:
+                    continue
+
+                displacement = boundary_weight * (corner_point - pos)
+
+                # Clamp displacement
+                disp_mag = np.linalg.norm(displacement)
+                if disp_mag > max_displacement:
+                    displacement = displacement * (max_displacement / disp_mag)
+                    clamped_count += 1
+
+                new_vertices[vert_idx] = pos + displacement
             except:
                 pass  # Keep original position
 
     print(f"[PlanarGrouping] Boundary straightening: {single_group_count} interior, "
           f"{two_group_count} edge, {multi_group_count} corner vertices")
+    print(f"[PlanarGrouping] Skipped {skipped_small_group} vertices (small groups), "
+          f"clamped {clamped_count} displacements")
 
     return new_vertices
 
@@ -587,9 +673,11 @@ def planar_group_mesh(
     if straighten_boundaries_enabled:
         print(f"[PlanarGrouping] Straightening boundaries (weight={straighten_weight}, project_interior={project_interior})...")
         modified_vertices = straighten_boundaries(
-            vertices, faces, group_labels, group_planes,
+            vertices, faces, group_labels, group_planes, group_sizes,
             project_interior=project_interior,
             boundary_weight=straighten_weight,
+            max_displacement=0.0,  # Auto-calculate based on mesh size
+            min_group_size_for_straighten=min_group_size,  # Use same threshold as grouping
         )
 
     # Compute statistics

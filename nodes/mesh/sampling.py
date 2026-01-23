@@ -25,8 +25,8 @@ try:
 except ImportError:
     HAS_TRIMESH = False
 
-# Import custom TRIMESH type (matches TRELLIS2)
-from .types import TrimeshInput, TrimeshOutput
+# Import custom types (matches TRELLIS2)
+from .types import TrimeshInput, TrimeshOutput, ColorFieldOutput
 
 
 def split_vertices_by_face(mesh, face_colors):
@@ -101,7 +101,7 @@ Modes:
 - smooth (POINT/k=4): Per-vertex blended. Smooth gradients - edge marking won't detect boundaries.""",
             inputs=[
                 TrimeshInput("mesh"),
-                io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
+                io.Custom("VOXELGRID").Input("voxelgrid"),
                 io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
                               tooltip="face=CORNER domain (edge marking works) | sharp=POINT k=1 | smooth=POINT k=4 blended"),
                 io.String.Input("default_color", default="0.5,0.5,0.5,1.0", optional=True),
@@ -110,6 +110,7 @@ Modes:
             ],
             outputs=[
                 TrimeshOutput(display_name="mesh"),
+                ColorFieldOutput(display_name="color_field"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -119,13 +120,13 @@ Modes:
                 default_color: str = "0.5,0.5,0.5,1.0",
                 distance_threshold: float = 3.0) -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return io.NodeOutput(mesh, "ERROR: trimesh not installed")
+            return io.NodeOutput(mesh, None, "ERROR: trimesh not installed")
 
         if mesh is None:
-            return io.NodeOutput(None, "ERROR: mesh is None")
+            return io.NodeOutput(None, None, "ERROR: mesh is None")
 
         if voxelgrid is None or not isinstance(voxelgrid, dict):
-            return io.NodeOutput(mesh, "ERROR: voxelgrid is None or invalid")
+            return io.NodeOutput(mesh, None, "ERROR: voxelgrid is None or invalid")
 
         start_time = time.time()
 
@@ -144,10 +145,56 @@ Modes:
         layout = voxelgrid.get('layout', {})
 
         if coords is None or attrs is None:
-            return io.NodeOutput(mesh, "ERROR: voxelgrid missing coords or attrs")
+            return io.NodeOutput(mesh, None, "ERROR: voxelgrid missing coords or attrs")
 
         print(f"[BD Sample Voxelgrid] Voxelgrid: {len(coords)} voxels, voxel_size={voxel_size}")
         print(f"[BD Sample Voxelgrid] Attrs shape: {attrs.shape}, layout: {layout}")
+
+        # Build COLOR_FIELD for deferred color application
+        # Convert coords to world positions
+        if hasattr(coords, 'cpu'):
+            coords_np = coords.cpu().numpy()
+        else:
+            coords_np = np.array(coords)
+        if hasattr(attrs, 'cpu'):
+            attrs_np = attrs.cpu().numpy()
+        else:
+            attrs_np = np.array(attrs)
+
+        voxel_world_positions = coords_np.astype(np.float32) * voxel_size
+
+        # Extract colors from attrs based on layout
+        color_slice = layout.get('base_color', slice(0, 3))
+        colors = attrs_np[:, color_slice].astype(np.float32)
+
+        # Build attributes dict
+        color_field_attrs = {}
+        if 'metallic' in layout:
+            metal_slice = layout['metallic']
+            color_field_attrs['metallic'] = attrs_np[:, metal_slice].flatten().astype(np.float32)
+        if 'roughness' in layout:
+            rough_slice = layout['roughness']
+            color_field_attrs['roughness'] = attrs_np[:, rough_slice].flatten().astype(np.float32)
+        if 'alpha' in layout:
+            alpha_slice = layout['alpha']
+            color_field_attrs['alpha'] = attrs_np[:, alpha_slice].flatten().astype(np.float32)
+
+        # Compute bounds
+        bounds_min = voxel_world_positions.min(axis=0).tolist()
+        bounds_max = voxel_world_positions.max(axis=0).tolist()
+
+        color_field = {
+            'positions': voxel_world_positions,
+            'colors': colors,
+            'attributes': color_field_attrs,
+            'voxel_size': float(voxel_size),
+            'num_voxels': len(coords_np),
+            'bounds': (tuple(bounds_min), tuple(bounds_max)),
+            'source': 'trellis2_voxelgrid',
+            'layout': layout,
+        }
+
+        print(f"[BD Sample Voxelgrid] Built COLOR_FIELD: {color_field['num_voxels']} voxels, bounds={color_field['bounds']}")
 
         # Get mesh vertices
         mesh_verts = np.array(mesh.vertices, dtype=np.float32)
@@ -177,12 +224,12 @@ Modes:
                 status = f"Face mode: {num_faces} faces ({unique_colors} unique colors), {len(new_mesh.vertices)} verts in {total_time:.1f}s"
                 print(f"[BD Sample Voxelgrid] {status}")
 
-                return io.NodeOutput(new_mesh, status)
+                return io.NodeOutput(new_mesh, color_field, status)
 
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                return io.NodeOutput(mesh, f"ERROR in face mode: {e}")
+                return io.NodeOutput(mesh, color_field, f"ERROR in face mode: {e}")
 
         else:
             # VERTEX MODE: smooth or sharp
@@ -221,10 +268,10 @@ Modes:
                 status = f"{sampling_mode.capitalize()} mode: {num_verts} verts ({unique_colors} unique colors) in {total_time:.1f}s"
                 print(f"[BD Sample Voxelgrid] {status}")
 
-                return io.NodeOutput(new_mesh, status)
+                return io.NodeOutput(new_mesh, color_field, status)
 
             except Exception as e:
-                return io.NodeOutput(mesh, f"ERROR creating colored mesh: {e}")
+                return io.NodeOutput(mesh, color_field, f"ERROR creating colored mesh: {e}")
 
     @classmethod
     def _sample_face_colors(cls, mesh_verts, mesh_faces, coords, attrs, voxel_size, layout, default_rgba,
@@ -387,7 +434,7 @@ Modes:
 - smooth (POINT/k=4): Per-vertex blended. Smooth gradients - edge marking won't detect boundaries.""",
             inputs=[
                 TrimeshInput("mesh"),
-                io.Custom("TRELLIS2_VOXELGRID").Input("voxelgrid"),
+                io.Custom("VOXELGRID").Input("voxelgrid"),
                 io.Combo.Input("sampling_mode", options=["face", "sharp", "smooth"], default="face", optional=True,
                               tooltip="face=CORNER domain (edge marking works) | sharp=POINT k=1 | smooth=POINT k=4 blended"),
                 io.String.Input("default_color", default="0.5,0.5,0.5,1.0", optional=True),

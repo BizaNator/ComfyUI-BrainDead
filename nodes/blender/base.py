@@ -71,6 +71,7 @@ class BlenderNodeMixin:
         output_path: str,
         extra_args: Optional[dict] = None,
         timeout: int = 300,
+        metadata_path: Optional[str] = None,
     ) -> tuple[bool, str, list[str]]:
         """
         Run a Blender Python script headlessly with real-time output.
@@ -81,6 +82,7 @@ class BlenderNodeMixin:
             output_path: Path to write output mesh file
             extra_args: Optional dict of extra arguments to pass via environment
             timeout: Maximum execution time in seconds
+            metadata_path: Optional path to JSON metadata sidecar file
 
         Returns:
             Tuple of (success, message, log_lines)
@@ -105,6 +107,9 @@ class BlenderNodeMixin:
             env = os.environ.copy()
             env['BLENDER_INPUT_PATH'] = input_path
             env['BLENDER_OUTPUT_PATH'] = output_path
+            if metadata_path:
+                env['BLENDER_METADATA_PATH'] = metadata_path
+                print(f"[BD Blender] Metadata: {metadata_path}")
             if extra_args:
                 for key, value in extra_args.items():
                     env[f'BLENDER_ARG_{key.upper()}'] = str(value)
@@ -235,18 +240,21 @@ class BlenderNodeMixin:
                 os.remove(script_path)
 
     @classmethod
-    def _mesh_to_temp_file(cls, mesh, suffix: str = '.glb') -> str:
+    def _mesh_to_temp_file(cls, mesh, suffix: str = '.glb', export_metadata: bool = False):
         """
-        Save a trimesh mesh to a temporary file.
+        Save a trimesh mesh to a temporary file, with optional metadata sidecar.
 
         Args:
             mesh: trimesh.Trimesh object
             suffix: File extension (.ply, .obj, .glb) - default GLB for best color support
+            export_metadata: If True, also export metadata JSON sidecar and return tuple
 
         Returns:
-            Path to temporary file
+            If export_metadata=False: str (mesh_path only) - backward compatible
+            If export_metadata=True: Tuple of (mesh_path, metadata_path)
         """
         import numpy as np
+        import json
 
         if not HAS_TRIMESH:
             raise RuntimeError("trimesh not installed")
@@ -292,18 +300,49 @@ class BlenderNodeMixin:
         file_size_mb = file_size / (1024 * 1024)
         color_status = "with colors" if has_colors else "NO colors"
         print(f"[BD Blender] Saved input mesh ({file_size_mb:.1f}MB) as {file_type.upper()} ({color_status})")
-        return path
+
+        # Return just path if metadata not requested (backward compatibility)
+        if not export_metadata:
+            return path
+
+        # Export metadata sidecar if present
+        metadata_path = None
+        if hasattr(mesh, 'metadata') and mesh.metadata:
+            metadata = {}
+
+            # Extract planar grouping data
+            if 'planar_grouping' in mesh.metadata:
+                pg = mesh.metadata['planar_grouping']
+                # Convert numpy int64 to native Python int for JSON serialization
+                boundary_edges = pg.get('boundary_edges', [])
+                boundary_edges_native = [[int(v1), int(v2)] for v1, v2 in boundary_edges]
+                metadata['planar_grouping'] = {
+                    'boundary_edges': boundary_edges_native,
+                    'num_groups': int(pg.get('num_groups', 0)),
+                    'angle_threshold': float(pg.get('angle_threshold', 15.0)),
+                }
+                print(f"[BD Blender] Exporting planar grouping metadata: {len(metadata['planar_grouping']['boundary_edges'])} boundary edges")
+
+            # Export other metadata as needed
+            if metadata:
+                fd, metadata_path = tempfile.mkstemp(suffix='.json')
+                os.close(fd)
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f)
+                print(f"[BD Blender] Saved metadata sidecar: {metadata_path}")
+
+        return path, metadata_path
 
     @classmethod
     def _load_mesh_from_file(cls, path: str):
         """
-        Load a mesh from a file path, preserving vertex colors.
+        Load a mesh from a file path, preserving vertex colors AND UVs.
 
         Args:
             path: Path to mesh file
 
         Returns:
-            trimesh.Trimesh object
+            trimesh.Trimesh object with visual containing UVs and/or colors
         """
         import os
         import numpy as np
@@ -325,28 +364,106 @@ class BlenderNodeMixin:
         }
         file_type = file_type_map.get(ext, None)
 
-        # For GLB, first try loading without force='mesh' to preserve colors
+        # For GLB, first try loading without force='mesh' to preserve colors and UVs
         mesh = None
-        vertex_colors = None
+        extracted_uvs = None
+        extracted_colors = None
 
         if file_type in ['glb', 'gltf']:
-            # Load as scene first to get full data including colors
+            # Load as scene first to get full data including colors and UVs
             try:
                 scene = trimesh.load(path, file_type=file_type)
                 if isinstance(scene, trimesh.Scene):
                     meshes = [g for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)]
                     if meshes:
-                        # Get colors from first mesh before concatenating
-                        for m in meshes:
+                        # Extract colors and UVs from meshes BEFORE concatenating
+                        all_uvs = []
+                        all_colors = []
+                        vertex_offset = 0
+
+                        for idx, m in enumerate(meshes):
+                            num_verts = len(m.vertices)
+
+                            # Debug: inspect visual type and attributes
+                            if hasattr(m, 'visual') and m.visual is not None:
+                                visual_type = type(m.visual).__name__
+                                visual_attrs = [a for a in dir(m.visual) if not a.startswith('_')]
+                                print(f"[BD Blender] Mesh {idx} visual type: {visual_type}")
+                                print(f"[BD Blender] Mesh {idx} visual attrs: {visual_attrs[:10]}...")  # First 10
+
+                            # Extract UVs - check multiple locations
+                            mesh_uvs = None
+                            if hasattr(m, 'visual') and m.visual is not None:
+                                # Try direct uv attribute (TextureVisuals)
+                                if hasattr(m.visual, 'uv') and m.visual.uv is not None:
+                                    mesh_uvs = np.array(m.visual.uv)
+                                    print(f"[BD Blender] Mesh {idx}: Found {len(mesh_uvs)} UVs in visual.uv")
+                                # Try material's uv (some GLB loaders)
+                                elif hasattr(m.visual, 'material') and m.visual.material is not None:
+                                    mat = m.visual.material
+                                    if hasattr(mat, 'uv') and mat.uv is not None:
+                                        mesh_uvs = np.array(mat.uv)
+                                        print(f"[BD Blender] Mesh {idx}: Found {len(mesh_uvs)} UVs in visual.material.uv")
+                                # Check for face_uv (per-face UVs)
+                                elif hasattr(m.visual, 'face_uv') and m.visual.face_uv is not None:
+                                    print(f"[BD Blender] Mesh {idx}: Found face_uv (per-face UVs)")
+                                else:
+                                    print(f"[BD Blender] Mesh {idx}: No UVs found in visual")
+
+                            # Also check metadata for UVs
+                            if mesh_uvs is None and hasattr(m, 'metadata'):
+                                if 'uv' in m.metadata:
+                                    mesh_uvs = np.array(m.metadata['uv'])
+                                    print(f"[BD Blender] Mesh {idx}: Found {len(mesh_uvs)} UVs in metadata")
+
+                            if mesh_uvs is not None:
+                                if len(mesh_uvs) == num_verts:
+                                    all_uvs.append(mesh_uvs)
+                                elif len(mesh_uvs) > 0:
+                                    print(f"[BD Blender] UV count mismatch: {len(mesh_uvs)} UVs vs {num_verts} verts")
+
+                            # Extract vertex colors
+                            mesh_colors = None
                             if hasattr(m, 'visual') and m.visual is not None:
                                 if hasattr(m.visual, 'vertex_colors') and m.visual.vertex_colors is not None:
                                     vc = m.visual.vertex_colors
                                     if vc is not None and len(vc) > 0:
-                                        print(f"[BD Blender] Found {len(vc)} vertex colors in scene mesh")
-                                        break
+                                        mesh_colors = np.array(vc)
+                                        if len(mesh_colors) == num_verts:
+                                            all_colors.append(mesh_colors)
+
+                            vertex_offset += num_verts
+
+                        # Concatenate meshes (this loses visuals)
                         mesh = trimesh.util.concatenate(meshes)
+
+                        # Merge extracted UVs if we got them from all meshes
+                        if all_uvs and len(all_uvs) == len(meshes):
+                            extracted_uvs = np.vstack(all_uvs)
+                            print(f"[BD Blender] Extracted {len(extracted_uvs)} UVs from {len(meshes)} mesh(es)")
+                        elif all_uvs:
+                            # Partial UV coverage - still try to use what we have
+                            extracted_uvs = np.vstack(all_uvs)
+                            print(f"[BD Blender] Partial UV extraction: {len(extracted_uvs)} UVs")
+
+                        # Merge extracted colors
+                        if all_colors and len(all_colors) == len(meshes):
+                            extracted_colors = np.vstack(all_colors)
+                            print(f"[BD Blender] Extracted {len(extracted_colors)} vertex colors")
+                        elif all_colors:
+                            extracted_colors = np.vstack(all_colors)
+                            print(f"[BD Blender] Partial color extraction: {len(extracted_colors)} colors")
+
                 elif isinstance(scene, trimesh.Trimesh):
                     mesh = scene
+                    # Extract UVs from single mesh
+                    if hasattr(mesh, 'visual') and mesh.visual is not None:
+                        if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                            extracted_uvs = np.array(mesh.visual.uv)
+                            print(f"[BD Blender] Single mesh has {len(extracted_uvs)} UVs")
+                        if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                            extracted_colors = np.array(mesh.visual.vertex_colors)
+
             except Exception as e:
                 print(f"[BD Blender] Scene load failed, trying force='mesh': {e}")
 
@@ -365,7 +482,28 @@ class BlenderNodeMixin:
             else:
                 raise RuntimeError("No meshes found in loaded file")
 
-        # Log vertex color status
+        # Apply extracted UVs and colors to the mesh
+        num_verts = len(mesh.vertices)
+
+        # Check if mesh already has UVs (direct load case)
+        has_uvs = False
+        if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'uv'):
+            if mesh.visual.uv is not None and len(mesh.visual.uv) > 0:
+                has_uvs = True
+                print(f"[BD Blender] Mesh already has {len(mesh.visual.uv)} UVs")
+
+        # Apply extracted UVs if mesh doesn't have them
+        if not has_uvs and extracted_uvs is not None:
+            if len(extracted_uvs) == num_verts:
+                # Create TextureVisuals with UVs
+                from trimesh.visual import TextureVisuals
+                mesh.visual = TextureVisuals(uv=extracted_uvs)
+                has_uvs = True
+                print(f"[BD Blender] Applied {len(extracted_uvs)} extracted UVs")
+            else:
+                print(f"[BD Blender] UV count mismatch after concat: {len(extracted_uvs)} vs {num_verts} verts")
+
+        # Apply extracted colors (may need to re-apply after TextureVisuals)
         has_colors = False
         if hasattr(mesh, 'visual') and mesh.visual is not None:
             if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
@@ -374,8 +512,24 @@ class BlenderNodeMixin:
                     has_colors = True
                     print(f"[BD Blender] Output mesh has {len(colors)} vertex colors")
 
+        if not has_colors and extracted_colors is not None:
+            if len(extracted_colors) == num_verts:
+                # If we have TextureVisuals, we can still set vertex_colors
+                if hasattr(mesh, 'visual'):
+                    mesh.visual.vertex_colors = extracted_colors
+                else:
+                    from trimesh.visual import ColorVisuals
+                    mesh.visual = ColorVisuals(vertex_colors=extracted_colors)
+                has_colors = True
+                print(f"[BD Blender] Applied {len(extracted_colors)} extracted vertex colors")
+
         if not has_colors:
             print("[BD Blender] WARNING: Output mesh has NO vertex colors!")
+
+        if has_uvs:
+            print(f"[BD Blender] Output mesh has UVs")
+        else:
+            print("[BD Blender] WARNING: Output mesh has NO UVs!")
 
         print(f"[BD Blender] Loaded: {len(mesh.vertices):,} verts, {len(mesh.faces):,} faces")
         return mesh

@@ -18,7 +18,7 @@ if HAS_TRIMESH:
     import trimesh
     import numpy as np
 
-from .types import TrimeshInput
+from .types import TrimeshInput, ColorFieldInput
 
 
 class BD_MeshExportBundle(BlenderNodeMixin, io.ComfyNode):
@@ -44,6 +44,9 @@ class BD_MeshExportBundle(BlenderNodeMixin, io.ComfyNode):
 
 Output: output/{name_prefix}_{filename}/ (or output/{filename}/ if no prefix)
 
+COLOR_FIELD support: If provided, applies voxelgrid colors to meshes before export.
+Useful when meshes lost colors through topology changes (decimation, remesh).
+
 Files created:
 - {filename}_lowpoly.glb/fbx/ply - Low-poly with UVs
 - {filename}_highpoly.glb/fbx - High-poly with UVs (optional)
@@ -54,6 +57,11 @@ Files created:
                 TrimeshInput("lowpoly_mesh", tooltip="Low-poly mesh with UVs and materials"),
                 TrimeshInput("highpoly_mesh", optional=True, tooltip="High-poly mesh with UVs (optional)"),
                 TrimeshInput("original_mesh", optional=True, tooltip="Original mesh with vertex colors (optional)"),
+                ColorFieldInput(
+                    "color_field",
+                    optional=True,
+                    tooltip="COLOR_FIELD to apply vertex colors before export (from BD_SampleVoxelgridColors)",
+                ),
                 io.Image.Input("diffuse", optional=True, tooltip="Diffuse/albedo texture"),
                 io.Image.Input("diffuse_outlined", optional=True, tooltip="Diffuse with edge lines"),
                 io.Image.Input("normal", optional=True, tooltip="Normal map"),
@@ -95,10 +103,19 @@ Files created:
                     default=True,
                     tooltip="Export high-poly LOD mesh",
                 ),
+                io.Boolean.Input(
+                    "fix_normals",
+                    default=True,
+                    optional=True,
+                    tooltip="Fix inconsistent face winding before export (TRELLIS2 meshes often have ~50% flipped)",
+                ),
             ],
             outputs=[
                 io.String.Output(display_name="output_path"),
                 io.String.Output(display_name="file_list"),
+                io.String.Output(display_name="lowpoly_glb_path"),
+                io.String.Output(display_name="highpoly_glb_path"),
+                io.String.Output(display_name="original_glb_path"),
                 io.String.Output(display_name="status"),
             ],
             is_output_node=True,
@@ -110,6 +127,7 @@ Files created:
         lowpoly_mesh,
         highpoly_mesh=None,
         original_mesh=None,
+        color_field=None,
         diffuse=None,
         diffuse_outlined=None,
         normal=None,
@@ -124,12 +142,189 @@ Files created:
         formats: str = "glb+ply",
         export_original: bool = False,
         export_highpoly: bool = True,
+        fix_normals: bool = True,
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
-            return io.NodeOutput("", "", "ERROR: trimesh not installed")
+            return io.NodeOutput("", "", "", "", "", "ERROR: trimesh not installed")
 
         if lowpoly_mesh is None:
-            return io.NodeOutput("", "", "ERROR: No lowpoly mesh provided")
+            return io.NodeOutput("", "", "", "", "", "ERROR: No lowpoly mesh provided")
+
+        # Helper to apply COLOR_FIELD to mesh
+        def apply_color_field_to_mesh(mesh, cf):
+            """Apply COLOR_FIELD colors to mesh vertices using KD-tree."""
+            if cf is None or 'positions' not in cf:
+                return mesh
+
+            from scipy.spatial import cKDTree
+
+            cf_positions = cf.get('positions')
+            cf_colors = cf.get('colors')
+            cf_attrs = cf.get('attributes', {})
+            cf_voxel_size = cf.get('voxel_size', 1.0)
+
+            if cf_positions is None or cf_colors is None:
+                return mesh
+
+            # Convert to numpy
+            if hasattr(cf_positions, 'cpu'):
+                cf_positions = cf_positions.cpu().numpy()
+            cf_positions = np.asarray(cf_positions, dtype=np.float32)
+
+            if hasattr(cf_colors, 'cpu'):
+                cf_colors = cf_colors.cpu().numpy()
+            cf_colors = np.asarray(cf_colors, dtype=np.float32)
+
+            # Get alpha if available
+            cf_alpha = cf_attrs.get('alpha')
+            if cf_alpha is not None:
+                if hasattr(cf_alpha, 'cpu'):
+                    cf_alpha = cf_alpha.cpu().numpy()
+                cf_alpha = np.asarray(cf_alpha, dtype=np.float32).flatten()
+
+            # Build KD-tree
+            tree = cKDTree(cf_positions)
+
+            # Get mesh vertices and transform to voxel space
+            mesh_verts = np.array(mesh.vertices, dtype=np.float32)
+            mesh_verts_transformed = mesh_verts.copy()
+            mesh_verts_transformed[:, 1] = -mesh_verts[:, 2]
+            mesh_verts_transformed[:, 2] = mesh_verts[:, 1]
+            mesh_in_voxel_space = mesh_verts_transformed + 0.5
+
+            # Query nearest colors
+            _, indices = tree.query(mesh_in_voxel_space, k=1, workers=-1)
+            vertex_colors = cf_colors[indices]
+
+            # Add alpha
+            if cf_alpha is not None:
+                vertex_alpha = cf_alpha[indices]
+            else:
+                vertex_alpha = np.ones(len(mesh_verts), dtype=np.float32)
+
+            # Build RGBA
+            if vertex_colors.shape[1] == 3:
+                vertex_colors_rgba = np.hstack([
+                    vertex_colors,
+                    vertex_alpha[:, np.newaxis]
+                ])
+            else:
+                vertex_colors_rgba = vertex_colors
+
+            # Convert to uint8
+            vertex_colors_uint8 = (vertex_colors_rgba * 255).clip(0, 255).astype(np.uint8)
+
+            # Create new mesh with colors
+            new_mesh = trimesh.Trimesh(
+                vertices=mesh.vertices,
+                faces=mesh.faces,
+                vertex_normals=mesh.vertex_normals if hasattr(mesh, 'vertex_normals') else None,
+                process=False,
+            )
+            new_mesh.visual = trimesh.visual.ColorVisuals(
+                mesh=new_mesh,
+                vertex_colors=vertex_colors_uint8,
+            )
+
+            # Preserve UVs if present
+            if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                new_mesh.metadata['uv'] = mesh.visual.uv
+            elif hasattr(mesh, 'metadata') and 'uv' in mesh.metadata:
+                new_mesh.metadata['uv'] = mesh.metadata['uv']
+
+            return new_mesh
+
+        # Apply COLOR_FIELD to meshes if provided
+        if color_field is not None and 'positions' in color_field:
+            print(f"[BD Export Bundle] Applying COLOR_FIELD ({color_field.get('num_voxels', '?')} voxels) to meshes...")
+
+            # Apply to lowpoly
+            lowpoly_mesh = apply_color_field_to_mesh(lowpoly_mesh, color_field)
+            print(f"[BD Export Bundle] Applied colors to lowpoly ({len(lowpoly_mesh.vertices):,} verts)")
+
+            # Apply to highpoly if present
+            if highpoly_mesh is not None:
+                highpoly_mesh = apply_color_field_to_mesh(highpoly_mesh, color_field)
+                print(f"[BD Export Bundle] Applied colors to highpoly ({len(highpoly_mesh.vertices):,} verts)")
+
+            # Apply to original if present (though it usually already has colors)
+            if original_mesh is not None:
+                original_mesh = apply_color_field_to_mesh(original_mesh, color_field)
+                print(f"[BD Export Bundle] Applied colors to original ({len(original_mesh.vertices):,} verts)")
+
+        # Fix inconsistent face normals before export
+        # Uses merge+adjacency approach for split-vertex meshes
+        def robust_fix_normals(mesh, label="mesh"):
+            """Fix normals on meshes with split vertices (UV seams, face-split format)."""
+            try:
+                n_faces = len(mesh.faces)
+                if n_faces == 0:
+                    return
+
+                # Merge vertices to build face adjacency
+                merged = mesh.copy()
+                merged.merge_vertices(merge_tex=False, merge_norm=False)
+
+                if len(merged.faces) == n_faces:
+                    pre_fix = merged.faces.copy()
+                    trimesh.repair.fix_normals(merged)
+                    flipped_mask = np.any(pre_fix != merged.faces, axis=1)
+                    n_flipped = flipped_mask.sum()
+
+                    if n_flipped > 0:
+                        mesh.faces[flipped_mask] = mesh.faces[flipped_mask][:, ::-1]
+                        print(f"[BD Export Bundle] Fixed normals on {label}: flipped {n_flipped}/{n_faces} ({100*n_flipped/n_faces:.1f}%)")
+                    else:
+                        # Component-based heuristic
+                        from scipy.sparse.csgraph import connected_components
+                        from scipy.sparse import csr_matrix
+
+                        adj = merged.face_adjacency
+                        if len(adj) > 0:
+                            data = np.ones(len(adj) * 2)
+                            row = np.concatenate([adj[:, 0], adj[:, 1]])
+                            col = np.concatenate([adj[:, 1], adj[:, 0]])
+                            graph = csr_matrix((data, (row, col)), shape=(n_faces, n_faces))
+                            n_comp, labels = connected_components(graph, directed=False)
+
+                            if n_comp > 1:
+                                mesh_center = mesh.vertices.mean(axis=0)
+                                face_normals = mesh.face_normals
+                                face_centers = mesh.triangles_center
+                                total_flipped = 0
+
+                                for c in range(n_comp):
+                                    comp_mask = labels == c
+                                    to_outside = face_centers[comp_mask] - mesh_center
+                                    dots = np.sum(face_normals[comp_mask] * to_outside, axis=1)
+                                    if dots.mean() < 0:
+                                        idx = np.where(comp_mask)[0]
+                                        mesh.faces[idx] = mesh.faces[idx][:, ::-1]
+                                        total_flipped += len(idx)
+
+                                if total_flipped > 0:
+                                    print(f"[BD Export Bundle] Fixed normals on {label}: flipped {total_flipped}/{n_faces} ({100*total_flipped/n_faces:.1f}%) [{n_comp} components]")
+                                else:
+                                    print(f"[BD Export Bundle] Normals OK on {label} ({n_comp} components)")
+                            else:
+                                print(f"[BD Export Bundle] Normals OK on {label}")
+                        else:
+                            trimesh.repair.fix_normals(mesh)
+                            print(f"[BD Export Bundle] Fixed normals on {label} (no adjacency, simple mode)")
+                else:
+                    trimesh.repair.fix_normals(mesh)
+                    print(f"[BD Export Bundle] Fixed normals on {label} (simple mode)")
+
+                del merged
+            except Exception as e:
+                print(f"[BD Export Bundle] Warning: fix_normals failed on {label}: {e}")
+
+        if fix_normals:
+            robust_fix_normals(lowpoly_mesh, "lowpoly")
+            if highpoly_mesh is not None:
+                robust_fix_normals(highpoly_mesh, "highpoly")
+            if original_mesh is not None:
+                robust_fix_normals(original_mesh, "original")
 
         # Setup output directory using standard pattern
         output_base = folder_paths.get_output_directory()
@@ -186,6 +381,11 @@ Files created:
             "meshes": {},
             "textures": {},
         }
+
+        # Track GLB paths for outputs
+        lowpoly_glb_path = ""
+        highpoly_glb_path = ""
+        original_glb_path = ""
 
         # Parse formats
         export_glb = "glb" in formats
@@ -305,6 +505,7 @@ Files created:
                 else:
                     lowpoly_mesh.export(path, file_type='glb')
                 exported_files.append(f"{filename}_lowpoly.glb")
+                lowpoly_glb_path = path  # Track for output
                 manifest["meshes"]["lowpoly_glb"] = {
                     "file": f"{filename}_lowpoly.glb",
                     "vertices": len(lowpoly_mesh.vertices),
@@ -354,6 +555,7 @@ Files created:
                     else:
                         highpoly_mesh.export(path, file_type='glb')
                     exported_files.append(f"{filename}_highpoly.glb")
+                    highpoly_glb_path = path  # Track for output
                     manifest["meshes"]["highpoly_glb"] = {
                         "file": f"{filename}_highpoly.glb",
                         "vertices": len(highpoly_mesh.vertices),
@@ -377,18 +579,34 @@ Files created:
                             "faces": len(highpoly_mesh.faces),
                         }
 
-            # Export original mesh (PLY only - vertex colors, no UV)
+            # Export original mesh (GLB + PLY - vertex colors, no UV)
             if export_original and original_mesh is not None:
                 print(f"[BD Export Bundle] Exporting original ({len(original_mesh.vertices):,} verts)...")
-                path = os.path.join(output_dir, f"{filename}_original.ply")
-                original_mesh.export(path, file_type='ply')
-                exported_files.append(f"{filename}_original.ply")
-                manifest["meshes"]["original_ply"] = {
-                    "file": f"{filename}_original.ply",
-                    "vertices": len(original_mesh.vertices),
-                    "faces": len(original_mesh.faces),
-                    "vertex_colors": hasattr(original_mesh.visual, 'vertex_colors') and original_mesh.visual.vertex_colors is not None,
-                }
+
+                # Export GLB (with vertex colors)
+                if export_glb:
+                    path = os.path.join(output_dir, f"{filename}_original.glb")
+                    original_mesh.export(path, file_type='glb')
+                    exported_files.append(f"{filename}_original.glb")
+                    original_glb_path = path  # Track for output
+                    manifest["meshes"]["original_glb"] = {
+                        "file": f"{filename}_original.glb",
+                        "vertices": len(original_mesh.vertices),
+                        "faces": len(original_mesh.faces),
+                        "has_vertex_colors": hasattr(original_mesh.visual, 'vertex_colors') and original_mesh.visual.vertex_colors is not None,
+                    }
+
+                # Export PLY
+                if export_ply:
+                    path = os.path.join(output_dir, f"{filename}_original.ply")
+                    original_mesh.export(path, file_type='ply')
+                    exported_files.append(f"{filename}_original.ply")
+                    manifest["meshes"]["original_ply"] = {
+                        "file": f"{filename}_original.ply",
+                        "vertices": len(original_mesh.vertices),
+                        "faces": len(original_mesh.faces),
+                        "has_vertex_colors": hasattr(original_mesh.visual, 'vertex_colors') and original_mesh.visual.vertex_colors is not None,
+                    }
 
             # Export textures
             texture_map = {
@@ -449,13 +667,19 @@ Files created:
             file_list = "\n".join(exported_files)
             print(f"[BD Export Bundle] {status}")
             print(f"[BD Export Bundle] Files:\n{file_list}")
+            if lowpoly_glb_path:
+                print(f"[BD Export Bundle] Lowpoly GLB: {lowpoly_glb_path}")
+            if highpoly_glb_path:
+                print(f"[BD Export Bundle] Highpoly GLB: {highpoly_glb_path}")
+            if original_glb_path:
+                print(f"[BD Export Bundle] Original GLB: {original_glb_path}")
 
-            return io.NodeOutput(output_dir, file_list, status)
+            return io.NodeOutput(output_dir, file_list, lowpoly_glb_path, highpoly_glb_path, original_glb_path, status)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return io.NodeOutput(output_dir, "", f"ERROR: {e}")
+            return io.NodeOutput(output_dir, "", lowpoly_glb_path, highpoly_glb_path, original_glb_path, f"ERROR: {e}")
 
     @classmethod
     def _export_fbx_via_blender(cls, mesh, output_path: str) -> bool:

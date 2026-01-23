@@ -5,8 +5,9 @@ CATEGORY: BrainDead/Mesh
 
 Nodes:
 - BD_CacheMesh - Cache TRIMESH objects
-- BD_SampleVoxelgridColors - Sample colors from TRELLIS2 voxelgrid
+- BD_SampleVoxelgridColors - Sample colors from TRELLIS2 voxelgrid (outputs COLOR_FIELD)
 - BD_SampleVoxelgridPBR - Sample full PBR attributes from voxelgrid
+- BD_ApplyColorField - Apply COLOR_FIELD to any mesh (deferred color application)
 - BD_TransferPointcloudColors - Transfer from pointcloud (deprecated)
 - BD_TransferColorsPymeshlab - Transfer using pymeshlab
 - BD_TransferVertexColors - BVH-based vertex color transfer
@@ -18,10 +19,18 @@ Nodes:
 - BD_BakeTextures - Bake PBR textures from voxelgrid
 - BD_MeshExportBundle - Export all meshes and textures as bundle
 - BD_PlanarGrouping - Structure-aware segmentation into planar regions
+- BD_CombineEdgeMetadata - Combine edge metadata from multiple sources
+- BD_OVoxelBake - Bake PBR textures using Microsoft's o_voxel reference implementation
+- BD_OVoxelTextureBake - Bake-only: takes pre-processed mesh + voxelgrid for PBR baking
+- BD_MeshToOVoxel - Convert textured mesh to VOXELGRID format
 """
 
-# Import TRIMESH type helpers for re-export
-from .types import TrimeshInput, TrimeshOutput
+# Import type helpers for re-export
+from .types import (
+    TrimeshInput, TrimeshOutput,
+    EdgeMetadataInput, EdgeMetadataOutput,
+    ColorFieldInput, ColorFieldOutput,
+)
 
 from .cache import (
     MESH_CACHE_NODES,
@@ -73,6 +82,31 @@ from .grouping import (
     GROUPING_DISPLAY_NAMES,
     GROUPING_V3_NODES,
 )
+from .edge_utils import (
+    EDGE_UTILS_NODES,
+    EDGE_UTILS_DISPLAY_NAMES,
+    EDGE_UTILS_V3_NODES,
+)
+from .color_field import (
+    COLOR_FIELD_NODES,
+    COLOR_FIELD_DISPLAY_NAMES,
+    COLOR_FIELD_V3_NODES,
+)
+from .ovoxel_bake import (
+    OVOXEL_BAKE_NODES,
+    OVOXEL_BAKE_DISPLAY_NAMES,
+    OVOXEL_BAKE_V3_NODES,
+)
+from .ovoxel_texture_bake import (
+    OVOXEL_TEXTURE_BAKE_NODES,
+    OVOXEL_TEXTURE_BAKE_DISPLAY_NAMES,
+    OVOXEL_TEXTURE_BAKE_V3_NODES,
+)
+from .ovoxel_convert import (
+    OVOXEL_CONVERT_NODES,
+    OVOXEL_CONVERT_DISPLAY_NAMES,
+    OVOXEL_CONVERT_V3_NODES,
+)
 
 # Combine all mesh nodes
 NODE_CLASS_MAPPINGS = {
@@ -86,6 +120,11 @@ NODE_CLASS_MAPPINGS = {
     **BAKE_NODES,
     **EXPORT_BUNDLE_NODES,
     **GROUPING_NODES,
+    **EDGE_UTILS_NODES,
+    **COLOR_FIELD_NODES,
+    **OVOXEL_BAKE_NODES,
+    **OVOXEL_TEXTURE_BAKE_NODES,
+    **OVOXEL_CONVERT_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -99,6 +138,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **BAKE_DISPLAY_NAMES,
     **EXPORT_BUNDLE_DISPLAY_NAMES,
     **GROUPING_DISPLAY_NAMES,
+    **EDGE_UTILS_DISPLAY_NAMES,
+    **COLOR_FIELD_DISPLAY_NAMES,
+    **OVOXEL_BAKE_DISPLAY_NAMES,
+    **OVOXEL_TEXTURE_BAKE_DISPLAY_NAMES,
+    **OVOXEL_CONVERT_DISPLAY_NAMES,
 }
 
 # Export lists for external use
@@ -116,6 +160,11 @@ MESH_V3_NODES = [
     *BAKE_V3_NODES,
     *EXPORT_BUNDLE_V3_NODES,
     *GROUPING_V3_NODES,
+    *EDGE_UTILS_V3_NODES,
+    *COLOR_FIELD_V3_NODES,
+    *OVOXEL_BAKE_V3_NODES,
+    *OVOXEL_TEXTURE_BAKE_V3_NODES,
+    *OVOXEL_CONVERT_V3_NODES,
 ]
 
 __all__ = [

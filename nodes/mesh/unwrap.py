@@ -156,8 +156,32 @@ if uv_layers:
     log(f"[BD UV Unwrap] UV layers: {len(uv_layers)}")
     for layer in uv_layers:
         log(f"  - {layer.name} (active: {layer.active})")
+        # Debug: show UV bounds
+        if layer.data:
+            uvs = [d.uv for d in layer.data]
+            if uvs:
+                u_vals = [uv[0] for uv in uvs]
+                v_vals = [uv[1] for uv in uvs]
+                log(f"    UV bounds: U=[{min(u_vals):.3f}, {max(u_vals):.3f}] V=[{min(v_vals):.3f}, {max(v_vals):.3f}]")
+                log(f"    UV count: {len(uvs)}")
 else:
     log("[BD UV Unwrap] WARNING: No UV layers created!")
+
+# CRITICAL: Add a material to the mesh so trimesh loads UVs properly
+# Without a material, trimesh creates ColorVisuals and discards TEXCOORD_0 data
+if not obj.data.materials:
+    log("[BD UV Unwrap] Adding dummy material for GLB UV export...")
+    mat = bpy.data.materials.new(name="UV_Material")
+    mat.use_nodes = True
+    # Set to use vertex colors as base color
+    bsdf = mat.node_tree.nodes.get('Principled BSDF')
+    if bsdf:
+        # Create vertex color node
+        vc_node = mat.node_tree.nodes.new('ShaderNodeVertexColor')
+        vc_node.layer_name = 'Col'  # Default vertex color layer name
+        mat.node_tree.links.new(vc_node.outputs['Color'], bsdf.inputs['Base Color'])
+    obj.data.materials.append(mat)
+    log("[BD UV Unwrap] Added material with vertex color input")
 
 # Export - GLB handles coordinate conversion automatically
 # GLB import converts Y-up to Z-up, export with export_yup=True converts back
@@ -169,12 +193,17 @@ if ext_out == '.ply':
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=OUTPUT_PATH, export_uv=True, export_colors=True)
 elif ext_out in ['.glb', '.gltf']:
+    # Ensure UVs are exported - use explicit parameters
     bpy.ops.export_scene.gltf(
         filepath=OUTPUT_PATH,
         export_format='GLB',
-        export_attributes=True,
-        export_yup=True,  # Convert Z-up (Blender) back to Y-up (GLTF standard)
+        export_attributes=True,  # Vertex colors
+        export_texcoords=True,   # UVs (TEXCOORD_0)
+        export_normals=True,     # Normals
+        export_materials='EXPORT',  # Export materials (needed for trimesh to load UVs!)
+        export_yup=True,         # Convert Z-up (Blender) back to Y-up (GLTF standard)
     )
+    log(f"[BD UV Unwrap] GLB exported with material + texcoords")
 
 log(f"[BD UV Unwrap] Saved to {OUTPUT_PATH}")
 log("[BD UV Unwrap] COMPLETE")
@@ -210,14 +239,14 @@ Methods:
                 TrimeshInput("mesh"),
                 io.Combo.Input(
                     "method",
-                    options=["blender_smart_uv", "xatlas_gpu"],
+                    options=["blender_smart_uv", "cumesh_gpu", "xatlas_gpu"],
                     default="blender_smart_uv",
-                    tooltip="UV unwrap algorithm",
+                    tooltip="UV unwrap algorithm. cumesh_gpu uses CuMesh chart clustering + xatlas packing.",
                 ),
                 io.Boolean.Input(
                     "seams_from_sharp",
                     default=True,
-                    tooltip="Auto-create UV seams from sharp edges (color boundaries)",
+                    tooltip="Auto-create UV seams from sharp edges (color boundaries) [Blender only]",
                 ),
                 io.Float.Input(
                     "angle_limit",
@@ -225,7 +254,7 @@ Methods:
                     min=1.0,
                     max=89.0,
                     step=1.0,
-                    tooltip="Smart UV angle limit (Blender only)",
+                    tooltip="Smart UV angle limit (Blender) / cone half-angle in degrees (CuMesh)",
                 ),
                 io.Float.Input(
                     "island_margin",
@@ -236,12 +265,39 @@ Methods:
                     tooltip="UV island margin",
                 ),
                 io.Int.Input(
+                    "chart_refine_iterations",
+                    default=0,
+                    min=0,
+                    max=1000,
+                    step=10,
+                    optional=True,
+                    tooltip="Chart clustering refinement iterations (CuMesh only). Higher = better charts, slower.",
+                ),
+                io.Int.Input(
+                    "chart_global_iterations",
+                    default=1,
+                    min=1,
+                    max=10,
+                    step=1,
+                    optional=True,
+                    tooltip="Chart clustering global iterations (CuMesh only)",
+                ),
+                io.Float.Input(
+                    "chart_smooth_strength",
+                    default=1.0,
+                    min=0.0,
+                    max=5.0,
+                    step=0.1,
+                    optional=True,
+                    tooltip="Chart boundary smoothing strength (CuMesh only)",
+                ),
+                io.Int.Input(
                     "timeout",
                     default=300,
                     min=60,
                     max=1800,
                     optional=True,
-                    tooltip="Maximum processing time in seconds",
+                    tooltip="Maximum processing time in seconds (Blender only)",
                 ),
             ],
             outputs=[
@@ -258,6 +314,9 @@ Methods:
         seams_from_sharp: bool = True,
         angle_limit: float = 66.0,
         island_margin: float = 0.02,
+        chart_refine_iterations: int = 0,
+        chart_global_iterations: int = 1,
+        chart_smooth_strength: float = 1.0,
         timeout: int = 300,
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
@@ -271,8 +330,24 @@ Methods:
         print(f"[BD UV Unwrap] Input: {orig_verts:,} verts, {orig_faces:,} faces")
         print(f"[BD UV Unwrap] Method: {method}")
 
-        if method == "xatlas_gpu":
-            return cls._unwrap_xatlas(mesh, island_margin)
+        if method == "cumesh_gpu":
+            node_output = cls._unwrap_cumesh(
+                mesh, angle_limit, chart_refine_iterations,
+                chart_global_iterations, chart_smooth_strength,
+            )
+            status = node_output.args[1] if len(node_output.args) > 1 else ""
+            if isinstance(status, str) and status.startswith("ERROR:"):
+                print("[BD UV Unwrap] CuMesh UV failed - falling back to Blender Smart UV...")
+                return cls._unwrap_blender(mesh, seams_from_sharp, angle_limit, island_margin, timeout)
+            return node_output
+        elif method == "xatlas_gpu":
+            node_output = cls._unwrap_xatlas(mesh, island_margin)
+            status = node_output.args[1] if len(node_output.args) > 1 else ""
+            if isinstance(status, str) and status.startswith("ERROR:"):
+                if "manifold" in status.lower() or "invalid argument" in status.lower():
+                    print("[BD UV Unwrap] xatlas failed (non-manifold mesh) - falling back to Blender Smart UV...")
+                    return cls._unwrap_blender(mesh, seams_from_sharp, angle_limit, island_margin, timeout)
+            return node_output
         else:
             return cls._unwrap_blender(mesh, seams_from_sharp, angle_limit, island_margin, timeout)
 
@@ -360,6 +435,99 @@ Methods:
             import traceback
             traceback.print_exc()
             return io.NodeOutput(mesh, f"ERROR: xatlas failed: {e}")
+
+    @classmethod
+    def _unwrap_cumesh(
+        cls,
+        mesh,
+        angle_limit: float,
+        refine_iterations: int,
+        global_iterations: int,
+        smooth_strength: float,
+    ) -> io.NodeOutput:
+        """GPU-accelerated UV unwrap using CuMesh chart clustering + xatlas packing."""
+        try:
+            import torch
+            import cumesh as CuMesh
+        except ImportError:
+            return io.NodeOutput(mesh, "ERROR: cumesh not available - use blender_smart_uv")
+
+        print(f"[BD UV Unwrap] Using CuMesh GPU unwrap (chart clustering)...")
+        print(f"[BD UV Unwrap] Cone angle: {angle_limit}°, refine: {refine_iterations}, global: {global_iterations}, smooth: {smooth_strength}")
+
+        try:
+            # Convert to tensors
+            vertices = torch.tensor(mesh.vertices, dtype=torch.float32).cuda()
+            faces = torch.tensor(mesh.faces, dtype=torch.int32).cuda()
+
+            # Initialize CuMesh
+            cu = CuMesh.CuMesh()
+            cu.init(vertices, faces)
+
+            # Compute vertex normals (needed for chart clustering)
+            cu.compute_vertex_normals()
+
+            # Run UV unwrap with chart clustering options
+            print("[BD UV Unwrap] Running CuMesh chart clustering + xatlas pack...")
+            out_vertices, out_faces, out_uvs, out_vmaps = cu.uv_unwrap(
+                compute_charts_kwargs={
+                    'threshold_cone_half_angle_rad': math.radians(angle_limit),
+                    'refine_iterations': refine_iterations,
+                    'global_iterations': global_iterations,
+                    'smooth_strength': smooth_strength,
+                    'area_penalty_weight': 0.1,
+                    'perimeter_area_ratio_weight': 0.0001,
+                },
+                return_vmaps=True,
+                verbose=True,
+            )
+
+            # Convert to numpy
+            out_vertices_np = out_vertices.cpu().numpy()
+            out_faces_np = out_faces.cpu().numpy()
+            out_uvs_np = out_uvs.cpu().numpy()
+            out_vmaps_np = out_vmaps.cpu().numpy()
+
+            # Flip V coordinate for glTF convention
+            out_uvs_np[:, 1] = 1 - out_uvs_np[:, 1]
+
+            # Create result mesh with UVs
+            result = trimesh.Trimesh(
+                vertices=out_vertices_np,
+                faces=out_faces_np,
+                process=False,
+            )
+
+            # Transfer vertex colors if present
+            if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors'):
+                if mesh.visual.vertex_colors is not None:
+                    orig_colors = mesh.visual.vertex_colors
+                    new_colors = orig_colors[out_vmaps_np]
+                    result.visual.vertex_colors = new_colors
+
+            # Attach UVs
+            from trimesh.visual import TextureVisuals
+            result.visual = TextureVisuals(uv=out_uvs_np)
+
+            # Transfer normals if present
+            if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
+                result.vertex_normals = np.array(mesh.vertex_normals)[out_vmaps_np]
+
+            status = f"UV unwrapped (CuMesh): {len(result.vertices):,} verts, {len(out_uvs_np)} UVs | refine={refine_iterations}, global={global_iterations}"
+            print(f"[BD UV Unwrap] {status}")
+
+            # Cleanup
+            del vertices, faces, cu, out_vertices, out_faces, out_uvs, out_vmaps
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            return io.NodeOutput(result, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return io.NodeOutput(mesh, f"ERROR: CuMesh UV failed: {e}")
 
     @classmethod
     def _unwrap_blender(

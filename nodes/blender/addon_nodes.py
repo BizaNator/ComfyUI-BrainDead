@@ -539,13 +539,35 @@ log(f"[BD Decimate V3] Complete: {original_faces} -> {final_faces} faces ({reduc
 
 # Convert Z-up to Y-up for PLY export (GLTF import converts Y-up to Z-up)
 log("[BD Decimate V3] Converting Z-up to Y-up for output...")
+
+# Ensure we're in object mode and object is properly selected
+try:
+    bpy.ops.object.mode_set(mode='OBJECT')
+except:
+    pass
+
+bpy.ops.object.select_all(action='DESELECT')
 bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
+
 # Rotate -90 degrees around X axis (Z-up → Y-up)
-bpy.ops.transform.rotate(value=math.radians(-90), orient_axis='X', orient_type='GLOBAL')
-# Apply the rotation to mesh data
-bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
-log("[BD Decimate V3] Applied -90° X rotation (Z-up → Y-up)")
+try:
+    bpy.ops.transform.rotate(value=math.radians(-90), orient_axis='X', orient_type='GLOBAL')
+    # Apply the rotation to mesh data
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+    log("[BD Decimate V3] Applied -90° X rotation (Z-up → Y-up)")
+except Exception as e:
+    log(f"[BD Decimate V3] Warning: Transform apply failed: {e}")
+    # Fallback: apply rotation directly to mesh data
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    rot_matrix = mathutils.Matrix.Rotation(math.radians(-90), 4, 'X')
+    bmesh.ops.transform(bm, matrix=rot_matrix, verts=bm.verts)
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    log("[BD Decimate V3] Applied rotation via bmesh fallback")
 
 export_result()
 '''
@@ -2100,8 +2122,9 @@ SMOOTH_ITERATIONS = get_env_int('BLENDER_ARG_SMOOTH_ITERATIONS', 1)
 TARGET_DOMAIN = get_env_str('BLENDER_ARG_TARGET_DOMAIN', 'CORNER')
 OUTPUT_NAME = get_env_str('BLENDER_ARG_OUTPUT_NAME', 'Col')
 APPLY_FLAT_SHADING = get_env_bool('BLENDER_ARG_APPLY_FLAT_SHADING', True)
+CONVERT_DOMAIN_AFTER = get_env_bool('BLENDER_ARG_CONVERT_DOMAIN_AFTER', False)
 
-log(f"[BD Vertex Colors] Operation: {OPERATION}")
+log(f"[BD Vertex Colors] Operation: {OPERATION}, target_domain: {TARGET_DOMAIN}, convert_after: {CONVERT_DOMAIN_AFTER}")
 
 # Check for vertex colors
 has_colors = bool(obj.data.vertex_colors) or bool(obj.data.color_attributes)
@@ -2134,6 +2157,12 @@ if has_addon:
         elif OPERATION == 'CREATE_MATERIAL':
             bpy.ops.braindead.create_color_material()
         log(f"[BD Vertex Colors] {OPERATION} complete")
+
+        # Optional: convert domain after operation (for SOLIDIFY, SMOOTH, etc.)
+        if CONVERT_DOMAIN_AFTER and OPERATION not in ['CONVERT_DOMAIN']:
+            log(f"[BD Vertex Colors] Converting domain to {TARGET_DOMAIN}...")
+            bpy.ops.braindead.convert_color_domain(target_domain=TARGET_DOMAIN)
+            log(f"[BD Vertex Colors] Domain conversion complete")
     except Exception as e:
         log(f"[BD Vertex Colors] Addon operation failed: {e}")
 
@@ -2213,6 +2242,11 @@ Operations:
                     default=True,
                     tooltip="Apply flat shading (for SOLIDIFY)",
                 ),
+                io.Boolean.Input(
+                    "convert_domain_after",
+                    default=False,
+                    tooltip="Convert to target_domain after operation (use with SOLIDIFY, SMOOTH)",
+                ),
                 io.Int.Input(
                     "timeout",
                     default=120,
@@ -2238,6 +2272,7 @@ Operations:
         target_domain: str = "CORNER",
         output_name: str = "Col",
         apply_flat_shading: bool = True,
+        convert_domain_after: bool = False,
         timeout: int = 120,
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
@@ -2264,6 +2299,7 @@ Operations:
                 'target_domain': target_domain,
                 'output_name': output_name,
                 'apply_flat_shading': apply_flat_shading,
+                'convert_domain_after': convert_domain_after,
             }
 
             success, message, log_lines = cls._run_blender_script(
