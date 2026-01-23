@@ -55,6 +55,12 @@ from .addon_nodes import (
     ADDON_NODES,
     ADDON_DISPLAY_NAMES,
 )
+from .export_mesh import (
+    BD_BlenderExportMesh,
+    EXPORT_MESH_V3_NODES,
+    EXPORT_MESH_NODES,
+    EXPORT_MESH_DISPLAY_NAMES,
+)
 
 # V3 node list for extension
 BLENDER_V3_NODES = [
@@ -64,6 +70,7 @@ BLENDER_V3_NODES = [
     *REPAIR_V3_NODES,
     *TRANSFER_V3_NODES,
     *ADDON_V3_NODES,
+    *EXPORT_MESH_V3_NODES,
 ]
 
 # V1 compatibility - NODE_CLASS_MAPPINGS dict
@@ -74,6 +81,7 @@ BLENDER_NODES = {
     **REPAIR_NODES,
     **TRANSFER_NODES,
     **ADDON_NODES,
+    **EXPORT_MESH_NODES,
 }
 
 BLENDER_DISPLAY_NAMES = {
@@ -83,6 +91,7 @@ BLENDER_DISPLAY_NAMES = {
     **REPAIR_DISPLAY_NAMES,
     **TRANSFER_DISPLAY_NAMES,
     **ADDON_DISPLAY_NAMES,
+    **EXPORT_MESH_DISPLAY_NAMES,
 }
 
 __all__ = [
@@ -98,6 +107,8 @@ __all__ = [
     "BD_BlenderEdgeMarking",
     "BD_BlenderVertexColors",
     "BD_BlenderNormals",
+    # Individual classes - Export
+    "BD_BlenderExportMesh",
     # Individual classes - Legacy
     "BD_BlenderRepair",
     "BD_BlenderTransferColors",

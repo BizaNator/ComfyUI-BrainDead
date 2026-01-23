@@ -24,6 +24,8 @@ Nodes:
 - BD_OVoxelTextureBake - Bake-only: takes pre-processed mesh + voxelgrid for PBR baking
 - BD_MeshToOVoxel - Convert textured mesh to VOXELGRID format
 - BD_FixNormals - Fix face orientation (Python-only, fast)
+- BD_PackBundle - Pack mesh + textures + colors into MESH_BUNDLE
+- BD_CacheBundle - Cache MESH_BUNDLE for fast reload
 """
 
 # Import type helpers for re-export
@@ -31,6 +33,7 @@ from .types import (
     TrimeshInput, TrimeshOutput,
     EdgeMetadataInput, EdgeMetadataOutput,
     ColorFieldInput, ColorFieldOutput,
+    MeshBundleInput, MeshBundleOutput,
 )
 
 from .cache import (
@@ -113,6 +116,11 @@ from .fix_normals import (
     FIX_NORMALS_DISPLAY_NAMES,
     FIX_NORMALS_V3_NODES,
 )
+from .bundle import (
+    BUNDLE_NODES,
+    BUNDLE_DISPLAY_NAMES,
+    BUNDLE_V3_NODES,
+)
 
 # Combine all mesh nodes
 NODE_CLASS_MAPPINGS = {
@@ -132,6 +140,7 @@ NODE_CLASS_MAPPINGS = {
     **OVOXEL_TEXTURE_BAKE_NODES,
     **OVOXEL_CONVERT_NODES,
     **FIX_NORMALS_NODES,
+    **BUNDLE_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -151,6 +160,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **OVOXEL_TEXTURE_BAKE_DISPLAY_NAMES,
     **OVOXEL_CONVERT_DISPLAY_NAMES,
     **FIX_NORMALS_DISPLAY_NAMES,
+    **BUNDLE_DISPLAY_NAMES,
 }
 
 # Export lists for external use
@@ -174,6 +184,7 @@ MESH_V3_NODES = [
     *OVOXEL_TEXTURE_BAKE_V3_NODES,
     *OVOXEL_CONVERT_V3_NODES,
     *FIX_NORMALS_V3_NODES,
+    *BUNDLE_V3_NODES,
 ]
 
 __all__ = [

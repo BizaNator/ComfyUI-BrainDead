@@ -62,3 +62,26 @@ def ColorFieldInput(name: str = "color_field", **kwargs):
 def ColorFieldOutput(display_name: str = "color_field"):
     """Create a COLOR_FIELD output for passing voxelgrid color data."""
     return io.Custom("COLOR_FIELD").Output(display_name=display_name)
+
+
+# MESH_BUNDLE type for carrying mesh + textures + vertex colors as a unit.
+# Allows caching and exporting complete mesh assets through the pipeline.
+# Structure: {
+#   'mesh': trimesh.Trimesh,              # Mesh (may have TextureVisuals with PBR)
+#   'color_field': dict | None,           # COLOR_FIELD data (optional)
+#   'vertex_colors': np.ndarray | None,   # (N, 4) uint8 vertex colors for COLOR_0
+#   'diffuse': np.ndarray | None,         # (H, W, 3) uint8 albedo texture
+#   'normal': np.ndarray | None,          # (H, W, 3) uint8 normal map
+#   'metallic': np.ndarray | None,        # (H, W, 1|3) uint8 metallic
+#   'roughness': np.ndarray | None,       # (H, W, 1|3) uint8 roughness
+#   'alpha': np.ndarray | None,           # (H, W, 1|3) uint8 alpha/opacity
+#   'name': str,                          # Bundle name (for export filenames)
+# }
+def MeshBundleInput(name: str = "bundle", **kwargs):
+    """Create a MESH_BUNDLE input."""
+    return io.Custom("MESH_BUNDLE").Input(name, **kwargs)
+
+
+def MeshBundleOutput(display_name: str = "bundle"):
+    """Create a MESH_BUNDLE output."""
+    return io.Custom("MESH_BUNDLE").Output(display_name=display_name)
