@@ -2337,8 +2337,9 @@ NORMALS_SCRIPT = ADDON_SETUP_SCRIPT + '''
 # Read settings
 OPERATION = get_env_str('BLENDER_ARG_OPERATION', 'FIX')
 METHOD = get_env_str('BLENDER_ARG_METHOD', 'BOTH')
+DOUBLE_SIDED = get_env_str('BLENDER_ARG_DOUBLE_SIDED', 'False') == 'True'
 
-log(f"[BD Normals] Operation: {OPERATION}, Method: {METHOD}")
+log(f"[BD Normals] Operation: {OPERATION}, Method: {METHOD}, DoubleSided: {DOUBLE_SIDED}")
 
 # Check if addon is available
 has_addon = hasattr(bpy.context.scene, 'bd_normals')
@@ -2368,13 +2369,14 @@ if not has_addon:
     bpy.ops.object.mode_set(mode='OBJECT')
     log("[BD Normals] Normals made consistent (native)")
 
-# Convert Z-up to Y-up for PLY export (GLTF import converts Y-up to Z-up)
-log("[BD Normals] Converting Z-up to Y-up for output...")
-bpy.context.view_layer.objects.active = obj
-obj.select_set(True)
-bpy.ops.transform.rotate(value=math.radians(-90), orient_axis='X', orient_type='GLOBAL')
-bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+# Set double-sided material flag if requested
+if DOUBLE_SIDED:
+    for mat in obj.data.materials:
+        if mat and mat.use_backface_culling:
+            mat.use_backface_culling = False
+    log("[BD Normals] Set materials to double-sided")
 
+# Export as GLB (preserves materials, UVs, vertex colors; handles Y-up natively)
 export_result()
 '''
 
@@ -2397,13 +2399,15 @@ class BD_BlenderNormals(BlenderNodeMixin, io.ComfyNode):
             description="""Normal operations using BrainDeadBlender addon.
 
 Operations:
-- FIX: Fix normals to point outward
+- FIX: Fix normals to point outward (Blender topology-based, most reliable)
 - VERIFY: Check normal orientation
 
 Methods:
-- BLENDER: Topology-based
-- DIRECTION: Center-based
-- BOTH: Combined approach""",
+- BLENDER: Topology-based recalculate outside
+- DIRECTION: Center-based heuristic
+- BOTH: Combined approach
+
+Preserves PBR materials, UVs, and vertex colors.""",
             inputs=[
                 TrimeshInput("mesh"),
                 io.Combo.Input(
@@ -2417,6 +2421,12 @@ Methods:
                     options=["BOTH", "BLENDER", "DIRECTION"],
                     default="BOTH",
                     tooltip="Fix method",
+                ),
+                io.Boolean.Input(
+                    "double_sided",
+                    default=False,
+                    optional=True,
+                    tooltip="Set material to double-sided (renders both face sides, masks remaining flips)",
                 ),
                 io.Int.Input(
                     "timeout",
@@ -2439,6 +2449,7 @@ Methods:
         mesh,
         operation: str = "FIX",
         method: str = "BOTH",
+        double_sided: bool = False,
         timeout: int = 120,
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
@@ -2455,12 +2466,13 @@ Methods:
         output_path = None
         try:
             input_path = cls._mesh_to_temp_file(mesh, suffix='.glb')
-            fd, output_path = tempfile.mkstemp(suffix='.ply')
+            fd, output_path = tempfile.mkstemp(suffix='.glb')
             os.close(fd)
 
             extra_args = {
                 'operation': operation,
                 'method': method,
+                'double_sided': double_sided,
             }
 
             success, message, log_lines = cls._run_blender_script(
@@ -2476,7 +2488,8 @@ Methods:
 
             result_mesh = cls._load_mesh_from_file(output_path)
 
-            status = f"Normals: {operation} complete ({method})"
+            ds_info = " +doubleSided" if double_sided else ""
+            status = f"Normals: {operation} ({method}){ds_info} | {len(result_mesh.vertices):,} verts"
             return io.NodeOutput(result_mesh, status)
 
         except Exception as e:
