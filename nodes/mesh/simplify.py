@@ -8,7 +8,7 @@ All operations are CUDA-accelerated via CuMesh:
 - Remove small disconnected components
 
 Note: CuMesh operates on geometry only - vertex colors are NOT preserved.
-Use BD_BakeTextures or similar for color/texture transfer after simplification.
+Use BD_BlenderDecimate with color_field for edge-preserving decimation with colors.
 """
 
 import gc
@@ -53,7 +53,7 @@ class BD_CuMeshSimplify(io.ComfyNode):
     GPU-accelerated mesh simplification using CuMesh (CUDA).
 
     All operations are CUDA-accelerated. Geometry only - no color preservation.
-    Use BD_BakeTextures afterward for texture/color transfer.
+    Use BD_BlenderDecimate with color_field afterward for color transfer.
     """
 
     @classmethod
@@ -77,7 +77,7 @@ Typical workflow for TRELLIS2 output:
 1. Enable remesh + preserve_sharp_edges for cleaner topology
 2. Enable mesh cleaning to fix topology issues
 3. Target 5k-50k faces depending on use case
-4. Use BD_BakeTextures afterward for texture transfer
+4. Use BD_BlenderDecimate with color_field for texture/color transfer
 
 Note: CuMesh operates on geometry only - vertex colors are NOT preserved.""",
             inputs=[

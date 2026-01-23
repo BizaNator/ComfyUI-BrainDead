@@ -129,9 +129,14 @@ class BD_MeshInspector(io.ComfyNode):
             return io.NodeOutput("ERROR: trimesh not installed")
 
         # Extract data from bundle if provided (individual inputs override)
+        bundle_vertex_colors = None
         if bundle is not None and isinstance(bundle, dict):
             if mesh is None:
                 mesh = bundle.get('mesh')
+            # Extract vertex colors from bundle (stored separately from mesh visual)
+            vc = bundle.get('vertex_colors')
+            if vc is not None and isinstance(vc, np.ndarray) and len(vc) > 0 and vc.max() > 0:
+                bundle_vertex_colors = vc
             if not metallic_json and bundle.get('metallic') is not None:
                 # Bundle has metallic as texture, not per-vertex JSON
                 pass  # Handled below as metallic_map
@@ -228,6 +233,23 @@ class BD_MeshInspector(io.ComfyNode):
             if not roughness_out and bundle.get('roughness') is not None:
                 roughness_map_b64 = _encode_map(bundle.get('roughness'), "Roughness map (bundle)")
 
+        # Encode bundle vertex colors as base64 raw RGBA bytes
+        vertex_colors_b64 = ""
+        if bundle_vertex_colors is not None:
+            try:
+                vc = bundle_vertex_colors
+                # Ensure RGBA uint8 format
+                if vc.dtype != np.uint8:
+                    vc = (vc * 255).clip(0, 255).astype(np.uint8)
+                if vc.shape[-1] == 3:
+                    # Add alpha channel
+                    alpha = np.full((len(vc), 1), 255, dtype=np.uint8)
+                    vc = np.hstack([vc, alpha])
+                vertex_colors_b64 = base64.b64encode(vc.tobytes()).decode('utf-8')
+                print(f"[BD Inspector] Encoded {len(vc)} vertex colors from bundle ({len(vertex_colors_b64)//1024}KB)")
+            except Exception as e:
+                print(f"[BD Inspector] Vertex color encoding failed: {e}")
+
         # Check if mesh has UVs
         has_uvs = (hasattr(mesh, 'visual')
                    and hasattr(mesh.visual, 'uv')
@@ -238,10 +260,13 @@ class BD_MeshInspector(io.ComfyNode):
         vert_count = len(mesh.vertices)
         face_count = len(mesh.faces) if hasattr(mesh, 'faces') and mesh.faces is not None else 0
         has_colors = (
-            hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors')
-            and mesh.visual.vertex_colors is not None and len(mesh.visual.vertex_colors) > 0
+            (hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors')
+             and mesh.visual.vertex_colors is not None and len(mesh.visual.vertex_colors) > 0)
+            or bool(vertex_colors_b64)
         )
         channels = []
+        if has_colors:
+            channels.append("vertex_colors")
         if metallic_out or metallic_map_b64:
             channels.append("metallic")
         if roughness_out or roughness_map_b64:
@@ -285,7 +310,9 @@ class BD_MeshInspector(io.ComfyNode):
                 "emissive_map_b64": [emissive_b64],
                 "alpha_map_b64": [alpha_b64],
                 "diffuse_map_b64": [diffuse_b64],
+                "vertex_colors_b64": [vertex_colors_b64],
                 "has_uvs": [has_uvs],
+                "has_colors": [has_colors],
                 "vertex_count": [vert_count],
                 "face_count": [face_count],
             }

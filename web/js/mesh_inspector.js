@@ -72,7 +72,9 @@ app.registerExtension({
                         emissive_map_b64: message.emissive_map_b64?.[0] || "",
                         alpha_map_b64: message.alpha_map_b64?.[0] || "",
                         diffuse_map_b64: message.diffuse_map_b64?.[0] || "",
+                        vertex_colors_b64: message.vertex_colors_b64?.[0] || "",
                         has_uvs: message.has_uvs?.[0] || false,
+                        has_colors: message.has_colors?.[0] || false,
                         timestamp: Date.now(),
                     }, "*");
                 };

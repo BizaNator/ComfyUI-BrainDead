@@ -6,11 +6,9 @@ import { app } from "../../scripts/app.js";
 
 const BD_NODES = [
     "BD_UVUnwrap",
-    "BD_BakeTextures",
     "BD_CuMeshSimplify",
     "BD_BlenderDecimate",
     "BD_BlenderMergePlanes",
-    "BD_MeshExportBundle",
     "BD_SampleVoxelgridColors",
     "BD_ApplyColorField",
 ];
@@ -58,8 +56,8 @@ app.registerExtension({
             const node = app.graph?.getNodeById(nodeId);
             if (!node) return;
 
-            // Check if this is a UV unwrap or bake node
-            if (node.type === "BD_UVUnwrap" || node.type === "BD_BakeTextures") {
+            // Check if this is a UV unwrap or decimate node
+            if (node.type === "BD_UVUnwrap" || node.type === "BD_BlenderDecimate") {
                 // Try to get input mesh info from connected node
                 checkLargeMeshWarning(node);
             }

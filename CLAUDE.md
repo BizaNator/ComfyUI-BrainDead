@@ -128,7 +128,6 @@ else:
 
 This pattern is used by:
 - `BD_ExportMeshWithColors` (export.py)
-- `BD_MeshExportBundle` (export_bundle.py)
 
 ## Blender Integration
 
@@ -155,8 +154,8 @@ nodes/
 │   ├── export.py   # BD_ExportMeshWithColors
 │   ├── simplify.py # BD_CuMeshSimplify
 │   ├── unwrap.py   # BD_UVUnwrap
-│   ├── bake.py     # BD_BakeTextures
-│   └── export_bundle.py # BD_MeshExportBundle
+│   ├── ovoxel_bake.py # BD_OVoxelBake
+│   └── bundle.py   # BD_PackBundle, BD_UnpackBundle, BD_CacheBundle
 ├── blender/        # Blender-based operations
 ├── cache/          # Caching nodes
 ├── character/      # Qwen character nodes

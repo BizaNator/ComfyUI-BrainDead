@@ -16,8 +16,6 @@ Nodes:
 - BD_ExportMeshWithColors - Export mesh with vertex colors
 - BD_CuMeshSimplify - GPU-accelerated simplification with color preservation
 - BD_UVUnwrap - UV unwrap with xatlas (GPU) or Blender Smart UV
-- BD_BakeTextures - Bake PBR textures from voxelgrid
-- BD_MeshExportBundle - Export all meshes and textures as bundle
 - BD_PlanarGrouping - Structure-aware segmentation into planar regions
 - BD_CombineEdgeMetadata - Combine edge metadata from multiple sources
 - BD_OVoxelBake - Bake PBR textures using Microsoft's o_voxel reference implementation
@@ -70,16 +68,6 @@ from .unwrap import (
     UNWRAP_NODES,
     UNWRAP_DISPLAY_NAMES,
     UNWRAP_V3_NODES,
-)
-from .bake import (
-    BAKE_NODES,
-    BAKE_DISPLAY_NAMES,
-    BAKE_V3_NODES,
-)
-from .export_bundle import (
-    EXPORT_BUNDLE_NODES,
-    EXPORT_BUNDLE_DISPLAY_NAMES,
-    EXPORT_BUNDLE_V3_NODES,
 )
 from .grouping import (
     GROUPING_NODES,
@@ -136,8 +124,6 @@ NODE_CLASS_MAPPINGS = {
     **MESH_EXPORT_NODES,
     **SIMPLIFY_NODES,
     **UNWRAP_NODES,
-    **BAKE_NODES,
-    **EXPORT_BUNDLE_NODES,
     **GROUPING_NODES,
     **EDGE_UTILS_NODES,
     **COLOR_FIELD_NODES,
@@ -157,8 +143,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **MESH_EXPORT_DISPLAY_NAMES,
     **SIMPLIFY_DISPLAY_NAMES,
     **UNWRAP_DISPLAY_NAMES,
-    **BAKE_DISPLAY_NAMES,
-    **EXPORT_BUNDLE_DISPLAY_NAMES,
     **GROUPING_DISPLAY_NAMES,
     **EDGE_UTILS_DISPLAY_NAMES,
     **COLOR_FIELD_DISPLAY_NAMES,
@@ -182,8 +166,6 @@ MESH_V3_NODES = [
     *MESH_EXPORT_V3_NODES,
     *SIMPLIFY_V3_NODES,
     *UNWRAP_V3_NODES,
-    *BAKE_V3_NODES,
-    *EXPORT_BUNDLE_V3_NODES,
     *GROUPING_V3_NODES,
     *EDGE_UTILS_V3_NODES,
     *COLOR_FIELD_V3_NODES,

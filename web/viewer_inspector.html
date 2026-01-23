@@ -147,7 +147,9 @@
             diffuse_map_b64: null,
             metallic_map_b64: null,
             roughness_map_b64: null,
+            vertex_colors_b64: null,
             has_uvs: false,
+            has_colors: false,
         };
 
         // ========== Animation Loop ==========
@@ -189,9 +191,20 @@
                 });
             }
 
+            // Check if vertex colors available (from geometry OR from bundle data)
+            let meshHasColors = channelData.has_colors || !!channelData.vertex_colors_b64;
+            if (!meshHasColors && loadedMesh) {
+                loadedMesh.traverse((child) => {
+                    if (child.isMesh && child.geometry && child.geometry.attributes.color) {
+                        meshHasColors = true;
+                    }
+                });
+            }
+
             toolbar.querySelectorAll('button').forEach(btn => {
                 const mode = btn.dataset.mode;
                 let available = true;
+                if (mode === 'vertex_colors') available = meshHasColors;
                 if (mode === 'metallic') available = (channelData.metallic && channelData.metallic.length > 0) || !!channelData.metallic_map_b64;
                 if (mode === 'roughness') available = (channelData.roughness && channelData.roughness.length > 0) || !!channelData.roughness_map_b64;
                 if (mode === 'emissive') available = !!channelData.emissive_map_b64;
@@ -218,7 +231,8 @@
                 switch (mode) {
                     case 'full_material':
                         child.material = originalMaterials.get(child) || new THREE.MeshStandardMaterial({
-                            vertexColors: true, metalness: 0.1, roughness: 0.8
+                            vertexColors: !!(child.geometry && child.geometry.attributes.color),
+                            metalness: 0.1, roughness: 0.8
                         });
                         break;
 
@@ -232,7 +246,14 @@
                         break;
 
                     case 'vertex_colors':
-                        child.material = new THREE.MeshBasicMaterial({ vertexColors: true });
+                        if (child.geometry && child.geometry.attributes.color) {
+                            child.material = new THREE.MeshBasicMaterial({ vertexColors: true });
+                        } else if (channelData.vertex_colors_b64) {
+                            // Apply vertex colors from bundle data
+                            applyBundleVertexColors(child, channelData.vertex_colors_b64);
+                        } else {
+                            child.material = new THREE.MeshBasicMaterial({ color: 0x222222 });
+                        }
                         break;
 
                     case 'uv':
@@ -381,12 +402,44 @@
             meshChild.material = new THREE.MeshBasicMaterial({ vertexColors: true });
         }
 
+        function applyBundleVertexColors(meshChild, b64Data) {
+            // Decode base64 RGBA uint8 bytes → Float32 RGB vertex colors
+            try {
+                const binary = atob(b64Data);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+
+                const vertexCount = meshChild.geometry.attributes.position.count;
+                const numPixels = bytes.length / 4; // RGBA = 4 bytes per vertex
+                const count = Math.min(vertexCount, numPixels);
+
+                const colors = new Float32Array(vertexCount * 3);
+                for (let i = 0; i < count; i++) {
+                    colors[i * 3] = bytes[i * 4] / 255;       // R
+                    colors[i * 3 + 1] = bytes[i * 4 + 1] / 255; // G
+                    colors[i * 3 + 2] = bytes[i * 4 + 2] / 255; // B
+                }
+
+                meshChild.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                meshChild.geometry.attributes.color.needsUpdate = true;
+                meshChild.material = new THREE.MeshBasicMaterial({ vertexColors: true });
+                console.log(`[BD Inspector] Applied ${count} vertex colors from bundle`);
+            } catch (e) {
+                console.error('[BD Inspector] Failed to apply vertex colors:', e);
+                meshChild.material = new THREE.MeshBasicMaterial({ color: 0x222222 });
+            }
+        }
+
         function applyTextureToMesh(meshChild, base64Data) {
             const img = new Image();
             img.onload = () => {
                 const texture = new THREE.Texture(img);
                 texture.needsUpdate = true;
                 texture.colorSpace = THREE.SRGBColorSpace;
+                // glTF uses top-left UV origin, so flipY must be false for GLB-loaded meshes
+                texture.flipY = false;
                 meshChild.material = new THREE.MeshBasicMaterial({ map: texture });
             };
             img.src = `data:image/png;base64,${base64Data}`;
@@ -444,17 +497,18 @@
                     const center = box.getCenter(new THREE.Vector3());
                     loadedMesh.position.sub(center);
 
-                    // Store original materials and ensure vertex colors are enabled
+                    // Store original materials - only enable vertex colors if geometry has them
                     loadedMesh.traverse((child) => {
                         if (child.isMesh) {
+                            const hasVertexColors = child.geometry && child.geometry.attributes.color;
                             if (!child.material) {
                                 child.material = new THREE.MeshStandardMaterial({
-                                    vertexColors: true,
+                                    vertexColors: hasVertexColors,
                                     metalness: 0.1,
                                     roughness: 0.8,
                                 });
-                            } else {
-                                // Enable vertex colors on existing material
+                            } else if (hasVertexColors) {
+                                // Only enable vertex colors if geometry actually has color attribute
                                 if (child.material.isMeshStandardMaterial || child.material.isMeshPhysicalMaterial) {
                                     child.material.vertexColors = true;
                                     child.material.needsUpdate = true;
@@ -516,7 +570,9 @@
             channelData.diffuse_map_b64 = data.diffuse_map_b64 || null;
             channelData.metallic_map_b64 = data.metallic_map_b64 || null;
             channelData.roughness_map_b64 = data.roughness_map_b64 || null;
+            channelData.vertex_colors_b64 = data.vertex_colors_b64 || null;
             channelData.has_uvs = data.has_uvs || false;
+            channelData.has_colors = data.has_colors || false;
 
             // Load the mesh
             loadMesh(data.filepath, data.initial_mode);

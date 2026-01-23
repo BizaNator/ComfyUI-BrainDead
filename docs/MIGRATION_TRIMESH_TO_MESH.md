@@ -120,8 +120,6 @@ If io.Mesh gets extended upstream, migrate all nodes gradually:
 - `nodes/mesh/export.py` (6)
 - `nodes/mesh/simplify.py` (6)
 - `nodes/mesh/unwrap.py` (6)
-- `nodes/mesh/bake.py` (6)
-- `nodes/mesh/export_bundle.py` (7)
 - `nodes/mesh/grouping.py` (3)
 - `nodes/mesh/color_field.py` (6)
 - `nodes/mesh/fix_normals.py` (6)

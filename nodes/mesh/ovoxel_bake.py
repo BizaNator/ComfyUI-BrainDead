@@ -8,7 +8,7 @@ This wraps o_voxel.postprocess.to_glb() which handles the complete pipeline:
 - Trilinear grid_sample_3d interpolation from sparse voxel tensor
 - Proper coordinate system conversion for GLB
 
-This replaces the BD_CuMeshSimplify → BD_UVUnwrap → BD_BakeTextures pipeline.
+This replaces the old BD_CuMeshSimplify → BD_UVUnwrap → manual bake pipeline.
 """
 
 import gc
@@ -46,7 +46,7 @@ Pipeline (all handled internally):
 5. UV seam inpainting
 6. Proper coordinate system conversion
 
-Replaces: BD_CuMeshSimplify → BD_UVUnwrap → BD_BakeTextures""",
+Replaces the old BD_CuMeshSimplify → BD_UVUnwrap → manual bake pipeline.""",
             inputs=[
                 io.Custom("VOXELGRID").Input(
                     "voxelgrid",
