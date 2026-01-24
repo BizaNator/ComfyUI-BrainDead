@@ -38,16 +38,10 @@ classifiers = [
     "Environment :: GPU :: NVIDIA CUDA",
 ]
 requires-python = ">=3.10"
-dependencies = [
-    "torch",
-    "numpy",
-    "Pillow",
-]
+dependencies = []
 
 [project.optional-dependencies]
-audio = ["torchaudio"]
 mesh = ["trimesh"]
-all = ["torchaudio", "trimesh", "safetensors"]
 
 [project.urls]
 Homepage = "https://github.com/BizaNator/ComfyUI-BrainDead"
@@ -57,4 +51,3 @@ Issues = "https://github.com/BizaNator/ComfyUI-BrainDead/issues"
 [tool.comfy]
 PublisherId = "braindead"
 DisplayName = "BrainDead Nodes"
-Icon = ""
