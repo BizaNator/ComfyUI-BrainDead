@@ -75,6 +75,64 @@ def _encode_numpy_to_base64(arr) -> str:
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
 
+def _sample_color_field(mesh, color_field) -> np.ndarray:
+    """Sample a COLOR_FIELD onto mesh vertices using KD-tree nearest neighbor.
+
+    Returns RGBA uint8 array (N, 4) or None on failure.
+    """
+    try:
+        if mesh is None or color_field is None:
+            return None
+
+        positions = color_field.get('positions')
+        colors = color_field.get('colors')
+        voxel_size = color_field.get('voxel_size', 1.0)
+
+        if positions is None or colors is None:
+            return None
+
+        # Ensure numpy
+        if hasattr(positions, 'cpu'):
+            positions = positions.cpu().numpy()
+        positions = np.asarray(positions, dtype=np.float32)
+
+        if hasattr(colors, 'cpu'):
+            colors = colors.cpu().numpy()
+        colors = np.asarray(colors, dtype=np.float32)
+
+        # Add alpha if RGB only
+        if colors.shape[1] == 3:
+            colors = np.hstack([colors, np.ones((len(colors), 1), dtype=np.float32)])
+
+        # Transform mesh vertices to voxel space (TRELLIS coordinate system)
+        mesh_verts = np.array(mesh.vertices, dtype=np.float32)
+        verts_transformed = mesh_verts.copy()
+        verts_transformed[:, 1] = -mesh_verts[:, 2]
+        verts_transformed[:, 2] = mesh_verts[:, 1]
+        verts_in_voxel_space = verts_transformed + 0.5
+
+        # KD-tree nearest neighbor sampling
+        from scipy.spatial import cKDTree
+        tree = cKDTree(positions)
+        distances, indices = tree.query(verts_in_voxel_space, k=1, workers=-1)
+
+        vertex_colors = colors[indices].copy()
+
+        # Threshold: vertices too far get gray
+        max_dist = voxel_size * 3.0
+        far_verts = distances > max_dist
+        vertex_colors[far_verts] = [0.5, 0.5, 0.5, 1.0]
+
+        # Convert to uint8
+        vertex_colors_uint8 = (vertex_colors * 255).clip(0, 255).astype(np.uint8)
+        print(f"[BD Inspector] Sampled {len(vertex_colors_uint8)} colors from color_field ({len(positions)} voxels)")
+        return vertex_colors_uint8
+
+    except Exception as e:
+        print(f"[BD Inspector] Color field sampling failed: {e}")
+        return None
+
+
 class BD_MeshInspector(io.ComfyNode):
     """
     Interactive 3D mesh inspector with PBR channel visualization.
@@ -137,6 +195,12 @@ class BD_MeshInspector(io.ComfyNode):
             vc = bundle.get('vertex_colors')
             if vc is not None and isinstance(vc, np.ndarray) and len(vc) > 0 and vc.max() > 0:
                 bundle_vertex_colors = vc
+            # If no vertex_colors but color_field exists, sample it onto mesh vertices
+            if bundle_vertex_colors is None and bundle.get('color_field') is not None:
+                bundle_vertex_colors = _sample_color_field(
+                    bundle.get('mesh') if mesh is None else mesh,
+                    bundle['color_field']
+                )
             if not metallic_json and bundle.get('metallic') is not None:
                 # Bundle has metallic as texture, not per-vertex JSON
                 pass  # Handled below as metallic_map

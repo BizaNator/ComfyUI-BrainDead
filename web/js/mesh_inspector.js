@@ -37,15 +37,28 @@ app.registerExtension({
                 setValue(v) { },
             });
 
-            // Widget sizing - 4:3 aspect ratio
+            widget.element = iframe;
+            this.meshInspectorIframe = iframe;
+            this.setSize([520, 460]);
+
+            // Fixed minimum size (4:3 ratio) - no circular dependency
             widget.computeSize = function (width) {
                 const w = width || 512;
                 return [w, Math.round(w * 0.75)];
             };
 
-            widget.element = iframe;
-            this.meshInspectorIframe = iframe;
-            this.setSize([520, 460]);
+            // When node is resized, directly adjust iframe container to fill space
+            const node = this;
+            const origOnResize = node.onResize;
+            node.onResize = function (size) {
+                origOnResize?.apply(this, arguments);
+                if (!iframe.parentElement) return;
+                const widgetY = widget.last_y || 0;
+                if (widgetY <= 0) return;
+                const targetH = Math.max(200, size[1] - widgetY - 6);
+                iframe.parentElement.style.height = targetH + "px";
+                iframe.parentElement.style.overflow = "hidden";
+            };
 
             // Handle execution results
             const onExecuted = this.onExecuted;
