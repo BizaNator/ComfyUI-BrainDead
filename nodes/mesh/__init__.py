@@ -21,6 +21,8 @@ Nodes:
 - BD_OVoxelBake - Bake PBR textures using Microsoft's o_voxel reference implementation
 - BD_OVoxelTextureBake - Bake-only: takes pre-processed mesh + voxelgrid for PBR baking
 - BD_MeshToOVoxel - Convert textured mesh to VOXELGRID format
+- BD_ExportOVoxel - Export VOXELGRID to .vxz compressed format
+- BD_LoadOVoxel - Load VOXELGRID from .vxz + sidecar files
 - BD_FixNormals - Fix face orientation (Python-only, fast)
 - BD_PackBundle - Pack mesh + textures + colors into MESH_BUNDLE
 - BD_CacheBundle - Cache MESH_BUNDLE for fast reload
@@ -99,6 +101,11 @@ from .ovoxel_convert import (
     OVOXEL_CONVERT_DISPLAY_NAMES,
     OVOXEL_CONVERT_V3_NODES,
 )
+from .ovoxel_io import (
+    OVOXEL_IO_NODES,
+    OVOXEL_IO_DISPLAY_NAMES,
+    OVOXEL_IO_V3_NODES,
+)
 from .fix_normals import (
     FIX_NORMALS_NODES,
     FIX_NORMALS_DISPLAY_NAMES,
@@ -130,6 +137,7 @@ NODE_CLASS_MAPPINGS = {
     **OVOXEL_BAKE_NODES,
     **OVOXEL_TEXTURE_BAKE_NODES,
     **OVOXEL_CONVERT_NODES,
+    **OVOXEL_IO_NODES,
     **FIX_NORMALS_NODES,
     **BUNDLE_NODES,
     **MESH_INSPECTOR_NODES,
@@ -149,6 +157,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **OVOXEL_BAKE_DISPLAY_NAMES,
     **OVOXEL_TEXTURE_BAKE_DISPLAY_NAMES,
     **OVOXEL_CONVERT_DISPLAY_NAMES,
+    **OVOXEL_IO_DISPLAY_NAMES,
     **FIX_NORMALS_DISPLAY_NAMES,
     **BUNDLE_DISPLAY_NAMES,
     **MESH_INSPECTOR_DISPLAY_NAMES,
@@ -172,6 +181,7 @@ MESH_V3_NODES = [
     *OVOXEL_BAKE_V3_NODES,
     *OVOXEL_TEXTURE_BAKE_V3_NODES,
     *OVOXEL_CONVERT_V3_NODES,
+    *OVOXEL_IO_V3_NODES,
     *FIX_NORMALS_V3_NODES,
     *BUNDLE_V3_NODES,
     *MESH_INSPECTOR_V3_NODES,
