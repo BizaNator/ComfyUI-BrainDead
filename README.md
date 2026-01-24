@@ -64,40 +64,62 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 - Identity-focused templates that prioritize facial features
 
 ### Mesh Nodes (`BrainDead/Mesh`)
-3D mesh processing, color sampling, and simplification tools.
+3D mesh processing, color sampling, simplification, and PBR texture baking tools.
 
 | Node | Description |
 |------|-------------|
 | **BD Cache Mesh** | Cache TRIMESH objects as PLY files |
 | **BD Sample Voxelgrid Colors** | Sample vertex colors from TRELLIS2 voxelgrid |
 | **BD Sample Voxelgrid PBR** | Sample full PBR attributes from voxelgrid |
+| **BD Apply Color Field** | Apply COLOR_FIELD to any mesh (deferred color application) |
 | **BD Transfer Vertex Colors** | BVH-based vertex color transfer between meshes |
 | **BD Transfer Colors Pymeshlab** | Transfer colors using pymeshlab |
 | **BD Mesh Repair** | Repair mesh topology (holes, normals, duplicates) |
 | **BD Smart Decimate** | Edge-preserving decimation with pymeshlab |
 | **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ |
 | **BD CuMesh Simplify** | GPU-accelerated mesh simplification with color preservation |
+| **BD UV Unwrap** | UV unwrap with xatlas (GPU) or Blender Smart UV |
 | **BD Planar Grouping** | Group faces by normal direction with boundary straightening |
+| **BD Combine Edge Metadata** | Combine edge metadata from multiple sources |
+| **BD OVoxel Bake** | All-in-one PBR bake from voxelgrid (simplify + UV + bake) |
+| **BD OVoxel Texture Bake** | Bake-only: takes pre-processed mesh + voxelgrid |
+| **BD Mesh To OVoxel** | Convert textured mesh to VOXELGRID format |
+| **BD Export OVoxel** | Export VOXELGRID to .vxz compressed format |
+| **BD Load OVoxel** | Load VOXELGRID from .vxz + sidecar files |
+| **BD Fix Normals** | Fix face orientation (Python-only, fast) |
+| **BD Pack Bundle** | Pack mesh + textures + colors into MESH_BUNDLE |
+| **BD Unpack Bundle** | Unpack MESH_BUNDLE into individual components |
+| **BD Cache Bundle** | Cache MESH_BUNDLE for fast reload |
+| **BD Mesh Inspector** | Inspect mesh properties (verts, faces, UVs, colors) |
 
-**BD Planar Grouping Features:**
-- **Normal-based grouping**: Clusters faces with similar normals into planar regions
-- **Boundary straightening**: Projects vertices onto plane intersections for clean edges
-- **Face-split mesh support**: Works with meshes where each face has unique vertices
-- **Configurable thresholds**: Angle threshold and minimum group size
-- **Visualization**: Optional color-coding by group
+**OVoxel Baking Pipeline:**
+```
+[TRELLIS2 Texture] → voxelgrid → [BD OVoxel Bake] → mesh + PBR textures
+                                       OR
+[TRELLIS2 Texture] → voxelgrid → [BD OVoxel Texture Bake]
+                          ↑ mesh → [BD Blender Decimate] → [BD UV Unwrap] ↗
+```
+
+**VXZ Caching Pipeline:**
+```
+[TRELLIS2 Texture] → voxelgrid → [BD Export OVoxel] → saved .vxz + .mesh.npz
+                                                            ↓
+[BD Load OVoxel] → voxelgrid → [BD OVoxel Bake] → re-bake without regenerating
+```
 
 ### Blender Nodes (`BrainDead/Blender`)
 Advanced mesh processing using Blender's geometry tools (requires Blender 5.0+).
 
 | Node | Description |
 |------|-------------|
-| **BD Blender Decimate V3** | Full-featured decimation with edge preservation |
+| **BD Blender Decimate** | Full-featured decimation with edge preservation |
 | **BD Blender Edge Marking** | Detect and mark edges from colors/angles |
 | **BD Blender Merge Planes** | Merge geometry within marked regions |
 | **BD Blender Remesh** | Voxel/quad remeshing with Blender |
 | **BD Blender Cleanup** | Advanced mesh cleanup and repair |
 | **BD Blender Vertex Colors** | Vertex color operations (bake, transfer) |
 | **BD Blender Normals** | Normal fixing and recalculation |
+| **BD Blender Export Mesh** | Export MESH_BUNDLE as GLB with material + vertex colors |
 
 **Hard Edge Preservation Pipeline:**
 ```

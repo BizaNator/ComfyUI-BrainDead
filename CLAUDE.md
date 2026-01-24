@@ -145,20 +145,35 @@ Bundled Blender location: `lib/blender/blender-5.0.1-linux-x64/blender`
 
 ```
 nodes/
-├── mesh/           # 3D mesh processing
-│   ├── types.py    # TrimeshInput/TrimeshOutput
-│   ├── cache.py    # BD_CacheMesh
-│   ├── sampling.py # BD_SampleVoxelgridColors, BD_SampleVoxelgridPBR
-│   ├── transfer.py # BD_TransferVertexColors, etc.
-│   ├── processing.py # BD_MeshRepair, BD_SmartDecimate
-│   ├── export.py   # BD_ExportMeshWithColors
-│   ├── simplify.py # BD_CuMeshSimplify
-│   ├── unwrap.py   # BD_UVUnwrap
-│   ├── ovoxel_bake.py # BD_OVoxelBake
-│   └── bundle.py   # BD_PackBundle, BD_UnpackBundle, BD_CacheBundle
-├── blender/        # Blender-based operations
-├── cache/          # Caching nodes
-├── character/      # Qwen character nodes
-├── prompt/         # Prompt iteration
-└── trellis2/       # TRELLIS2 specific
+├── mesh/                   # 3D mesh processing
+│   ├── types.py            # TrimeshInput/TrimeshOutput, MeshBundleInput/Output, etc.
+│   ├── cache.py            # BD_CacheMesh
+│   ├── sampling.py         # BD_SampleVoxelgridColors, BD_SampleVoxelgridPBR
+│   ├── transfer.py         # BD_TransferVertexColors, etc.
+│   ├── processing.py       # BD_MeshRepair, BD_SmartDecimate
+│   ├── export.py           # BD_ExportMeshWithColors
+│   ├── simplify.py         # BD_CuMeshSimplify
+│   ├── unwrap.py           # BD_UVUnwrap
+│   ├── grouping.py         # BD_PlanarGrouping
+│   ├── edge_utils.py       # BD_CombineEdgeMetadata
+│   ├── color_field.py      # BD_ApplyColorField
+│   ├── ovoxel_bake.py      # BD_OVoxelBake (all-in-one PBR bake)
+│   ├── ovoxel_texture_bake.py # BD_OVoxelTextureBake (bake-only)
+│   ├── ovoxel_convert.py   # BD_MeshToOVoxel
+│   ├── ovoxel_io.py        # BD_ExportOVoxel, BD_LoadOVoxel
+│   ├── fix_normals.py      # BD_FixNormals
+│   ├── bundle.py           # BD_PackBundle, BD_UnpackBundle, BD_CacheBundle
+│   └── inspector.py        # BD_MeshInspector
+├── blender/                # Blender-based operations
+│   ├── base.py             # BlenderNodeMixin
+│   ├── decimate.py         # BD_BlenderDecimate
+│   ├── export_mesh.py      # BD_BlenderExportMesh
+│   └── addon_nodes.py      # Edge marking, merge planes, remesh, etc.
+├── cache/                  # Caching nodes
+├── character/              # Qwen character nodes
+├── prompt/                 # Prompt iteration
+└── trellis2/               # TRELLIS2 specific
+    ├── shape.py            # BD_Trellis2GenerateShape
+    ├── texture.py          # BD_Trellis2ShapeToTexturedMesh, BD_Trellis2Retexture
+    └── utils/helpers.py    # fix_normals_outward, etc.
 ```
