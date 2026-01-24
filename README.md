@@ -12,7 +12,7 @@ A comprehensive collection of ComfyUI custom nodes for caching, character consis
 
   *Games | AI | Community*
 
-  [![BrainDeadGuild](https://img.shields.io/badge/BrainDeadGuild-Community-purple)](https://BrainDeadGuild.com/Discord)
+  [![BrainDeadGuild](https://img.shields.io/badge/BrainDeadGuild-Community-purple)](https://BrainDeadGuild.com/discord)
   [![BrainDead.TV](https://img.shields.io/badge/BrainDead.TV-Lore-red)](https://BrainDead.TV)
 
 </div>
@@ -271,7 +271,7 @@ BrainDead/
 
 Created by **BizaNator**
 
-[BrainDeadGuild.com](https://BrainDeadGuild.com) | [BrainDead.TV](https://BrainDead.TV) | [GitHub](https://github.com/BrainDeadGuild) | [Discord](https://braindeadguild.com/discord)
+[BrainDeadGuild.com](https://BrainDeadGuild.com) | [BrainDead.TV](https://BrainDead.TV) | [GitHub](https://github.com/BrainDeadGuild) | [discord](https://braindeadguild.com/discord)
 
 ### Other BrainDead ComfyUI Nodes
 - BD - Image Descriptor (Coming Soon)
@@ -291,4 +291,4 @@ Created by **BizaNator**
 ## Support
 
 - GitHub Issues: [Report bugs](https://github.com/BizaNator/ComfyUI-BrainDead/issues)
-- Discord: [BrainDeadGuild](https://BrainDeadGuild.com/Discord)
+- discord: [BrainDeadGuild](https://BrainDeadGuild.com/discord)
