@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-braindead"
-version = "1.0.0"
-description = "BrainDead custom nodes for ComfyUI - Cache, Character, and Prompt tools"
+version = "1.1.0"
+description = "Comprehensive ComfyUI nodes for 3D mesh processing, PBR texture baking, caching, character consistency, and prompt iteration"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -12,9 +12,13 @@ maintainers = [
 ]
 keywords = [
     "comfyui",
-    "stable-diffusion",
-    "ai",
-    "image-generation",
+    "3d-mesh",
+    "pbr-textures",
+    "trellis2",
+    "voxelgrid",
+    "mesh-decimation",
+    "uv-unwrap",
+    "blender",
     "caching",
     "qwen",
     "character-consistency",
@@ -30,13 +34,14 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Environment :: GPU :: NVIDIA CUDA",
 ]
 requires-python = ">=3.10"
 dependencies = [
     "torch",
     "numpy",
     "Pillow",
-    "transformers",
 ]
 
 [project.optional-dependencies]
@@ -49,9 +54,7 @@ Homepage = "https://github.com/BizaNator/ComfyUI-BrainDead"
 Repository = "https://github.com/BizaNator/ComfyUI-BrainDead"
 Issues = "https://github.com/BizaNator/ComfyUI-BrainDead/issues"
 
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = ["comfyui_braindead", "comfyui_braindead.nodes", "comfyui_braindead.nodes.cache", "comfyui_braindead.nodes.character", "comfyui_braindead.nodes.prompt", "comfyui_braindead.utils"]
+[tool.comfy]
+PublisherId = "braindead"
+DisplayName = "BrainDead Nodes"
+Icon = ""
