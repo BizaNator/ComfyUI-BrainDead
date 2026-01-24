@@ -237,6 +237,14 @@ Use after: BD_CuMeshSimplify → BD_UVUnwrap → THIS NODE""",
                 mode='trilinear',
             )
 
+            # Bake tangent-space normal map from high-poly → low-poly transfer
+            print("[BD OVoxel Texture Bake] Baking tangent-space normal map...")
+            normal_img = cls._bake_tangent_normal_map(
+                mesh_verts_yup, mesh_faces, mesh_uvs,
+                orig_vertices, orig_faces, face_id,
+                rast, mask, texture_size,
+            )
+
             # Clean up heavy GPU data
             del bvh, pos, valid_pos, face_id, uvw, orig_tri_verts
             del mesh_verts_yup, uvs_rast, uvs_ndc, rast
@@ -275,17 +283,26 @@ Use after: BD_CuMeshSimplify → BD_UVUnwrap → THIS NODE""",
             roughness_img = torch.from_numpy(roughness_raw.astype(np.float32).repeat(3, axis=-1) / 255.0).unsqueeze(0)
             alpha_img = torch.from_numpy(alpha_raw.astype(np.float32).repeat(3, axis=-1) / 255.0).unsqueeze(0)
 
-            # Bake normal map from mesh vertex normals
-            normal_img = cls._bake_normal_map(mesh, mesh_verts, mesh_faces, mesh_uvs, texture_size)
-            if normal_img is None:
+            # Inpaint normal map seams
+            if normal_img is not None:
+                normal_np = (normal_img[0].numpy() * 255).clip(0, 255).astype(np.uint8)
+                normal_np = cv2.inpaint(normal_np, mask_inv, inpaint_radius, cv2.INPAINT_TELEA)
+                normal_img = torch.from_numpy(normal_np.astype(np.float32) / 255.0).unsqueeze(0)
+            else:
                 normal_img = make_placeholder(texture_size, texture_size, (0.5, 0.5, 1.0))
 
-            # Apply PBR material to output mesh
+            # Apply PBR material to output mesh (including normal map)
             import trimesh as trimesh_lib
+            normal_tex = None
+            if normal_img is not None:
+                normal_np_uint8 = (normal_img[0].numpy() * 255).clip(0, 255).astype(np.uint8)
+                normal_tex = Image.fromarray(normal_np_uint8)
+
             material = trimesh_lib.visual.material.PBRMaterial(
                 baseColorTexture=Image.fromarray(np.concatenate([base_color, (alpha_raw * np.ones_like(alpha_raw))], axis=-1)),
                 baseColorFactor=np.array([255, 255, 255, 255], dtype=np.uint8),
                 metallicRoughnessTexture=Image.fromarray(np.concatenate([np.zeros_like(metallic_raw), roughness_raw, metallic_raw], axis=-1)),
+                normalTexture=normal_tex,
                 metallicFactor=1.0,
                 roughnessFactor=1.0,
                 alphaMode='OPAQUE',
@@ -320,49 +337,128 @@ Use after: BD_CuMeshSimplify → BD_UVUnwrap → THIS NODE""",
             return error_return(str(e))
 
     @classmethod
-    def _bake_normal_map(cls, mesh, mesh_verts, mesh_faces, mesh_uvs, texture_size):
-        """Bake normal map from mesh vertex normals using nvdiffrast."""
+    def _bake_tangent_normal_map(
+        cls, mesh_verts_yup, mesh_faces, mesh_uvs,
+        orig_vertices, orig_faces, face_id,
+        rast, mask, texture_size,
+    ):
+        """
+        Bake a tangent-space normal map from high-poly → low-poly transfer.
+
+        For each UV texel:
+        1. Get the high-poly face normal (from BVH face_id)
+        2. Compute the low-poly tangent frame (from UV gradients)
+        3. Transform high-poly normal into tangent space
+
+        This captures geometric detail lost during decimation.
+        """
         import torch
         import numpy as np
 
         try:
-            import nvdiffrast.torch as dr
+            device = mesh_verts_yup.device
 
-            if not hasattr(mesh, 'vertex_normals') or mesh.vertex_normals is None:
-                return None
+            # 1. Compute ALL high-poly face normals
+            v0 = orig_vertices[orig_faces[:, 0]]
+            v1 = orig_vertices[orig_faces[:, 1]]
+            v2 = orig_vertices[orig_faces[:, 2]]
+            hp_edge1 = v1 - v0
+            hp_edge2 = v2 - v0
+            hp_face_normals = torch.cross(hp_edge1, hp_edge2, dim=-1)
+            hp_face_normals = hp_face_normals / (torch.norm(hp_face_normals, dim=-1, keepdim=True) + 1e-8)
 
-            normals = torch.from_numpy(np.array(mesh.vertex_normals, dtype=np.float32)).cuda()
+            # Get per-texel high-poly normal (face_id is from BVH on the valid texels)
+            hp_normals_valid = hp_face_normals[face_id.long()]  # [N_valid, 3]
 
-            # Rasterize in UV space
-            uvs_ndc = mesh_uvs.clone()
-            uvs_ndc[:, 1] = 1.0 - uvs_ndc[:, 1]
-            uvs_rast = torch.cat([
-                uvs_ndc * 2 - 1,
-                torch.zeros_like(uvs_ndc[:, :1]),
-                torch.ones_like(uvs_ndc[:, :1])
-            ], dim=-1).unsqueeze(0)
+            # 2. Compute per-triangle tangent frames on the low-poly mesh
+            # Using mesh_verts_yup (same coord space as orig_vertices)
+            lv0 = mesh_verts_yup[mesh_faces[:, 0]]
+            lv1 = mesh_verts_yup[mesh_faces[:, 1]]
+            lv2 = mesh_verts_yup[mesh_faces[:, 2]]
+            luv0 = mesh_uvs[mesh_faces[:, 0]]
+            luv1 = mesh_uvs[mesh_faces[:, 1]]
+            luv2 = mesh_uvs[mesh_faces[:, 2]]
 
-            ctx = dr.RasterizeCudaContext()
-            rast, _ = dr.rasterize(ctx, uvs_rast, mesh_faces, resolution=[texture_size, texture_size])
-            mask = rast[0, ..., 3] > 0
+            # Position deltas
+            dp1 = lv1 - lv0
+            dp2 = lv2 - lv0
 
-            # Interpolate normals
-            normal_map = dr.interpolate(normals.unsqueeze(0), rast, mesh_faces)[0][0]
+            # UV deltas
+            duv1 = luv1 - luv0
+            duv2 = luv2 - luv0
 
-            # Normalize and convert to [0, 1]
-            normal_np = normal_map.cpu().numpy()
-            norms = np.linalg.norm(normal_np, axis=-1, keepdims=True)
-            norms = np.maximum(norms, 1e-8)
-            normal_np = normal_np / norms
-            normal_np = (normal_np * 0.5 + 0.5)
+            # Tangent/bitangent from UV gradients
+            det = duv1[:, 0] * duv2[:, 1] - duv1[:, 1] * duv2[:, 0]
+            # Avoid division by zero for degenerate UVs
+            det = torch.where(det.abs() < 1e-8, torch.ones_like(det), det)
+            inv_det = 1.0 / det
 
-            mask_np = mask.cpu().numpy()
-            normal_np[~mask_np] = [0.5, 0.5, 1.0]
+            tangent = inv_det.unsqueeze(-1) * (duv2[:, 1:2] * dp1 - duv1[:, 1:2] * dp2)
+            bitangent = inv_det.unsqueeze(-1) * (-duv2[:, 0:1] * dp1 + duv1[:, 0:1] * dp2)
 
-            return torch.from_numpy(normal_np.astype(np.float32)).unsqueeze(0)
+            # Face normal from cross product (geometric normal of low-poly triangle)
+            lp_face_normal = torch.cross(dp1, dp2, dim=-1)
+            lp_face_normal = lp_face_normal / (torch.norm(lp_face_normal, dim=-1, keepdim=True) + 1e-8)
+
+            # Orthogonalize tangent frame (Gram-Schmidt)
+            tangent = tangent - (tangent * lp_face_normal).sum(-1, keepdim=True) * lp_face_normal
+            tangent = tangent / (torch.norm(tangent, dim=-1, keepdim=True) + 1e-8)
+            bitangent = torch.cross(lp_face_normal, tangent, dim=-1)
+            bitangent = bitangent / (torch.norm(bitangent, dim=-1, keepdim=True) + 1e-8)
+
+            # 3. Get per-texel low-poly triangle index from rast
+            # rast[..., 3] is 1-indexed face ID (with chunk offset already applied)
+            tri_id_map = rast[0, ..., 3].long() - 1  # [H, W], 0-indexed, -1 for empty
+            valid_tri_ids = tri_id_map[mask]  # [N_valid]
+
+            # Clamp to valid range (safety)
+            valid_tri_ids = valid_tri_ids.clamp(0, mesh_faces.shape[0] - 1)
+
+            # Get tangent frame for each valid texel
+            T = tangent[valid_tri_ids]          # [N_valid, 3]
+            B = bitangent[valid_tri_ids]        # [N_valid, 3]
+            N = lp_face_normal[valid_tri_ids]   # [N_valid, 3]
+
+            # 4. Transform high-poly normals to tangent space
+            # TBN^T * world_normal = tangent_space_normal
+            ts_x = (hp_normals_valid * T).sum(-1)   # tangent component
+            ts_y = (hp_normals_valid * B).sum(-1)   # bitangent component
+            ts_z = (hp_normals_valid * N).sum(-1)   # normal component
+
+            tangent_normals = torch.stack([ts_x, ts_y, ts_z], dim=-1)
+
+            # Normalize (handle edge cases where projection gives zero-length)
+            tn_len = torch.norm(tangent_normals, dim=-1, keepdim=True)
+            tangent_normals = torch.where(
+                tn_len > 1e-6,
+                tangent_normals / tn_len,
+                torch.tensor([0.0, 0.0, 1.0], device=device).expand_as(tangent_normals),
+            )
+
+            # Ensure Z is positive (normal should point outward in tangent space)
+            # If Z is negative, the high-poly normal faces away from the low-poly surface
+            tangent_normals[:, 2] = tangent_normals[:, 2].abs()
+
+            # 5. Encode as [0, 1] range
+            normal_map = torch.full((texture_size, texture_size, 3), 0.0, device=device)
+            normal_map[..., :] = torch.tensor([0.5, 0.5, 1.0], device=device)  # default flat
+            normal_map[mask] = tangent_normals * 0.5 + 0.5
+
+            n_valid = mask.sum().item()
+            flat_pct = ((tangent_normals[:, 2] > 0.99).sum().item() / max(n_valid, 1)) * 100
+            print(f"[BD OVoxel Texture Bake] Normal map: {n_valid:,} texels, {flat_pct:.0f}% flat")
+
+            # Free GPU memory before returning
+            del hp_face_normals, hp_normals_valid, tangent, bitangent, lp_face_normal
+            del T, B, N, tangent_normals
+            torch.cuda.empty_cache()
+
+            return normal_map.cpu().unsqueeze(0).float()
 
         except Exception as e:
-            print(f"[BD OVoxel Texture Bake] Warning: normal map baking failed: {e}")
+            import traceback
+            print(f"[BD OVoxel Texture Bake] Warning: tangent-space normal map failed: {e}")
+            traceback.print_exc()
             return None
 
 
