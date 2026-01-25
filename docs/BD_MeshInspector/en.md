@@ -13,15 +13,31 @@ The viewer toolbar provides instant mode switching between 10 visualization mode
 The node accepts mesh data from three sources (in priority order):
 
 1. **mesh** (TRIMESH) - Direct mesh input from any BD mesh node or TRELLIS2
-2. **bundle** (MESH_BUNDLE) - From BD Pack Bundle or BD Cache Bundle, extracts mesh + all textures
-3. **glb_path** (string) - Path to a GLB/glTF file on disk
+2. **mesh_path** (string) - Path to a GLB/glTF/PLY/OBJ file on disk
+3. **bundle** (MESH_BUNDLE) - From BD Pack Bundle or BD Cache Bundle, extracts mesh + all textures
 
-If multiple sources are connected, higher-priority sources override lower ones.
+If multiple sources are connected, higher-priority sources override lower ones for the **mesh geometry**.
+
+### Combining mesh_path + bundle (Optimal Performance)
+
+For the fastest inspection with full PBR channels, connect **both** `mesh_path` and `bundle`:
+
+- **mesh_path** provides the GLB file to serve directly (no re-export needed)
+- **bundle** provides all PBR data (vertex colors, metallic, roughness, normal, alpha, diffuse)
+
+This combination is ideal when you have a GLB output from BD_BlenderExportMesh and want to inspect it with all the PBR channels from the original bundle. The status will show `Source: file+bundle`.
+
+```
+BD_BlenderExportMesh ──── glb_path ──────────► BD_MeshInspector
+                                                      ▲
+BD_CacheBundle ──────────── bundle ───────────────────┘
+```
 
 ### Bundle Integration
 
 When a MESH_BUNDLE is connected, the node automatically extracts:
-- The mesh geometry (if no direct mesh input is connected)
+- The mesh geometry (if no direct mesh input or mesh_path is provided)
+- Vertex colors (from bundle's vertex_colors or sampled from color_field)
 - Normal, alpha, diffuse textures (if no individual texture inputs override them)
 - Metallic and roughness texture maps
 
@@ -50,7 +66,7 @@ Buttons for unavailable channels (no data provided) are grayed out automatically
 |-----------|-----------|------------|---------|-------------|
 | `mesh` | TRIMESH | Optional | - | Direct mesh input (from BD mesh nodes or TRELLIS2) |
 | `bundle` | MESH_BUNDLE | Optional | - | Bundle from BD Pack Bundle or BD Cache Bundle |
-| `glb_path` | STRING | Optional | `""` | Path to a GLB/glTF file to inspect directly |
+| `mesh_path` | STRING | Optional | `""` | Path to a mesh file (GLB, glTF, PLY, OBJ, FBX, STL, OFF) |
 | `initial_mode` | COMBO | Required | `full_material` | Initial view mode when the viewer loads |
 | `metallic_json` | STRING | Optional | `""` | JSON array of per-vertex metallic values [0-1] |
 | `roughness_json` | STRING | Optional | `""` | JSON array of per-vertex roughness values [0-1] |
@@ -69,21 +85,33 @@ Buttons for unavailable channels (no data provided) are grayed out automatically
 
 ```
 BD_SampleVoxelgridPBR ──┬── mesh ─────────────► BD_MeshInspector
-                         ├── metallic_json ────►
-                         └── roughness_json ───►
+                        ├── metallic_json ────►
+                        └── roughness_json ───►
 
 BD_CacheBundle ──────────── bundle ────────────► BD_MeshInspector
 
 BD_OVoxelTextureBake ───── mesh ──────────────► BD_MeshInspector
-                         ├── diffuse ──────────►
-                         └── normal ───────────►
+                        ├── diffuse ──────────►
+                        └── normal ───────────►
+
+# Optimal: file + bundle for speed with full PBR
+BD_BlenderExportMesh ───── glb_path ───────────► BD_MeshInspector
+BD_CacheBundle ──────────── bundle ────────────►      (same node)
 ```
 
 ## Technical Details
 
 - **Renderer**: Three.js r160, bundled locally (712KB, no network required)
-- **Export**: Mesh exported as GLB to ComfyUI output directory (preserves vertex colors + UVs)
-- **Channel data**: Textures encoded as base64 PNG, per-vertex arrays as JSON
-- **Widget**: 520x460 iframe with 4:3 aspect ratio
+- **Export**: Mesh exported as GLB to ComfyUI temp directory with hash-based deduplication
+- **Direct serving**: GLB/glTF files in output/input/temp directories are served directly (no re-export)
+- **Channel data**: Textures downsampled to 1024px max and encoded as JPEG (PNG for alpha maps)
+- **Widget**: 520x460 iframe, resizable (viewer fills available height when node is resized)
 - **Controls**: OrbitControls (damped rotation, pan, zoom)
 - **Dependencies**: No additional Python packages (uses existing trimesh, numpy, Pillow)
+
+## Performance Tips
+
+1. **Use mesh_path + bundle together** for the fastest inspection with full PBR channels
+2. **Hash-based caching**: The same mesh geometry reuses the same temp file (no duplicate writes)
+3. **Texture downsampling**: All textures are downsampled to 1024px for the preview viewer (faster encoding, smaller transfer)
+4. **JPEG encoding**: Non-alpha textures use JPEG (quality 80) instead of PNG for ~10x faster encoding

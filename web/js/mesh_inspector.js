@@ -68,7 +68,9 @@ app.registerExtension({
                 if (!message?.mesh_file || !message.mesh_file[0]) return;
 
                 const filename = message.mesh_file[0];
-                const filepath = `/view?filename=${encodeURIComponent(filename)}&type=output&subfolder=`;
+                const viewType = message.view_type?.[0] || "temp";
+                const subfolder = message.subfolder?.[0] || "";
+                const filepath = `/view?filename=${encodeURIComponent(filename)}&type=${viewType}&subfolder=${encodeURIComponent(subfolder)}`;
 
                 // Wait for iframe to be ready, then send data
                 const sendData = () => {

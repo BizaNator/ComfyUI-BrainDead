@@ -6,7 +6,7 @@ Full Material, Geometry, Vertex Colors, UV, Normal, Metallic, Roughness, Alpha, 
 """
 
 import os
-import uuid
+import hashlib
 import json
 import base64
 import io as io_module
@@ -24,9 +24,13 @@ except ImportError:
 
 try:
     import folder_paths
+    COMFYUI_TEMP_FOLDER = folder_paths.get_temp_directory()
     COMFYUI_OUTPUT_FOLDER = folder_paths.get_output_directory()
+    COMFYUI_INPUT_FOLDER = folder_paths.get_input_directory()
 except (ImportError, AttributeError):
+    COMFYUI_TEMP_FOLDER = None
     COMFYUI_OUTPUT_FOLDER = None
+    COMFYUI_INPUT_FOLDER = None
 
 
 VIEW_MODES = [
@@ -43,19 +47,31 @@ VIEW_MODES = [
 ]
 
 
-def _encode_image_to_base64(image_tensor) -> str:
-    """Convert ComfyUI image tensor (B,H,W,C float 0-1) to base64 PNG string."""
+INSPECTOR_MAX_TEX_SIZE = 1024  # Max texture resolution for preview viewer
+
+
+def _encode_image_to_base64(image_tensor, use_jpeg=True) -> str:
+    """Convert ComfyUI image tensor (B,H,W,C float 0-1) to base64 string.
+    Downsamples to INSPECTOR_MAX_TEX_SIZE and uses JPEG for speed."""
     from PIL import Image
 
     img_np = (image_tensor[0].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
     img = Image.fromarray(img_np)
+    # Downsample for preview
+    if max(img.size) > INSPECTOR_MAX_TEX_SIZE:
+        img.thumbnail((INSPECTOR_MAX_TEX_SIZE, INSPECTOR_MAX_TEX_SIZE), Image.LANCZOS)
     buffer = io_module.BytesIO()
-    img.save(buffer, format='PNG', optimize=True)
+    if use_jpeg:
+        img = img.convert('RGB')
+        img.save(buffer, format='JPEG', quality=80)
+    else:
+        img.save(buffer, format='PNG', optimize=True)
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
 
-def _encode_numpy_to_base64(arr) -> str:
-    """Convert numpy uint8 array (H,W,C) to base64 PNG string."""
+def _encode_numpy_to_base64(arr, use_jpeg=True) -> str:
+    """Convert numpy uint8 array (H,W,C) to base64 string.
+    Downsamples to INSPECTOR_MAX_TEX_SIZE and uses JPEG for speed."""
     from PIL import Image
 
     if arr is None:
@@ -68,10 +84,20 @@ def _encode_numpy_to_base64(arr) -> str:
     elif arr.shape[-1] == 1:
         arr = np.repeat(arr, 3, axis=-1)
     elif arr.shape[-1] == 4:
-        arr = arr[:, :, :3]
+        # Keep alpha only if not using JPEG
+        if use_jpeg:
+            arr = arr[:, :, :3]
+        # else keep RGBA for PNG
     img = Image.fromarray(arr.astype(np.uint8))
+    # Downsample for preview
+    if max(img.size) > INSPECTOR_MAX_TEX_SIZE:
+        img.thumbnail((INSPECTOR_MAX_TEX_SIZE, INSPECTOR_MAX_TEX_SIZE), Image.LANCZOS)
     buffer = io_module.BytesIO()
-    img.save(buffer, format='PNG', optimize=True)
+    if use_jpeg:
+        img = img.convert('RGB')
+        img.save(buffer, format='JPEG', quality=80)
+    else:
+        img.save(buffer, format='PNG', optimize=True)
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
 
@@ -179,6 +205,37 @@ class BD_MeshInspector(io.ComfyNode):
         )
 
     @classmethod
+    def _mesh_hash(cls, mesh) -> str:
+        """Generate a short hash from mesh geometry for dedup filenames."""
+        verts = mesh.vertices
+        h = hashlib.md5()
+        h.update(f"{len(verts)}_{len(mesh.faces) if mesh.faces is not None else 0}".encode())
+        # Sample a few vertices for fast hashing
+        if len(verts) > 0:
+            h.update(verts[0].tobytes())
+            h.update(verts[-1].tobytes())
+            h.update(verts[len(verts) // 2].tobytes())
+        return h.hexdigest()[:12]
+
+    @classmethod
+    def _resolve_servable_path(cls, filepath) -> tuple:
+        """Check if a file is in a ComfyUI-servable directory.
+        Returns (filename, view_type, subfolder) or None.
+        """
+        abs_path = os.path.abspath(filepath)
+        for folder, view_type in [
+            (COMFYUI_OUTPUT_FOLDER, "output"),
+            (COMFYUI_INPUT_FOLDER, "input"),
+            (COMFYUI_TEMP_FOLDER, "temp"),
+        ]:
+            if folder and abs_path.startswith(os.path.abspath(folder) + os.sep):
+                rel = os.path.relpath(abs_path, folder)
+                subfolder = os.path.dirname(rel)
+                fname = os.path.basename(rel)
+                return (fname, view_type, subfolder if subfolder != '.' else '')
+        return None
+
+    @classmethod
     def execute(cls, mesh=None, bundle=None, mesh_path="",
                 initial_mode="full_material",
                 metallic_json="", roughness_json="", normal_map=None,
@@ -186,71 +243,81 @@ class BD_MeshInspector(io.ComfyNode):
         if not HAS_TRIMESH:
             return io.NodeOutput("ERROR: trimesh not installed")
 
-        # Extract data from bundle if provided (individual inputs override)
+        # Extract PBR data from bundle (always, regardless of mesh source)
         bundle_vertex_colors = None
         if bundle is not None and isinstance(bundle, dict):
-            if mesh is None:
-                mesh = bundle.get('mesh')
-            # Extract vertex colors from bundle (stored separately from mesh visual)
+            # Extract vertex colors from bundle
             vc = bundle.get('vertex_colors')
             if vc is not None and isinstance(vc, np.ndarray) and len(vc) > 0 and vc.max() > 0:
                 bundle_vertex_colors = vc
-            # If no vertex_colors but color_field exists, sample it onto mesh vertices
-            if bundle_vertex_colors is None and bundle.get('color_field') is not None:
-                bundle_vertex_colors = _sample_color_field(
-                    bundle.get('mesh') if mesh is None else mesh,
-                    bundle['color_field']
-                )
-            if not metallic_json and bundle.get('metallic') is not None:
-                # Bundle has metallic as texture, not per-vertex JSON
-                pass  # Handled below as metallic_map
-            if not roughness_json and bundle.get('roughness') is not None:
-                # Bundle has roughness as texture, not per-vertex JSON
-                pass  # Handled below as roughness_map
+            # PBR textures from bundle (individual inputs override)
             if normal_map is None and bundle.get('normal') is not None:
-                normal_map = bundle.get('normal')  # numpy array
+                normal_map = bundle.get('normal')
             if alpha_map is None and bundle.get('alpha') is not None:
-                alpha_map = bundle.get('alpha')  # numpy array
+                alpha_map = bundle.get('alpha')
             if diffuse_map is None and bundle.get('diffuse') is not None:
-                diffuse_map = bundle.get('diffuse')  # numpy array
+                diffuse_map = bundle.get('diffuse')
 
-        # Load from file path if no mesh from direct input or bundle
-        if mesh is None and mesh_path and mesh_path.strip():
+        # Determine mesh source (priority: mesh > mesh_path > bundle.mesh)
+        serve_existing = None
+        source = "mesh"
+        if mesh is not None:
+            source = "mesh"
+        elif mesh_path and mesh_path.strip():
             mesh_path = mesh_path.strip()
             if os.path.isfile(mesh_path):
+                ext = os.path.splitext(mesh_path)[1].lower()
+                if ext in ('.glb', '.gltf'):
+                    serve_existing = cls._resolve_servable_path(mesh_path)
                 try:
                     mesh = trimesh.load(mesh_path, force='mesh')
+                    source = "file"
                     print(f"[BD Inspector] Loaded mesh from file: {mesh_path}")
                 except Exception as e:
                     return io.NodeOutput(f"ERROR: Failed to load mesh - {e}")
             else:
                 return io.NodeOutput(f"ERROR: Mesh file not found - {mesh_path}")
-
-        if mesh is None:
+        elif bundle is not None and isinstance(bundle, dict) and bundle.get('mesh') is not None:
+            mesh = bundle.get('mesh')
+            source = "bundle"
+        else:
             return io.NodeOutput("ERROR: No mesh (provide mesh, bundle, or mesh_path). If connected, check upstream node produced a valid mesh.")
 
-        # Generate unique filename for this preview
-        filename = f"bd_inspector_{uuid.uuid4().hex[:8]}.glb"
+        # Sample color_field onto mesh vertices if no vertex colors yet
+        if bundle_vertex_colors is None and bundle is not None and isinstance(bundle, dict):
+            if bundle.get('color_field') is not None:
+                bundle_vertex_colors = _sample_color_field(mesh, bundle['color_field'])
 
-        # Determine output directory
-        output_dir = COMFYUI_OUTPUT_FOLDER
-        if not output_dir:
-            import tempfile
-            output_dir = tempfile.gettempdir()
+        # Determine how to serve the mesh to the viewer
+        subfolder = ""
+        if serve_existing:
+            filename, view_type, subfolder = serve_existing
+        else:
+            # Export to temp directory with content-hash filename (no duplicates)
+            mesh_hash = cls._mesh_hash(mesh)
+            filename = f"bd_inspector_{mesh_hash}.glb"
+            view_type = "temp"
 
-        filepath = os.path.join(output_dir, filename)
+            temp_dir = COMFYUI_TEMP_FOLDER
+            if not temp_dir:
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+            os.makedirs(temp_dir, exist_ok=True)
 
-        # Export mesh to GLB (preserves vertex colors and UVs)
-        try:
-            mesh.export(filepath, file_type='glb')
-        except Exception as e:
-            print(f"[BD Inspector] GLB export failed: {e}, trying OBJ fallback")
-            filename = filename.replace('.glb', '.obj')
-            filepath = filepath.replace('.glb', '.obj')
-            try:
-                mesh.export(filepath, file_type='obj')
-            except Exception as e2:
-                return io.NodeOutput(f"ERROR: Export failed - {e2}")
+            filepath = os.path.join(temp_dir, filename)
+
+            # Only export if file doesn't already exist (hash-based dedup)
+            if not os.path.isfile(filepath):
+                try:
+                    mesh.export(filepath, file_type='glb')
+                except Exception as e:
+                    print(f"[BD Inspector] GLB export failed: {e}, trying OBJ fallback")
+                    filename = filename.replace('.glb', '.obj')
+                    filepath = filepath.replace('.glb', '.obj')
+                    try:
+                        mesh.export(filepath, file_type='obj')
+                    except Exception as e2:
+                        return io.NodeOutput(f"ERROR: Export failed - {e2}")
 
         # Truncate PBR arrays to 3 decimal places for size optimization
         metallic_out = ""
@@ -269,23 +336,23 @@ class BD_MeshInspector(io.ComfyNode):
             except (json.JSONDecodeError, TypeError):
                 roughness_out = roughness_json
 
-        # Encode texture maps to base64
+        # Encode texture maps to base64 (downsampled + JPEG for speed)
         # Handles both ComfyUI IMAGE tensors and numpy uint8 arrays (from bundle)
-        def _encode_map(map_data, label):
+        def _encode_map(map_data, label, use_jpeg=True):
             if map_data is None:
                 return ""
             try:
                 if isinstance(map_data, np.ndarray):
-                    return _encode_numpy_to_base64(map_data)
+                    return _encode_numpy_to_base64(map_data, use_jpeg=use_jpeg)
                 else:
-                    return _encode_image_to_base64(map_data)
+                    return _encode_image_to_base64(map_data, use_jpeg=use_jpeg)
             except Exception as e:
                 print(f"[BD Inspector] {label} encoding failed: {e}")
                 return ""
 
         normal_b64 = _encode_map(normal_map, "Normal map")
         emissive_b64 = _encode_map(emissive_map, "Emissive map")
-        alpha_b64 = _encode_map(alpha_map, "Alpha map")
+        alpha_b64 = _encode_map(alpha_map, "Alpha map", use_jpeg=False)  # PNG for alpha
         diffuse_b64 = _encode_map(diffuse_map, "Diffuse map")
 
         # Bundle metallic/roughness textures (separate from per-vertex JSON)
@@ -320,6 +387,10 @@ class BD_MeshInspector(io.ComfyNode):
                    and mesh.visual.uv is not None
                    and len(mesh.visual.uv) > 0)
 
+        # Indicate combined source when file + bundle PBR
+        if source == "file" and bundle is not None:
+            source = "file+bundle"
+
         # Build status string
         vert_count = len(mesh.vertices)
         face_count = len(mesh.faces) if hasattr(mesh, 'faces') and mesh.faces is not None else 0
@@ -346,12 +417,6 @@ class BD_MeshInspector(io.ComfyNode):
         if has_uvs:
             channels.append("uv")
 
-        if bundle is not None and mesh is bundle.get('mesh'):
-            source = "bundle"
-        elif mesh_path and mesh_path.strip():
-            source = "file"
-        else:
-            source = "mesh"
         status = (
             f"{vert_count} verts, {face_count} faces | "
             f"Source: {source} | "
@@ -365,6 +430,8 @@ class BD_MeshInspector(io.ComfyNode):
             status,
             ui={
                 "mesh_file": [filename],
+                "view_type": [view_type],
+                "subfolder": [subfolder],
                 "initial_mode": [initial_mode],
                 "metallic_json": [metallic_out],
                 "roughness_json": [roughness_out],
