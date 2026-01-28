@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-braindead"
-version = "1.1.0"
+version = "1.1.1"
 description = "Comprehensive ComfyUI nodes for 3D mesh processing, PBR texture baking, caching, character consistency, and prompt iteration"
 readme = "README.md"
 license = {text = "MIT"}
