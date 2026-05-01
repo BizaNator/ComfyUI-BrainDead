@@ -54,10 +54,18 @@ def load_segformer(model_id: str, device: str, dtype: torch.dtype, cache_dir: st
     return processor, model
 
 
-def _tensor_batch_to_pil_list(image: torch.Tensor):
+def _tensor_batch_to_pil_list(image: torch.Tensor, max_dim: int = 0):
     from PIL import Image
     arr = (image.detach().cpu().clamp(0.0, 1.0).numpy() * 255.0).astype(np.uint8)
-    return [Image.fromarray(arr[i]) for i in range(arr.shape[0])]
+    out = []
+    for i in range(arr.shape[0]):
+        pil = Image.fromarray(arr[i])
+        if max_dim > 0 and max(pil.size) > max_dim:
+            scale = max_dim / max(pil.size)
+            new_size = (int(round(pil.width * scale)), int(round(pil.height * scale)))
+            pil = pil.resize(new_size, Image.LANCZOS)
+        out.append(pil)
+    return out
 
 
 @torch.no_grad()
@@ -67,17 +75,35 @@ def run_segformer(
     image: torch.Tensor,
     device: str,
     dtype: torch.dtype,
-) -> torch.Tensor:
+    inference_size: int = 0,
+    confidence_threshold: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     image: ComfyUI tensor (B, H, W, 3) in [0, 1].
-    Returns class_map LongTensor (B, H, W) on CPU.
+    inference_size: max image dim before processor (0 = let processor decide).
+                    Smaller → sharper class boundaries (less bilinear bleed),
+                    coarser detail.
+    confidence_threshold: pixels with max-softmax below this go to background (class 0).
+
+    Returns (class_map LongTensor (B, H, W), confidence FloatTensor (B, H, W)) on CPU.
     """
     b, h, w, _ = image.shape
-    pil_list = _tensor_batch_to_pil_list(image)
+    pil_list = _tensor_batch_to_pil_list(image, max_dim=inference_size)
 
     inputs = processor(images=pil_list, return_tensors="pt")
     pixel_values = inputs["pixel_values"].to(device=device, dtype=dtype)
 
     logits = model(pixel_values=pixel_values).logits
     upsampled = F.interpolate(logits.float(), size=(h, w), mode="bilinear", align_corners=False)
-    return upsampled.argmax(dim=1).cpu().long()
+
+    probs = F.softmax(upsampled, dim=1)
+    confidence, class_map = probs.max(dim=1)
+
+    if confidence_threshold > 0.0:
+        class_map = torch.where(
+            confidence >= confidence_threshold,
+            class_map,
+            torch.zeros_like(class_map),
+        )
+
+    return class_map.cpu().long(), confidence.cpu().float()
