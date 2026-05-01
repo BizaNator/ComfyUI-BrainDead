@@ -42,6 +42,7 @@ dependencies = []
 
 [project.optional-dependencies]
 mesh = ["trimesh"]
+segmentation = ["transformers", "pillow"]
 
 [project.urls]
 Homepage = "https://github.com/BizaNator/ComfyUI-BrainDead"

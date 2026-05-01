@@ -10,6 +10,7 @@ A comprehensive collection of ComfyUI custom nodes for:
 - TRELLIS2: TRELLIS2-specific caching and conditioning tools
 - Character: Qwen-Image character consistency tools
 - Prompt: Prompt iteration for batch processing
+- Segmentation: Human/clothing parsing (FASHN + ATR backends)
 
 https://github.com/BizaNator/ComfyUI-BrainDead
 """
@@ -28,13 +29,14 @@ from .nodes.blender import BLENDER_V3_NODES
 from .nodes.trellis2 import TRELLIS2_V3_NODES
 from .nodes.character import CHARACTER_V3_NODES
 from .nodes.prompt import PROMPT_V3_NODES
+from .nodes.segmentation import SEGMENTATION_V3_NODES
 
 # =============================================================================
 # V3 Extension Entry Point
 # =============================================================================
 
 class BrainDeadExtension(ComfyExtension):
-    """ComfyUI-BrainDead V3 Extension with cache, mesh, blender, TRELLIS2, character, and prompt nodes."""
+    """ComfyUI-BrainDead V3 Extension with cache, mesh, blender, TRELLIS2, character, prompt, and segmentation nodes."""
 
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
         """Return all BrainDead nodes for V3 registration."""
@@ -45,6 +47,7 @@ class BrainDeadExtension(ComfyExtension):
             *TRELLIS2_V3_NODES,
             *CHARACTER_V3_NODES,
             *PROMPT_V3_NODES,
+            *SEGMENTATION_V3_NODES,
         ]
 
 
@@ -64,6 +67,7 @@ from .nodes.blender import BLENDER_NODES, BLENDER_DISPLAY_NAMES
 from .nodes.trellis2 import NODE_CLASS_MAPPINGS as TRELLIS2_NODES, NODE_DISPLAY_NAME_MAPPINGS as TRELLIS2_DISPLAY
 from .nodes.character import NODE_CLASS_MAPPINGS as CHARACTER_NODES, NODE_DISPLAY_NAME_MAPPINGS as CHARACTER_DISPLAY
 from .nodes.prompt import NODE_CLASS_MAPPINGS as PROMPT_NODES, NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY
+from .nodes.segmentation import NODE_CLASS_MAPPINGS as SEGMENTATION_NODES, NODE_DISPLAY_NAME_MAPPINGS as SEGMENTATION_DISPLAY
 
 # Aggregate all node mappings for V1 registration
 NODE_CLASS_MAPPINGS = {
@@ -73,6 +77,7 @@ NODE_CLASS_MAPPINGS = {
     **TRELLIS2_NODES,
     **CHARACTER_NODES,
     **PROMPT_NODES,
+    **SEGMENTATION_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -82,6 +87,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **TRELLIS2_DISPLAY,
     **CHARACTER_DISPLAY,
     **PROMPT_DISPLAY,
+    **SEGMENTATION_DISPLAY,
 }
 
 # Web directory for JavaScript extensions (toast notifications, etc.)
@@ -109,4 +115,5 @@ print(f"  - Blender: {len(BLENDER_NODES)} nodes")
 print(f"  - TRELLIS2: {len(TRELLIS2_NODES)} nodes")
 print(f"  - Character: {len(CHARACTER_NODES)} nodes")
 print(f"  - Prompt: {len(PROMPT_NODES)} nodes")
+print(f"  - Segmentation: {len(SEGMENTATION_NODES)} nodes")
 print("=" * 60)
