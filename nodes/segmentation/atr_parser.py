@@ -34,11 +34,9 @@ class BD_ATRHumanParser(io.ComfyNode):
                 ),
                 io.Combo.Input("device", options=["auto", "cuda", "cpu"], default="auto", optional=True),
                 io.Combo.Input("dtype", options=["fp16", "bf16", "fp32"], default="fp16", optional=True),
-                io.Combo.Input(
-                    "inference_size",
-                    options=["native", "256", "384", "512", "768", "1024"],
-                    default="512", optional=True,
-                    tooltip="Resize image before inference. ATR was trained at 512×512 — feeding much larger images blurs class boundaries on upsample. Smaller = sharper edges, less detail.",
+                io.Int.Input(
+                    "inference_size", default=512, min=0, max=2048, step=64, optional=True,
+                    tooltip="Resize image before inference (max dim in pixels). 0 = native (let processor decide). ATR was trained at 512×512 — sending much larger images blurs class boundaries on upsample.",
                 ),
                 io.Float.Input(
                     "confidence_threshold", default=0.0, min=0.0, max=1.0, step=0.05, optional=True,
@@ -56,15 +54,14 @@ class BD_ATRHumanParser(io.ComfyNode):
 
     @classmethod
     def execute(cls, image, model_id, device="auto", dtype="fp16",
-                inference_size="512", confidence_threshold=0.0, cache_dir="") -> io.NodeOutput:
+                inference_size=512, confidence_threshold=0.0, cache_dir="") -> io.NodeOutput:
         device = resolve_device(device)
         torch_dtype = resolve_dtype(dtype)
         processor, model = load_segformer(model_id, device, torch_dtype, resolve_cache_dir(cache_dir))
 
-        max_dim = 0 if inference_size == "native" else int(inference_size)
         class_map, confidence = run_segformer(
             processor, model, image, device, torch_dtype,
-            inference_size=max_dim,
+            inference_size=int(inference_size or 0),
             confidence_threshold=confidence_threshold,
         )
 
