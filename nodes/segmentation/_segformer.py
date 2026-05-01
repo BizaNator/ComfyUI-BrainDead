@@ -45,7 +45,7 @@ def load_segformer(model_id: str, device: str, dtype: torch.dtype, cache_dir: st
 
     from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
 
-    processor = AutoImageProcessor.from_pretrained(model_id, cache_dir=cache_dir, use_fast=True)
+    processor = AutoImageProcessor.from_pretrained(model_id, cache_dir=cache_dir, use_fast=False)
     model = SegformerForSemanticSegmentation.from_pretrained(
         model_id, cache_dir=cache_dir, dtype=dtype
     ).to(device).eval()
