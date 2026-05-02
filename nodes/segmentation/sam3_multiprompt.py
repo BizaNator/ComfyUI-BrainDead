@@ -15,6 +15,7 @@ import numpy as np
 import torch
 
 from comfy_api.latest import io
+from .mask_resolver import _rgb_to_lab, _adaptive_skin_likelihood
 
 
 _RMBG_PATH = "/opt/comfyui/dev/custom_nodes/comfyui-rmbg"
@@ -85,12 +86,48 @@ def _dilate_mask(mask: torch.Tensor, radius: int) -> torch.Tensor:
     return dilated
 
 
+def _compute_skin_likelihood(image_np: np.ndarray, color_mode: str,
+                             adaptive_ref_binary: np.ndarray | None,
+                             adaptive_tolerance: float, adaptive_min_samples: int) -> tuple[np.ndarray, dict]:
+    """Pick between fixed_hsv, adaptive_lab, or both. Returns (likelihood (H,W), debug dict)."""
+    debug = {"used_mode": color_mode, "adaptive": None}
+    if color_mode == "fixed_hsv" or adaptive_ref_binary is None:
+        return _skin_tone_likelihood(image_np[..., :3]), debug
+    if color_mode == "adaptive_lab":
+        likelihood, adaptive_dbg = _adaptive_skin_likelihood(
+            image_np[..., :3], adaptive_ref_binary,
+            tolerance=adaptive_tolerance, min_samples=adaptive_min_samples,
+        )
+        debug["adaptive"] = adaptive_dbg
+        if adaptive_dbg.get("skipped"):
+            debug["used_mode"] = "fixed_hsv (adaptive skipped — too few samples)"
+            return _skin_tone_likelihood(image_np[..., :3]), debug
+        return likelihood, debug
+    if color_mode == "both":
+        fixed = _skin_tone_likelihood(image_np[..., :3])
+        adapt, adaptive_dbg = _adaptive_skin_likelihood(
+            image_np[..., :3], adaptive_ref_binary,
+            tolerance=adaptive_tolerance, min_samples=adaptive_min_samples,
+        )
+        debug["adaptive"] = adaptive_dbg
+        if adaptive_dbg.get("skipped"):
+            debug["used_mode"] = "fixed_hsv (adaptive skipped)"
+            return fixed, debug
+        return fixed * adapt, debug
+    return _skin_tone_likelihood(image_np[..., :3]), debug
+
+
 def _apply_skin_color_filter(mask: torch.Tensor, image: torch.Tensor,
                              mode: str = "off",
                              threshold: float = 0.3,
                              strength: float = 0.7,
                              silhouette_mask: torch.Tensor | None = None,
-                             include_dilate_radius: int = 64) -> torch.Tensor:
+                             include_dilate_radius: int = 64,
+                             negative_exclude_zone: torch.Tensor | None = None,
+                             color_mode: str = "fixed_hsv",
+                             adaptive_ref_binary: np.ndarray | None = None,
+                             adaptive_tolerance: float = 25.0,
+                             adaptive_min_samples: int = 50) -> tuple[torch.Tensor, dict]:
     """Color-aware mask refinement using HSV-based skin tone likelihood.
 
     mode:
@@ -102,11 +139,13 @@ def _apply_skin_color_filter(mask: torch.Tensor, image: torch.Tensor,
       "exclude_and_include" — apply exclude THEN include.
     """
     if mode == "off":
-        return mask
+        return mask, {"used_mode": "off"}
     img_np = image.detach().cpu().numpy()
     if img_np.ndim == 4:
         img_np = img_np[0]
-    likelihood = _skin_tone_likelihood(img_np[..., :3])
+    likelihood, debug = _compute_skin_likelihood(
+        img_np, color_mode, adaptive_ref_binary, adaptive_tolerance, adaptive_min_samples,
+    )
     likelihood_t = torch.from_numpy(likelihood).to(mask.device).to(mask.dtype)
     if mask.ndim == 3 and likelihood_t.ndim == 2:
         likelihood_t = likelihood_t.unsqueeze(0)
@@ -125,23 +164,38 @@ def _apply_skin_color_filter(mask: torch.Tensor, image: torch.Tensor,
                     sil = torch.nn.functional.interpolate(
                         sil.unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest"
                     ).squeeze(0)
-                return (sil > 0.5).to(mask.dtype)
-        return _dilate_mask((mask > 0.05).to(mask.dtype), include_dilate_radius)
+                zone = (sil > 0.5).to(mask.dtype)
+            else:
+                zone = _dilate_mask((mask > 0.05).to(mask.dtype), include_dilate_radius)
+        else:
+            zone = _dilate_mask((mask > 0.05).to(mask.dtype), include_dilate_radius)
+        if negative_exclude_zone is not None:
+            ne = negative_exclude_zone.to(mask.device).to(mask.dtype)
+            if ne.ndim == 2:
+                ne = ne.unsqueeze(0)
+            if ne.shape[-2:] != mask.shape[-2:]:
+                ne = torch.nn.functional.interpolate(
+                    ne.unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest"
+                ).squeeze(0)
+            zone = zone * (1.0 - (ne > 0.5).to(mask.dtype))
+        return zone
 
     if mode == "exclude":
-        return mask * (floor + (1.0 - floor) * likelihood_t)
+        return mask * (floor + (1.0 - floor) * likelihood_t), debug
     if mode == "exclude_hard":
-        return mask * (likelihood_t >= threshold).to(mask.dtype)
+        return mask * (likelihood_t >= threshold).to(mask.dtype), debug
     if mode == "include":
         zone = _candidate_zone()
         skin_in_zone = ((likelihood_t >= threshold).to(mask.dtype) * zone)
-        return torch.maximum(mask, skin_in_zone)
+        return torch.maximum(mask, skin_in_zone), debug
     if mode == "exclude_and_include":
         excluded = mask * (floor + (1.0 - floor) * likelihood_t)
         zone = _candidate_zone()
         included = ((likelihood_t >= threshold).to(mask.dtype) * zone)
-        return torch.maximum(excluded, included)
-    return mask
+        return torch.maximum(excluded, included), debug
+    if mode == "remove_matching":
+        return mask * (1.0 - likelihood_t * float(strength)), debug
+    return mask, debug
 
 
 def _combine_masks(masks: list[torch.Tensor], mode: str) -> torch.Tensor:
@@ -195,35 +249,101 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                 ),
                 io.Combo.Input(
                     "combine_mode",
-                    options=["union", "intersection", "subtract_first", "first_only"],
+                    options=["union", "intersection", "subtract_first", "first_only", "vote", "weighted_vote"],
                     default="union", optional=True,
-                    tooltip="union = OR all positive masks (typical for 'all skin'). "
-                            "intersection = AND all (regions present in every prompt). "
-                            "subtract_first = first mask MINUS all others (built-in negation, alt to negative_prompts). "
-                            "first_only = ignore combine, just return prompt 1.",
+                    tooltip=(
+                        "How to combine positive prompts (and how negatives are applied):\n"
+                        "  union — OR all positives, then SUBTRACT negatives cumulatively. Single strong positive overrides many weak negatives.\n"
+                        "  intersection — AND all positives. Then subtract negatives.\n"
+                        "  subtract_first — first positive MINUS all others (then subtract negatives too).\n"
+                        "  first_only — return positive #1, ignore the rest.\n"
+                        "  vote — MAJORITY VOTE. Each positive detection = +1, each negative = -1. "
+                        "Pixel kept if net votes >= vote_threshold. Use when you have many prompts and want "
+                        "agreement (e.g. 1 positive vs 6 negatives → removed even if positive was strong).\n"
+                        "  weighted_vote — like vote but each detection contributes its CONTINUOUS value, "
+                        "not binary. Soft detections weigh proportionally."
+                    ),
+                ),
+                io.Float.Input(
+                    "vote_threshold", default=1.0, min=-20.0, max=20.0, step=0.5, optional=True,
+                    tooltip="Vote-mode threshold. Pixel kept if (positive_votes - negative_votes) >= this. "
+                            "Default 1 = need at least one MORE positive than negative. "
+                            "Lower (0, -1) = positives win ties / get a head start. "
+                            "Higher (2+) = need stronger positive consensus.",
+                ),
+                io.Float.Input(
+                    "vote_pos_min", default=0.5, min=0.0, max=1.0, step=0.05, optional=True,
+                    tooltip="In 'vote' mode, a positive prompt's mask must have a pixel value >= this to count as a vote. "
+                            "Higher = only confident positives count.",
+                ),
+                io.Float.Input(
+                    "vote_neg_min", default=0.5, min=0.0, max=1.0, step=0.05, optional=True,
+                    tooltip="In 'vote' mode, a negative prompt's mask must have a pixel value >= this to count as a vote. "
+                            "Higher = only confident negatives count.",
                 ),
                 io.Combo.Input(
-                    "skin_color_filter",
-                    options=["off", "exclude", "exclude_hard", "include", "exclude_and_include"],
+                    "color_filter",
+                    options=["off", "exclude", "exclude_hard", "include", "exclude_and_include", "remove_matching"],
                     default="off", optional=True,
                     tooltip=(
-                        "Color-aware mask refinement using HSV skin-tone detection.\n"
+                        "Color-aware mask refinement. Works for ANY positive-prompt category — the reference "
+                        "color is sampled from your positives (or color_reference_mask if provided), so "
+                        "red jacket → red ref, pale skin → pale ref, dark skin → dark ref, etc.\n"
                         "  off — no filtering.\n"
-                        "  exclude — REMOVE non-skin-toned pixels from the SAM3 mask (suppresses bleed).\n"
+                        "  exclude — KEEP pixels matching the reference, suppress non-matching (cleans bleed in mask).\n"
                         "  exclude_hard — same but binary threshold (use color_strength=1).\n"
-                        "  include — REPLACE the SAM3 mask with skin-toned pixels (good when SAM3 missed obvious skin).\n"
-                        "  exclude_and_include — keep SAM3's mask AND add skin pixels SAM3 missed (best of both)."
+                        "  include — ADD pixels matching reference into the mask (catches what SAM3 missed).\n"
+                        "  exclude_and_include — combine: keep matching AND add matching pixels SAM3 missed.\n"
+                        "  remove_matching — REMOVE pixels matching reference from the mask. Use case: pass "
+                        "color_reference_mask=ear_region to subtract ear-colored pixels from a skin detection."
                     ),
                 ),
                 io.Float.Input(
                     "color_strength", default=0.7, min=0.0, max=1.0, step=0.05, optional=True,
-                    tooltip="How aggressive 'exclude' is. 0 = no effect, 1 = fully suppress non-skin pixels (old behavior). "
-                            "Try 0.5 for stylized art that doesn't match strict HSV skin ranges.",
+                    tooltip="How aggressive 'exclude' is. 0 = no effect, 1 = fully suppress non-matching pixels. "
+                            "Try 0.5 for stylized art that doesn't match the reference range strictly.",
                 ),
                 io.Float.Input(
-                    "skin_color_threshold", default=0.3, min=0.0, max=1.0, step=0.05, optional=True,
-                    tooltip="Threshold for binary modes (exclude_hard, include). Pixels with skin-tone likelihood "
-                            "above this count as skin. Lower for stylized art (try 0.15-0.25).",
+                    "color_threshold", default=0.3, min=0.0, max=1.0, step=0.05, optional=True,
+                    tooltip="Threshold for binary color modes (exclude_hard, include). Pixels with color-match "
+                            "likelihood above this count as 'matches reference'. Lower for stylized art (try 0.15-0.25).",
+                ),
+                io.Combo.Input(
+                    "color_mode", options=["adaptive_lab", "fixed_hsv", "both"],
+                    default="adaptive_lab", optional=True,
+                    tooltip="How the color filter scores match likelihood:\n"
+                            "  adaptive_lab — GENERIC, works for ANY positive-prompt category. Samples reference "
+                            "color from the current combined mask (or color_reference_mask if provided), then scores "
+                            "every image pixel by CIE LAB ΔE distance. Self-tunes per character/object.\n"
+                            "  fixed_hsv — SKIN-SPECIFIC. Hard-coded HSV ranges from the legacy GLSL shader. Only "
+                            "use this for skin detection on photo-trained characters; fails on very pale/dark skin "
+                            "and on non-skin categories entirely.\n"
+                            "  both — multiply the two likelihoods (strictest, skin-only).\n"
+                            "Falls back to fixed_hsv if not enough confident pixels for adaptive sampling.",
+                ),
+                io.Mask.Input(
+                    "color_reference_mask", optional=True,
+                    tooltip="Optional explicit color reference mask. When provided, adaptive_lab samples reference "
+                            "color from this region (useful when you want to lock the reference to a specific area, "
+                            "e.g. a face mask for skin, a swatch region for clothing). When NOT provided, samples "
+                            "from the current SAM3 combined mask — which is normally what you want, since the "
+                            "positives ALREADY found the category you're refining.",
+                ),
+                io.Float.Input(
+                    "adaptive_tolerance", default=25.0, min=2.0, max=100.0, step=1.0, optional=True,
+                    tooltip="LAB ΔE distance at which adaptive likelihood = 0.5. ΔE 2.3 = just-noticeable, "
+                            "25 = clearly different but related (typical skin variation), 50+ = very loose. "
+                            "Tighten for strict skin matching, loosen for shadowed/rim-lit skin.",
+                ),
+                io.Float.Input(
+                    "adaptive_sample_threshold", default=0.5, min=0.0, max=1.0, step=0.05, optional=True,
+                    tooltip="Only mask pixels above this value are used as reference samples for adaptive sampling. "
+                            "Higher = use only the most confident pixels (better reference, fewer samples).",
+                ),
+                io.Int.Input(
+                    "adaptive_min_samples", default=50, min=10, max=10000, step=10, optional=True,
+                    tooltip="Minimum number of confident skin pixels needed for adaptive mode. "
+                            "If fewer, falls back to fixed_hsv.",
                 ),
                 io.Mask.Input(
                     "silhouette_mask", optional=True,
@@ -275,7 +395,7 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                 ),
                 io.Boolean.Input(
                     "invert_combined", default=False, optional=True,
-                    tooltip="Invert the final combined mask. Useful for 'everything except skin' workflows.",
+                    tooltip="Invert the FINAL combined mask. Global flip — turns 'detected' into 'not detected'.",
                 ),
             ],
             outputs=[
@@ -288,7 +408,10 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
 
     @classmethod
     def execute(cls, image, prompts, negative_prompts="", combine_mode="union",
-                skin_color_filter="off", color_strength=0.7, skin_color_threshold=0.3,
+                vote_threshold=1.0, vote_pos_min=0.5, vote_neg_min=0.5,
+                color_filter="off", color_strength=0.7, color_threshold=0.3,
+                color_mode="adaptive_lab", color_reference_mask=None,
+                adaptive_tolerance=25.0, adaptive_sample_threshold=0.5, adaptive_min_samples=50,
                 silhouette_mask=None, enforce_silhouette=True,
                 include_dilate_radius=64,
                 masked_image_bg="white",
@@ -360,36 +483,111 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
             mask = _run_sam3(prompt, last_in_chain=(call_idx == total_calls))
             per_prompt.append(mask)
             cov = 100.0 * mask.float().mean().item()
-            coverage_lines.append(f"  [+{i + 1}/{len(positive_list)}] '{prompt}' → {cov:.2f}%")
-
-        combined = _combine_masks(per_prompt, combine_mode)
+            extra = ""
+            if combine_mode in ("vote", "weighted_vote"):
+                vote_px = int((mask.float() >= vote_pos_min).sum().item())
+                extra = f"  → {vote_px} px voted" if vote_px > 0 else "  → NO VOTES (empty after filter)"
+            coverage_lines.append(f"  [+{i + 1}/{len(positive_list)}] '{prompt}' → {cov:.2f}%{extra}")
 
         negative_masks_for_preview = []
+        negative_raw_masks = []
         for j, neg_prompt in enumerate(negative_list):
             call_idx += 1
             neg_mask = _run_sam3(neg_prompt, last_in_chain=(call_idx == total_calls))
-            cov_before = 100.0 * combined.float().mean().item()
-            combined = torch.clamp(combined - neg_mask, 0.0, 1.0)
-            cov_after = 100.0 * combined.float().mean().item()
-            coverage_lines.append(
-                f"  [-{j + 1}/{len(negative_list)}] '{neg_prompt}' subtract → {cov_before:.2f}% → {cov_after:.2f}%"
-            )
+            negative_raw_masks.append(neg_mask)
+            cov = 100.0 * neg_mask.float().mean().item()
+            extra = ""
+            if combine_mode in ("vote", "weighted_vote"):
+                vote_px = int((neg_mask.float() >= vote_neg_min).sum().item())
+                extra = f"  → {vote_px} px voted" if vote_px > 0 else "  → NO VOTES (empty after filter)"
+            coverage_lines.append(f"  [-{j + 1}/{len(negative_list)}] '{neg_prompt}' detected → {cov:.2f}%{extra}")
             preview_mask = (1.0 - neg_mask) if invert_negatives_in_per_prompt else neg_mask
             negative_masks_for_preview.append(preview_mask)
 
-        if skin_color_filter != "off":
+        if combine_mode in ("vote", "weighted_vote"):
+            if combine_mode == "vote":
+                pos_votes = sum((m.float() >= vote_pos_min).float() for m in per_prompt)
+                neg_votes = (sum((m.float() >= vote_neg_min).float() for m in negative_raw_masks)
+                             if negative_raw_masks else torch.zeros_like(pos_votes))
+                vote_kind = "binary"
+            else:  # weighted_vote
+                pos_votes = sum(m.float() for m in per_prompt)
+                neg_votes = (sum(m.float() for m in negative_raw_masks)
+                             if negative_raw_masks else torch.zeros_like(pos_votes))
+                vote_kind = "weighted"
+            net = pos_votes - neg_votes
+            combined = (net >= vote_threshold).float()
+
+            pos_contribs = sum(1 for m in per_prompt if (m.float() >= vote_pos_min).any())
+            neg_contribs = sum(1 for m in negative_raw_masks if (m.float() >= vote_neg_min).any())
+            coverage_lines.append(
+                f"  [vote {vote_kind}] {pos_contribs}/{len(per_prompt)} positives + "
+                f"{neg_contribs}/{len(negative_raw_masks)} negatives contributed votes "
+                f"(empty masks counted nothing). "
+                f"pos_max={pos_votes.max().item():.1f}, neg_max={neg_votes.max().item():.1f}, "
+                f"net range=[{net.min().item():.1f}, {net.max().item():.1f}], "
+                f"threshold={vote_threshold:.1f} → kept {100.0 * combined.mean().item():.2f}%"
+            )
+        else:
+            combined = _combine_masks(per_prompt, combine_mode)
+            for j, neg_mask in enumerate(negative_raw_masks):
+                cov_before = 100.0 * combined.float().mean().item()
+                combined = torch.clamp(combined - neg_mask, 0.0, 1.0)
+                cov_after = 100.0 * combined.float().mean().item()
+                coverage_lines.append(
+                    f"  [subtract -{j + 1}] {cov_before:.2f}% → {cov_after:.2f}%"
+                )
+
+        if color_filter != "off":
+            neg_exclude = None
+            if negative_raw_masks:
+                neg_union = negative_raw_masks[0].float().clone()
+                for nm in negative_raw_masks[1:]:
+                    neg_union = torch.maximum(neg_union, nm.float())
+                neg_exclude = neg_union
+
+            adaptive_ref_binary = None
+            ref_source = "none"
+            if color_mode in ("adaptive_lab", "both"):
+                if color_reference_mask is not None:
+                    ref = color_reference_mask.float()
+                    if ref.ndim == 4:
+                        ref = ref.squeeze(0)
+                    if ref.ndim == 3:
+                        ref = ref.squeeze(0)
+                    adaptive_ref_binary = (ref >= adaptive_sample_threshold).cpu().numpy()
+                    ref_source = "explicit color_reference_mask"
+                else:
+                    ref = combined.float()
+                    if ref.ndim == 3:
+                        ref = ref.squeeze(0)
+                    adaptive_ref_binary = (ref >= adaptive_sample_threshold).cpu().numpy()
+                    ref_source = "current combined mask"
+
             cov_before = 100.0 * combined.float().mean().item()
-            combined = _apply_skin_color_filter(
-                combined, image, mode=skin_color_filter,
-                threshold=skin_color_threshold, strength=color_strength,
+            combined, color_debug = _apply_skin_color_filter(
+                combined, image, mode=color_filter,
+                threshold=color_threshold, strength=color_strength,
                 silhouette_mask=silhouette_mask,
                 include_dilate_radius=include_dilate_radius,
+                negative_exclude_zone=neg_exclude,
+                color_mode=color_mode,
+                adaptive_ref_binary=adaptive_ref_binary,
+                adaptive_tolerance=adaptive_tolerance,
+                adaptive_min_samples=adaptive_min_samples,
             )
             cov_after = 100.0 * combined.float().mean().item()
             zone_str = "silhouette" if silhouette_mask is not None else f"dilate={include_dilate_radius}px"
+            neg_str = f", neg_exclude={int((neg_exclude > 0.5).sum().item())}px" if neg_exclude is not None else ""
+            adaptive_str = ""
+            if color_debug.get("adaptive") and not color_debug["adaptive"].get("skipped"):
+                ref_rgb = color_debug["adaptive"].get("ref_rgb")
+                n = color_debug["adaptive"].get("sample_count")
+                adaptive_str = f", adaptive_ref RGB={tuple(ref_rgb)} from {n} samples ({ref_source})"
             coverage_lines.append(
-                f"  [color {skin_color_filter} strength={color_strength:.2f} th={skin_color_threshold:.2f} "
-                f"zone={zone_str}] {cov_before:.2f}% → {cov_after:.2f}%"
+                f"  [color {color_filter} mode={color_debug.get('used_mode')} strength={color_strength:.2f} "
+                f"th={color_threshold:.2f} zone={zone_str}{neg_str}{adaptive_str}] "
+                f"{cov_before:.2f}% → {cov_after:.2f}%"
             )
 
         # NOTE: silhouette already applied to every SAM3 mask inside _run_sam3,
@@ -435,7 +633,7 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
         cov_combined = 100.0 * combined.float().mean().item()
         status = (
             f"SAM3 calls: {len(positive_list)} positive + {len(negative_list)} negative; "
-            f"combine={combine_mode} color_filter={skin_color_filter} "
+            f"combine={combine_mode} color_filter={color_filter} "
             f"(invert={invert_combined}) → final coverage={cov_combined:.2f}%\n"
             + "\n".join(coverage_lines)
         )
