@@ -230,6 +230,120 @@ def resolve_context_path(context_id: str, suffix: str, ext: str,
     )
 
 
-SAVE_CONTEXT_V3_NODES = [BD_SaveContext]
-SAVE_CONTEXT_NODES = {"BD_SaveContext": BD_SaveContext}
-SAVE_CONTEXT_DISPLAY_NAMES = {"BD_SaveContext": "BD Save Context"}
+class BD_GetContextPath(io.ComfyNode):
+    """Resolve a save context's template into a STRING for ANY save node's filename input.
+
+    Output `filename_prefix` is suitable for ComfyUI's built-in SaveImage `filename_prefix` field
+    (no extension, no auto-increment — SaveImage adds those itself). Output `full_path` includes
+    extension and increment for nodes that want a complete path.
+
+    Auto-picks the single registered context when context_id is empty.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_GetContextPath",
+            display_name="BD Get Context Path",
+            category="🧠BrainDead/Cache",
+            description=(
+                "Fetch a resolved STRING path from a BD_SaveContext. Wire `filename_prefix` "
+                "into ComfyUI's built-in SaveImage (or any third-party save node that takes a "
+                "STRING filename). Auto-picks the context if exactly one is registered."
+            ),
+            inputs=[
+                io.String.Input("context_id", default="", optional=True,
+                                tooltip="Match a BD_SaveContext id. Empty + exactly one registered = auto-pick."),
+                io.String.Input("suffix", default="", optional=True,
+                                tooltip="Per-fetch suffix → %suffix% in the template (e.g. '_albedo')."),
+                io.String.Input("filename_override", default="", optional=True,
+                                tooltip="If set, overrides %name% / %filename% in the template for THIS fetch only. "
+                                        "Useful when the context defines a base template but you want a different leaf "
+                                        "for this particular save."),
+                io.Boolean.Input("include_extension", default=False, optional=True,
+                                 tooltip="When True: full_path includes the extension (.png). "
+                                         "filename_prefix never includes extension regardless."),
+                io.String.Input("extension", default="png", optional=True,
+                                tooltip="Extension used when include_extension=True. PNG by default."),
+                io.Boolean.Input("include_increment", default=False, optional=True,
+                                 tooltip="When True: full_path includes auto-increment _NNN suffix. "
+                                         "filename_prefix never includes increment (let SaveImage handle it)."),
+            ],
+            outputs=[
+                io.String.Output(display_name="filename_prefix"),
+                io.String.Output(display_name="full_path"),
+                io.String.Output(display_name="directory"),
+                io.String.Output(display_name="basename"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, context_id="", suffix="", filename_override="",
+                include_extension=False, extension="png",
+                include_increment=False) -> io.NodeOutput:
+        effective_ctx_id = context_id
+        if not effective_ctx_id:
+            picked = auto_pick_context()
+            if picked is not None:
+                effective_ctx_id = picked
+
+        ctx = get_context(effective_ctx_id) if effective_ctx_id else None
+        if ctx is None:
+            available = sorted(_SAVE_CONTEXTS.keys())
+            return io.NodeOutput(
+                "", "", "", "",
+                f"BD_GetContextPath: no usable context. context_id='{context_id}' not found, "
+                f"auto-pick failed (registered: {available}). Add a BD_SaveContext upstream."
+            )
+
+        template = ctx["template"]
+        vars_dict = dict(ctx["vars"])
+        if "%suffix%" not in template:
+            template = template + "%suffix%"
+        vars_dict["suffix"] = suffix or ""
+        if filename_override:
+            vars_dict["filename"] = filename_override
+            if "%filename%" not in template:
+                vars_dict["name"] = filename_override
+
+        resolved, _ = _resolve_template(template, vars_dict)
+        resolved = resolved.replace("\\", "/")
+
+        output_base = folder_paths.get_output_directory()
+        if "/" in resolved:
+            subdir, base = resolved.rsplit("/", 1)
+            directory = os.path.join(output_base, subdir)
+        else:
+            directory = output_base
+            base = resolved
+
+        ext = (extension or "png").lstrip(".")
+
+        base_with_inc = base
+        if include_increment and ctx.get("auto_increment", True):
+            n = _next_increment(directory, base, ext)
+            pad = ctx.get("increment_padding", 3)
+            base_with_inc = f"{base}_{n:0{pad}d}"
+
+        if include_extension:
+            full_basename = f"{base_with_inc}.{ext}"
+        else:
+            full_basename = base_with_inc
+        full_path = os.path.join(directory, full_basename)
+
+        auto_str = " (auto-picked)" if not context_id else ""
+        status = (
+            f"context='{effective_ctx_id}'{auto_str} → filename_prefix='{resolved}'"
+            + (f"  full_path='{full_path}'" if include_extension or include_increment else "")
+        )
+        print(f"[BD GetContextPath] {status}", flush=True)
+        return io.NodeOutput(resolved, full_path, directory, base, status)
+
+
+SAVE_CONTEXT_V3_NODES = [BD_SaveContext, BD_GetContextPath]
+SAVE_CONTEXT_NODES = {n.__name__: n for n in SAVE_CONTEXT_V3_NODES}
+SAVE_CONTEXT_DISPLAY_NAMES = {
+    "BD_SaveContext": "BD Save Context",
+    "BD_GetContextPath": "BD Get Context Path",
+}

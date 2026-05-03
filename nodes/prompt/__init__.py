@@ -451,6 +451,121 @@ class BD_PromptIteratorDynamic(io.ComfyNode):
 import re as _re_template
 
 
+_FOREACH_STATE: Dict[str, Dict[str, Any]] = {}
+
+
+class BD_ForEachRun(io.ComfyNode):
+    """Iterate over N typed inputs + parallel label list, one input per queue Run.
+
+    Wire up to 16 typed inputs (any combination of types — IMAGE, MASK, STRING,
+    LATENT, etc. via AnyType). Provide a multi-line `labels` string with one
+    label per line — typically aligned with the wired inputs. Each queued Run
+    advances to the next NON-EMPTY input and emits (data, label, index, total,
+    is_last) so a downstream chain (save, upscale, post-process) can run per
+    item without manually wiring N parallel chains.
+
+    Example:
+      Wire BD_DerivePBR's 5 outputs to input_1..input_5.
+      labels = "albedo\\nnormal\\nroughness\\nmetallic\\nao"
+      Queue 5 runs. Each emits the corresponding image + label.
+      Downstream BD_SaveFile sees (image, suffix=label) and saves all 5 files.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        inputs = [
+            io.String.Input("labels", multiline=True, default="albedo\nnormal\nroughness\nmetallic\nao",
+                            tooltip="One label per line, aligned with the WIRED inputs (after skipping empty slots). "
+                                    "If labels list is shorter than wired inputs, missing labels emit as empty string."),
+            io.Combo.Input("mode", options=["sequential", "manual", "single"], default="sequential", optional=True,
+                           tooltip="sequential: cycle one per Run. manual: pick by manual_index. single: always emit input_1."),
+            io.Int.Input("manual_index", default=0, min=0, max=15, step=1, optional=True),
+            io.Boolean.Input("reset", default=False, optional=True,
+                             tooltip="Edge-triggered: when transitions False→True, the next Run starts at the first wired input."),
+            io.String.Input("workflow_id", default="default", optional=True,
+                            tooltip="Use distinct ids if you have multiple ForEach iterators."),
+            io.String.Input("label_prefix", default="_", optional=True,
+                            tooltip="Prepended to each label in the output. Default '_' so labels become save suffixes "
+                                    "(e.g. label='albedo' → output '_albedo'). Set empty for raw labels."),
+        ]
+        for i in range(1, 17):
+            inputs.append(io.AnyType.Input(f"input_{i}", optional=True,
+                                           tooltip=f"Input slot #{i}. Wire any data type (IMAGE, MASK, etc.). "
+                                                   "Empty slots are skipped."))
+        return io.Schema(
+            node_id="BD_ForEachRun",
+            display_name="BD For Each Run",
+            category="🧠BrainDead/Prompt",
+            description=(
+                "Iterate over N typed inputs + parallel labels, one per queue Run. "
+                "Use to drive a single downstream chain (save / upscale / process) N times "
+                "instead of wiring N parallel chains. Empty input slots are skipped. "
+                "Labels list aligns with the WIRED (non-empty) inputs."
+            ),
+            inputs=inputs,
+            outputs=[
+                io.AnyType.Output(display_name="data"),
+                io.String.Output(display_name="label"),
+                io.Int.Output(display_name="current_index"),
+                io.Int.Output(display_name="total_count"),
+                io.Boolean.Output(display_name="is_last"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def fingerprint_inputs(cls, mode="sequential", manual_index=0, workflow_id="default", **_) -> str:
+        if mode == "sequential":
+            return f"foreach_seq_{time.time()}"
+        return f"foreach_{mode}_{manual_index}_{workflow_id}"
+
+    @classmethod
+    def execute(cls, labels="", mode="sequential", manual_index=0, reset=False,
+                workflow_id="default", label_prefix="_", **inputs) -> io.NodeOutput:
+        global _FOREACH_STATE
+
+        wired = []
+        for i in range(1, 17):
+            v = inputs.get(f"input_{i}")
+            if v is not None:
+                wired.append((i, v))
+        total = len(wired)
+        if total == 0:
+            raise ValueError("BD_ForEachRun: no inputs wired (input_1 .. input_16 all empty)")
+
+        label_list = [l.strip() for l in (labels or "").strip().split("\n")]
+
+        state = _FOREACH_STATE.setdefault(workflow_id, {"index": 0, "iteration": 0, "last_reset_value": False})
+        prev_reset = state.get("last_reset_value", False)
+        if reset and not prev_reset:
+            state["index"] = 0
+            state["iteration"] = 0
+        state["last_reset_value"] = reset
+
+        if mode == "manual":
+            current = max(0, min(manual_index, total - 1))
+        elif mode == "single":
+            current = 0
+        else:
+            current = state["index"] % total
+            state["index"] = (current + 1) % total
+            if state["index"] == 0:
+                state["iteration"] += 1
+
+        slot_idx, data = wired[current]
+        label_raw = label_list[current] if current < len(label_list) else ""
+        label_out = (label_prefix or "") + label_raw if label_raw else ""
+        is_last = (current == total - 1)
+
+        status = (
+            f"[{current + 1}/{total}] slot=input_{slot_idx} label='{label_out}'"
+            + (f" iter={state['iteration'] + 1}" if mode == "sequential" else "")
+            + (" (LAST)" if is_last else "")
+        )
+        print(f"[BD ForEachInput] {status}", flush=True)
+        return io.NodeOutput(data, label_out, current, total, is_last, status)
+
+
 class BD_FilenameTemplate(io.ComfyNode):
     """Resolve a filename template with %variable% placeholders into a single STRING.
 
@@ -563,6 +678,7 @@ PROMPT_V3_NODES = [
     BD_PromptIteratorAdvanced,
     BD_PromptIteratorDynamic,
     BD_FilenameTemplate,
+    BD_ForEachRun,
 ]
 
 # =============================================================================
@@ -574,6 +690,7 @@ NODE_CLASS_MAPPINGS = {
     "BD_PromptIteratorAdvanced": BD_PromptIteratorAdvanced,
     "BD_PromptIteratorDynamic": BD_PromptIteratorDynamic,
     "BD_FilenameTemplate": BD_FilenameTemplate,
+    "BD_ForEachRun": BD_ForEachRun,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -581,4 +698,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "BD_PromptIteratorAdvanced": "BD Prompt Iterator (Advanced)",
     "BD_PromptIteratorDynamic": "BD Prompt Iterator (Dynamic)",
     "BD_FilenameTemplate": "BD Filename Template",
+    "BD_ForEachRun": "BD For Each Run",
 }

@@ -247,6 +247,120 @@ class BD_SaveFile(io.ComfyNode):
             return io.NodeOutput(data, "", f"Save failed: {e}")
 
 
+class BD_BulkSave(io.ComfyNode):
+    """Bulk-save N inputs in ONE Run using a save context.
+
+    Wire up to 16 typed inputs (any data type) and a parallel labels list — each
+    wired input is saved with the corresponding label as suffix, all in a single
+    execute() call. No queueing. The node IS the loop.
+
+    Use for: "save 7 PBR maps with 7 different suffixes in one Run."
+    Sibling node BD_ForEachRun emits one (data, label) per Run instead — use that
+    when downstream needs more than save (e.g., per-iteration upscale + process).
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        inputs = [
+            io.String.Input("labels", multiline=True, default="albedo\nnormal\nroughness\nmetallic\nao",
+                            tooltip="One label per line, aligned with WIRED inputs (after skipping empty slots). "
+                                    "If labels list is shorter than wired inputs, missing labels save with empty suffix."),
+            io.String.Input("label_prefix", default="_", optional=True,
+                            tooltip="Prepended to each label before becoming the save suffix. Default '_' so "
+                                    "label='albedo' → suffix='_albedo' → file ends in '_albedo'."),
+            io.String.Input("context_id", default="", optional=True,
+                            tooltip="Match a BD_SaveContext id. Empty + exactly one context registered = auto-pick."),
+            io.Combo.Input("format", options=["png", "jpg", "webp"], default="png", optional=True),
+            io.Int.Input("jpg_quality", default=95, min=1, max=100, step=1, optional=True),
+            io.Boolean.Input("skip_if_exists", default=False, optional=True,
+                             tooltip="If True, don't overwrite existing files (still reports their path)."),
+        ]
+        for i in range(1, 17):
+            inputs.append(io.AnyType.Input(f"input_{i}", optional=True,
+                                           tooltip=f"Input slot #{i}. Wire any data type. Empty slots are skipped."))
+        return io.Schema(
+            node_id="BD_BulkSave",
+            display_name="BD Bulk Save",
+            category="🧠BrainDead/Cache",
+            is_output_node=True,
+            description=(
+                "Save N inputs in ONE Run using a save context. Wire BD_DerivePBR's 7 outputs to "
+                "input_1..input_7, set labels accordingly, and all 7 files save in a single Run. "
+                "No queueing. Replaces N parallel BD_SaveFile nodes for batch save scenarios."
+            ),
+            inputs=inputs,
+            outputs=[
+                io.Int.Output(display_name="saved_count"),
+                io.String.Output(display_name="filepaths"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, labels="", label_prefix="_", context_id="",
+                format="png", jpg_quality=95, skip_if_exists=False, **inputs) -> io.NodeOutput:
+        from .save_context import resolve_context_path, get_context, auto_pick_context
+
+        wired = []
+        for i in range(1, 17):
+            v = inputs.get(f"input_{i}")
+            if v is not None:
+                wired.append((i, v))
+        if not wired:
+            return io.NodeOutput(0, "", "BD_BatchSave: no inputs wired")
+
+        effective_ctx_id = context_id
+        if not effective_ctx_id:
+            picked = auto_pick_context()
+            if picked is not None:
+                effective_ctx_id = picked
+        if not effective_ctx_id or get_context(effective_ctx_id) is None:
+            available = sorted([k for k in __import__('builtins').dict.fromkeys([])])
+            return io.NodeOutput(
+                0, "",
+                f"BD_BatchSave: no usable context. context_id='{context_id}' not registered, "
+                "and auto-pick failed (zero or multiple contexts registered). Add a BD_SaveContext upstream."
+            )
+
+        label_list = [l.strip() for l in (labels or "").strip().split("\n")]
+        ext = format if format != "jpg" else "jpg"
+
+        saved_paths = []
+        status_lines = []
+        skipped = 0
+        errors = 0
+
+        for i, (slot, data) in enumerate(wired):
+            label_raw = label_list[i] if i < len(label_list) else ""
+            suffix = (label_prefix or "") + label_raw if label_raw else ""
+            try:
+                filepath, rel_path = resolve_context_path(effective_ctx_id, suffix, ext)
+                if '/' in filepath or '\\' in filepath:
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+                if skip_if_exists and os.path.exists(filepath):
+                    saved_paths.append(filepath)
+                    status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} suffix='{suffix}' EXISTS → {rel_path}")
+                    skipped += 1
+                    continue
+
+                final_path, data_type = BD_SaveFile._detect_type_and_save(data, filepath)
+                saved_paths.append(final_path)
+                rel_final = os.path.relpath(final_path, OUTPUT_DIR).replace("\\", "/")
+                status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} suffix='{suffix}' {data_type} → {rel_final}")
+            except Exception as e:
+                errors += 1
+                status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} ERROR: {e}")
+
+        auto_str = " (auto-picked)" if not context_id else ""
+        summary = (
+            f"saved={len(saved_paths) - skipped} skipped={skipped} errors={errors} "
+            f"context='{effective_ctx_id}'{auto_str}\n" + "\n".join(status_lines)
+        )
+        print(f"[BD BatchSaveWithContext] {summary}", flush=True)
+        return io.NodeOutput(len(saved_paths), "\n".join(saved_paths), summary)
+
+
 class BD_LoadImage(io.ComfyNode):
     """Load an image from a file path (STRING input)."""
 
@@ -418,6 +532,7 @@ class BD_LoadText(io.ComfyNode):
 FILE_OPS_V3_NODES = [
     BD_ClearCache,
     BD_SaveFile,
+    BD_BulkSave,
     BD_LoadImage,
     BD_LoadMesh,
     BD_LoadAudio,
@@ -428,6 +543,7 @@ FILE_OPS_V3_NODES = [
 FILE_OPS_NODES = {
     "BD_ClearCache": BD_ClearCache,
     "BD_SaveFile": BD_SaveFile,
+    "BD_BulkSave": BD_BulkSave,
     "BD_LoadImage": BD_LoadImage,
     "BD_LoadMesh": BD_LoadMesh,
     "BD_LoadAudio": BD_LoadAudio,
@@ -437,6 +553,7 @@ FILE_OPS_NODES = {
 FILE_OPS_DISPLAY_NAMES = {
     "BD_ClearCache": "BD Clear Cache",
     "BD_SaveFile": "BD Save File",
+    "BD_BulkSave": "BD Bulk Save",
     "BD_LoadImage": "BD Load Image",
     "BD_LoadMesh": "BD Load Mesh",
     "BD_LoadAudio": "BD Load Audio",
