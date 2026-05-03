@@ -61,6 +61,36 @@ def _build_checker(b: int, h: int, w: int, dtype: torch.dtype, device: torch.dev
     return bg
 
 
+def edge_pad_rgb(rgb: torch.Tensor, foreground_binary: torch.Tensor,
+                 max_pixels: int = 0) -> torch.Tensor:
+    """Voronoi edge padding — extend foreground RGB into transparent background.
+
+    For each background pixel, find nearest foreground pixel and copy its RGB.
+    Standard game-engine "alpha bleed" / "color spread" technique to prevent
+    UV-edge halo artifacts when textures are sampled at silhouette boundaries.
+
+    rgb: (B, H, W, 3) float [0,1]
+    foreground_binary: (B, H, W) bool — True = foreground
+    max_pixels: 0 = unlimited (pad everywhere); >0 = limit pad distance
+    """
+    import numpy as np
+    from scipy.ndimage import distance_transform_edt
+    out = rgb.clone()
+    rgb_np = rgb.detach().cpu().numpy()
+    fg_np = foreground_binary.detach().cpu().numpy()
+    for bi in range(rgb.shape[0]):
+        fg = fg_np[bi]
+        if not fg.any():
+            continue
+        distances, indices = distance_transform_edt(~fg, return_indices=True)
+        padded = rgb_np[bi][indices[0], indices[1]]
+        if max_pixels > 0:
+            within = distances <= max_pixels
+            padded = np.where(within[..., None], padded, rgb_np[bi])
+        out[bi] = torch.from_numpy(padded).to(out.device).to(out.dtype)
+    return out
+
+
 def _resize_to(t: torch.Tensor, h: int, w: int, mode: str = "bilinear") -> torch.Tensor:
     """Resize tensor to (h, w). Handles (B,H,W,C) IMAGE or (B,H,W) MASK."""
     if t.ndim == 4 and t.shape[1] == h and t.shape[2] == w:
@@ -154,6 +184,15 @@ class BD_MaskFlatten(io.ComfyNode):
                             "(continuous alpha), >0 = hard binary cutoff. Useful when you want sharp "
                             "edges instead of partial transparency on the flatten."
                 ),
+                io.Int.Input(
+                    "edge_pad_pixels", default=0, min=0, max=512, step=4, optional=True,
+                    tooltip="Voronoi edge padding — extend foreground RGB outward into transparent "
+                            "areas by N pixels using nearest-foreground color. Standard game-engine "
+                            "'alpha bleed' to prevent UV-edge halos when textures are sampled at "
+                            "silhouette boundaries. 0 = off (no padding). 16-32 = typical for game "
+                            "textures. Applied BEFORE flattening, so the flatten background only "
+                            "shows beyond the padded zone."
+                ),
             ],
             outputs=[
                 io.Image.Output(display_name="image"),
@@ -165,7 +204,8 @@ class BD_MaskFlatten(io.ComfyNode):
     def execute(cls, image, mask=None, background_image=None,
                 background_color="white", background_color_hex="#808080",
                 flatten_mode="alpha_composite", mask_strength=1.0,
-                invert_mask=False, mask_threshold=0.0) -> io.NodeOutput:
+                invert_mask=False, mask_threshold=0.0,
+                edge_pad_pixels=0) -> io.NodeOutput:
 
         img = image if image.ndim == 4 else image.unsqueeze(0)
         b, h, w, c = img.shape
@@ -189,6 +229,10 @@ class BD_MaskFlatten(io.ComfyNode):
         alpha = (alpha * float(mask_strength)).clamp(0.0, 1.0)
 
         img_rgb = img[..., :3].contiguous()
+
+        if edge_pad_pixels > 0:
+            fg_binary = (alpha > 0.5)
+            img_rgb = edge_pad_rgb(img_rgb, fg_binary, max_pixels=int(edge_pad_pixels))
 
         if background_image is not None:
             bg = background_image if background_image.ndim == 4 else background_image.unsqueeze(0)

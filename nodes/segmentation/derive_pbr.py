@@ -245,6 +245,21 @@ class BD_DerivePBR(io.ComfyNode):
                 io.Float.Input("normal_strength", default=2.0, min=0.1, max=10.0, step=0.1, optional=True,
                                tooltip="Strength multiplier when deriving normals from depth. Higher = more "
                                        "pronounced normals. Only used when normal_map is NOT provided."),
+                io.Combo.Input("albedo_treatment",
+                               options=["edge_pad", "silhouette_clip", "passthrough"],
+                               default="edge_pad", optional=True,
+                               tooltip="How to clean up the albedo output (was passing input through raw, which "
+                                       "leaked transparent-area garbage colors as halo).\n"
+                                       "  edge_pad — extend foreground colors outward into background using "
+                                       "Voronoi nearest-neighbor (game-engine standard 'alpha bleed'). Prevents UV "
+                                       "edge halos. Requires silhouette_mask.\n"
+                                       "  silhouette_clip — multiply by silhouette_mask (background goes to black). "
+                                       "Quick but causes black halos at UV edges in-engine.\n"
+                                       "  passthrough — original behavior (use input RGB as-is)."),
+                io.Int.Input("albedo_edge_pad_pixels", default=32, min=0, max=512, step=4, optional=True,
+                             tooltip="When albedo_treatment=edge_pad: how far to extend foreground colors into "
+                                     "transparent area. 0 = unlimited (pad everywhere — slow on huge images), "
+                                     "16-32 = typical for game textures, 64+ = aggressive."),
             ],
             outputs=[
                 io.Image.Output(display_name="albedo"),
@@ -268,7 +283,8 @@ class BD_DerivePBR(io.ComfyNode):
                 metallic_mode="off", metallic_zone_mask=None, metallic_default=0.0,
                 metallic_lum_threshold=0.6, metallic_sat_threshold=0.2,
                 ao_strength=0.7, ao_blur=2.0,
-                normal_strength=2.0) -> io.NodeOutput:
+                normal_strength=2.0,
+                albedo_treatment="edge_pad", albedo_edge_pad_pixels=32) -> io.NodeOutput:
         img = image if image.ndim == 4 else image.unsqueeze(0)
         b, h, w, _ = img.shape
         rgb = img[0, ..., :3].detach().cpu().float().numpy()
@@ -381,6 +397,34 @@ class BD_DerivePBR(io.ComfyNode):
         packed_orm = np.stack([ao, roughness, metallic], axis=-1)
         packed_arm = np.stack([ao, roughness, metallic], axis=-1)
 
+        albedo_arr = rgb.copy()
+        albedo_treatment_str = albedo_treatment
+        if silhouette_mask is not None:
+            sil_for_albedo = _to_2d_float(silhouette_mask)
+            if sil_for_albedo.shape != (h, w):
+                from PIL import Image as PILImage
+                sil_for_albedo = np.asarray(
+                    PILImage.fromarray((sil_for_albedo * 255).clip(0, 255).astype(np.uint8), mode="L")
+                    .resize((w, h), PILImage.NEAREST)
+                ).astype(np.float32) / 255.0
+            if albedo_treatment == "edge_pad" and sil_for_albedo.max() > 0.1:
+                from scipy.ndimage import distance_transform_edt
+                fg = sil_for_albedo > 0.5
+                if fg.any():
+                    distances, indices = distance_transform_edt(~fg, return_indices=True)
+                    padded = albedo_arr[indices[0], indices[1]]
+                    if albedo_edge_pad_pixels > 0:
+                        within = distances <= albedo_edge_pad_pixels
+                        albedo_arr = np.where(within[..., None], padded, albedo_arr)
+                    else:
+                        albedo_arr = padded
+                albedo_treatment_str = f"edge_pad ({albedo_edge_pad_pixels}px)"
+            elif albedo_treatment == "silhouette_clip":
+                albedo_arr = albedo_arr * sil_for_albedo[..., None]
+                albedo_treatment_str = "silhouette_clip"
+        else:
+            albedo_treatment_str = "passthrough (no silhouette_mask)"
+
         aux_str = []
         if shading_arr is not None:
             aux_str.append(f"shading_alpha (mean={float(shading_arr.mean()):.3f})")
@@ -396,13 +440,14 @@ class BD_DerivePBR(io.ComfyNode):
             f"mean={float(roughness.mean()):.3f}\n"
             f"metallic mode={metallic_mode}{zone_str} mean={float(metallic.mean()):.3f}\n"
             f"ao depth_strength={ao_strength:.2f} blur={ao_blur:.1f} mean={float(ao.mean()):.3f}\n"
-            f"normal source={'explicit' if normal_map is not None else f'depth (strength={normal_strength:.2f})'}"
+            f"normal source={'explicit' if normal_map is not None else f'depth (strength={normal_strength:.2f})'}\n"
+            f"albedo treatment={albedo_treatment_str}"
             f"{aux_summary}"
         )
         print(f"[BD DerivePBR] {status}", flush=True)
 
         return io.NodeOutput(
-            _to_image_tensor(rgb),
+            _to_image_tensor(albedo_arr),
             _to_image_tensor(normal_arr),
             _to_mask_tensor(roughness),
             _to_mask_tensor(metallic),
