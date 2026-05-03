@@ -101,16 +101,31 @@ class BD_SaveFile(io.ComfyNode):
             node_id="BD_SaveFile",
             display_name="BD Save File",
             category="🧠BrainDead/Cache",
-            description="Save any data type to output folder. Supports IMAGE, MASK, AUDIO, LATENT, STRING, TRIMESH.",
+            description="Save any data type to output folder. Supports IMAGE, MASK, AUDIO, LATENT, STRING, TRIMESH. "
+                        "Optionally use a save context (from BD_SaveContext) for template-based paths.",
             is_output_node=True,
             inputs=[
                 io.AnyType.Input("data"),
-                io.String.Input("filename", default="saved_file"),
+                io.String.Input("filename", default="saved_file",
+                                tooltip="With context: overrides %name% / %filename% in template if set "
+                                        "(non-'saved_file'). Without context: legacy filename."),
                 io.Boolean.Input("skip_if_exists", default=True),
-                io.String.Input("name_prefix", default="", optional=True),
-                io.String.Input("extension", default="", optional=True, tooltip="Override auto-detected extension"),
+                io.String.Input("name_prefix", default="", optional=True,
+                                tooltip="With context: exposed as %name_prefix% in template. Without context: "
+                                        "legacy prefix prepended to filename."),
+                io.String.Input("extension", default="", optional=True,
+                                tooltip="Override auto-detected extension."),
+                io.String.Input("context_id", default="", optional=True,
+                                tooltip="If set AND a BD_SaveContext with this id is registered: path is resolved "
+                                        "from the context's template + this node's suffix/filename/name_prefix. "
+                                        "If empty AND exactly ONE context is registered, that one is auto-used. "
+                                        "If empty AND zero or multiple contexts: legacy filename-based behavior."),
+                io.String.Input("suffix", default="", optional=True,
+                                tooltip="Per-save suffix exposed as %suffix% in the context's template "
+                                        "(e.g. '_albedo', '_skin_mask', '_head'). Only used when context is active."),
             ],
             outputs=[
+                io.AnyType.Output(display_name="data"),
                 io.String.Output(display_name="file_path"),
                 io.String.Output(display_name="status"),
             ],
@@ -173,7 +188,36 @@ class BD_SaveFile(io.ComfyNode):
 
     @classmethod
     def execute(cls, data, filename: str, skip_if_exists: bool = True,
-                name_prefix: str = "", extension: str = "") -> io.NodeOutput:
+                name_prefix: str = "", extension: str = "",
+                context_id: str = "", suffix: str = "") -> io.NodeOutput:
+        from .save_context import resolve_context_path, get_context, auto_pick_context
+
+        effective_ctx_id = context_id
+        if not effective_ctx_id:
+            picked = auto_pick_context()
+            if picked is not None:
+                effective_ctx_id = picked
+
+        if effective_ctx_id and get_context(effective_ctx_id) is not None:
+            try:
+                ext = (extension.strip().lstrip('.') if extension else "png") or "png"
+                filepath, _ = resolve_context_path(
+                    effective_ctx_id, suffix, ext,
+                    node_filename=filename, node_name_prefix=name_prefix,
+                )
+                if '/' in filepath or '\\' in filepath:
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                try:
+                    final_path, data_type = cls._detect_type_and_save(data, filepath)
+                    auto_str = " (auto-picked)" if not context_id else ""
+                    if skip_if_exists and os.path.exists(final_path):
+                        return io.NodeOutput(data, final_path, f"EXISTS via context='{effective_ctx_id}'{auto_str}: {os.path.basename(final_path)}")
+                    return io.NodeOutput(data, final_path, f"Saved {data_type} via context='{effective_ctx_id}'{auto_str} suffix='{suffix}': {os.path.basename(final_path)}")
+                except Exception as e:
+                    return io.NodeOutput(data, "", f"Save (context) failed: {e}")
+            except ValueError as ve:
+                return io.NodeOutput(data, "", f"Save context error: {ve}")
+
         if name_prefix:
             full_name = f"{name_prefix}_{filename}"
         else:
@@ -187,7 +231,6 @@ class BD_SaveFile(io.ComfyNode):
 
         filepath = os.path.join(OUTPUT_DIR, full_name)
 
-        # Handle subdirectories
         if '/' in full_name or '\\' in full_name:
             subdir = os.path.dirname(filepath)
             os.makedirs(subdir, exist_ok=True)
@@ -196,12 +239,12 @@ class BD_SaveFile(io.ComfyNode):
             final_path, data_type = cls._detect_type_and_save(data, filepath)
 
             if skip_if_exists and os.path.exists(final_path):
-                return io.NodeOutput(final_path, f"EXISTS: {os.path.basename(final_path)}")
+                return io.NodeOutput(data, final_path, f"EXISTS: {os.path.basename(final_path)}")
 
             status = f"Saved {data_type}: {os.path.basename(final_path)}"
-            return io.NodeOutput(final_path, status)
+            return io.NodeOutput(data, final_path, status)
         except Exception as e:
-            return io.NodeOutput("", f"Save failed: {e}")
+            return io.NodeOutput(data, "", f"Save failed: {e}")
 
 
 class BD_LoadImage(io.ComfyNode):

@@ -448,6 +448,112 @@ class BD_PromptIteratorDynamic(io.ComfyNode):
         return io.NodeOutput(current_prompt, current_filename, current_index, total_count, status, output_seed)
 
 
+import re as _re_template
+
+
+class BD_FilenameTemplate(io.ComfyNode):
+    """Resolve a filename template with %variable% placeholders into a single STRING.
+
+    Replaces concat-string chains. Set common variables once (character, name,
+    version, project, etc.) and reference them via %varname% syntax anywhere in
+    the template. Wire the output STRING into any save node's filename input.
+
+    Example:
+      template: "characters/%character%/%name%_v%version%%suffix%"
+      character="letti", name="topwear", version="03", suffix="_albedo"
+      → "characters/letti/topwear_v03_albedo"
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_FilenameTemplate",
+            display_name="BD Filename Template",
+            category="🧠BrainDead/Prompt",
+            description=(
+                "Resolve a filename template with %variable% placeholders into one STRING. "
+                "Replaces ad-hoc string-concat chains. Wire the output into any save node's "
+                "filename input. Built-in vars: %character%, %name%, %version%, %project%, "
+                "%tag%, %suffix%. Add more via custom_vars (key=value per line)."
+            ),
+            inputs=[
+                io.String.Input(
+                    "template", multiline=False,
+                    default="characters/%character%/%name%_v%version%%suffix%",
+                    tooltip="Template with %varname% placeholders. Forward slashes create subdirectories. "
+                            "Undefined variables stay as %name% in output unless strict=True.",
+                ),
+                io.String.Input("character", default="", optional=True),
+                io.String.Input("name", default="", optional=True),
+                io.String.Input("version", default="01", optional=True,
+                                tooltip="Version string. Just the number/code, no 'v' prefix (template adds it)."),
+                io.String.Input("project", default="", optional=True),
+                io.String.Input("tag", default="", optional=True,
+                                tooltip="Generic tag — typical use: part name like 'face', 'topwear', 'arm-l'."),
+                io.String.Input("suffix", default="", optional=True,
+                                tooltip="Trailing suffix — typical use: '_albedo', '_normal', '_v2'."),
+                io.String.Input(
+                    "custom_vars", multiline=True, default="", optional=True,
+                    tooltip="Additional variables, one per line as key=value. Examples:\n"
+                            "  layer=topwear\n  pass=normal\n  resolution=4096\n"
+                            "These become %layer%, %pass%, %resolution% in the template.",
+                ),
+                io.Boolean.Input(
+                    "strict", default=False, optional=True,
+                    tooltip="If True, raise an error when the template contains undefined %variables%. "
+                            "If False, leave them in the output as %varname% literals.",
+                ),
+            ],
+            outputs=[
+                io.String.Output(display_name="filename"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, template, character="", name="", version="01", project="",
+                tag="", suffix="", custom_vars="", strict=False) -> io.NodeOutput:
+        vars_dict = {
+            "character": character,
+            "name": name,
+            "version": version,
+            "project": project,
+            "tag": tag,
+            "suffix": suffix,
+        }
+        for line in (custom_vars or "").strip().split("\n"):
+            line = line.strip()
+            if "=" in line:
+                k, v = line.split("=", 1)
+                k = k.strip()
+                if k:
+                    vars_dict[k] = v.strip()
+
+        unresolved = []
+
+        def _repl(m):
+            key = m.group(1)
+            if key in vars_dict:
+                return str(vars_dict[key])
+            unresolved.append(key)
+            return f"%{key}%"
+
+        result = _re_template.sub(r"%(\w+)%", _repl, template)
+
+        if unresolved and strict:
+            raise ValueError(
+                f"BD_FilenameTemplate: undefined variables {sorted(set(unresolved))} "
+                f"(strict=True). Available: {sorted(vars_dict.keys())}"
+            )
+
+        used = sorted(set(_re_template.findall(r"%(\w+)%", template)) - set(unresolved))
+        status = f"resolved → {result}\n  used: {used}"
+        if unresolved:
+            status += f"\n  WARNING: undefined left in output: {sorted(set(unresolved))}"
+        print(f"[BD FilenameTemplate] {status}", flush=True)
+        return io.NodeOutput(result, status)
+
+
 # =============================================================================
 # V3 Node List for Extension
 # =============================================================================
@@ -456,6 +562,7 @@ PROMPT_V3_NODES = [
     BD_PromptIterator,
     BD_PromptIteratorAdvanced,
     BD_PromptIteratorDynamic,
+    BD_FilenameTemplate,
 ]
 
 # =============================================================================
@@ -466,10 +573,12 @@ NODE_CLASS_MAPPINGS = {
     "BD_PromptIterator": BD_PromptIterator,
     "BD_PromptIteratorAdvanced": BD_PromptIteratorAdvanced,
     "BD_PromptIteratorDynamic": BD_PromptIteratorDynamic,
+    "BD_FilenameTemplate": BD_FilenameTemplate,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "BD_PromptIterator": "BD Prompt Iterator",
     "BD_PromptIteratorAdvanced": "BD Prompt Iterator (Advanced)",
     "BD_PromptIteratorDynamic": "BD Prompt Iterator (Dynamic)",
+    "BD_FilenameTemplate": "BD Filename Template",
 }
