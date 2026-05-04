@@ -123,6 +123,12 @@ class BD_SaveFile(io.ComfyNode):
                 io.String.Input("suffix", default="", optional=True,
                                 tooltip="Per-save suffix exposed as %suffix% in the context's template "
                                         "(e.g. '_albedo', '_skin_mask', '_head'). Only used when context is active."),
+                io.String.Input("custom_vars", multiline=True, default="", optional=True,
+                                tooltip="Per-save extra variables, one per line as key=value. Layered ON TOP of "
+                                        "the context's custom_vars (this node's keys override context for matching "
+                                        "names). Examples:\n  subfolder=textures\n  materials=metal\n  pass=normal\n"
+                                        "These become %subfolder%, %materials%, %pass% in the template. Empty values "
+                                        "resolve cleanly (// → /). Undefined vars stay as %var% literals so you spot typos."),
             ],
             outputs=[
                 io.AnyType.Output(display_name="data"),
@@ -197,7 +203,7 @@ class BD_SaveFile(io.ComfyNode):
     @classmethod
     def execute(cls, data, filename: str, skip_if_exists: bool = True,
                 name_prefix: str = "", extension: str = "",
-                context_id: str = "", suffix: str = "") -> io.NodeOutput:
+                context_id: str = "", suffix: str = "", custom_vars: str = "") -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
 
         effective_ctx_id = context_id
@@ -212,6 +218,7 @@ class BD_SaveFile(io.ComfyNode):
                 filepath, _ = resolve_context_path(
                     effective_ctx_id, suffix, ext,
                     node_filename=filename, node_name_prefix=name_prefix,
+                    node_custom_vars=custom_vars,
                 )
                 if '/' in filepath or '\\' in filepath:
                     os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -282,6 +289,11 @@ class BD_BulkSave(io.ComfyNode):
             io.Int.Input("jpg_quality", default=95, min=1, max=100, step=1, optional=True),
             io.Boolean.Input("skip_if_exists", default=False, optional=True,
                              tooltip="If True, don't overwrite existing files (still reports their path)."),
+            io.String.Input("custom_vars", multiline=True, default="", optional=True,
+                            tooltip="Extra variables applied to ALL bulk-saved files in this batch. "
+                                    "One per line as key=value. Layered ON TOP of the context's custom_vars. "
+                                    "Examples:\n  subfolder=PBR\n  materials=metal\n  pass=4k\n"
+                                    "Become %subfolder%, %materials%, %pass% in the template. Empty values OK."),
         ]
         for i in range(1, 17):
             inputs.append(io.AnyType.Input(f"input_{i}", optional=True,
@@ -314,7 +326,8 @@ class BD_BulkSave(io.ComfyNode):
 
     @classmethod
     def execute(cls, labels="", label_prefix="_", context_id="",
-                format="png", jpg_quality=95, skip_if_exists=False, **inputs) -> io.NodeOutput:
+                format="png", jpg_quality=95, skip_if_exists=False,
+                custom_vars="", **inputs) -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
 
         wired = []
@@ -350,7 +363,10 @@ class BD_BulkSave(io.ComfyNode):
             label_raw = label_list[i] if i < len(label_list) else ""
             suffix = (label_prefix or "") + label_raw if label_raw else ""
             try:
-                filepath, rel_path = resolve_context_path(effective_ctx_id, suffix, ext)
+                filepath, rel_path = resolve_context_path(
+                    effective_ctx_id, suffix, ext,
+                    node_custom_vars=custom_vars,
+                )
                 if '/' in filepath or '\\' in filepath:
                     os.makedirs(os.path.dirname(filepath), exist_ok=True)
 

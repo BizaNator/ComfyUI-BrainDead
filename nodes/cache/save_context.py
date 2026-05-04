@@ -29,6 +29,8 @@ _SAVE_CONTEXTS: dict[str, dict] = {}
 
 
 def _resolve_template(template: str, vars_dict: dict, strict: bool = False) -> tuple[str, list]:
+    """Resolve %var% tokens. Defined-but-empty vars resolve to empty string;
+    undefined vars stay as %var% literal (visible warning)."""
     unresolved = []
 
     def _repl(m):
@@ -45,6 +47,14 @@ def _resolve_template(template: str, vars_dict: dict, strict: bool = False) -> t
             f"Available: {sorted(vars_dict.keys())}"
         )
     return result, unresolved
+
+
+def _clean_path(path: str) -> str:
+    """Collapse runs of slashes and strip leading/trailing slashes — handles
+    empty %var% segments cleanly. e.g. 'a/%b%/c' with b='' → 'a//c' → 'a/c'.
+    Underscores not collapsed (user controls those via var values)."""
+    cleaned = re.sub(r"/+", "/", path)
+    return cleaned.strip("/")
 
 
 def _parse_custom_vars(text: str) -> dict:
@@ -71,10 +81,12 @@ def _next_increment(folder: str, base: str, ext: str) -> int:
 
 def _resolve_save_path(template: str, vars_dict: dict, suffix: str,
                        ext: str, auto_increment: bool, increment_padding: int) -> tuple[str, str]:
-    """Resolve template + suffix into (full_filepath, relative_subpath)."""
+    """Resolve template + suffix into (full_filepath, relative_subpath).
+    Empty %var% segments are cleaned (// → /, leading/trailing / stripped)."""
     full_template = template + suffix
     resolved, unresolved = _resolve_template(full_template, vars_dict)
     resolved = resolved.replace("\\", "/")
+    resolved = _clean_path(resolved)
 
     output_base = folder_paths.get_output_directory()
     if "/" in resolved:
@@ -196,14 +208,19 @@ def auto_pick_context() -> str | None:
 
 
 def resolve_context_path(context_id: str, suffix: str, ext: str,
-                        node_filename: str = "", node_name_prefix: str = "") -> tuple[str, str]:
+                        node_filename: str = "", node_name_prefix: str = "",
+                        node_custom_vars: str = "") -> tuple[str, str]:
     """Resolve a context_id + suffix + node-level overrides into (full_path, relative_path).
 
     Variables exposed to template:
       - All context vars (character, name, version, project, tag, plus custom_vars)
+      - All node_custom_vars (layered on top, overrides context for matching keys)
       - %suffix% — node's suffix (always set, even empty)
       - %filename% — node's filename (overrides %name% when non-default)
       - %name_prefix% — node's name_prefix
+
+    Empty var values resolve to '' and the resulting path is cleaned (// → /).
+    Undefined vars stay as %var% literals to surface mistakes.
     """
     ctx = _SAVE_CONTEXTS.get(context_id)
     if ctx is None:
@@ -214,6 +231,7 @@ def resolve_context_path(context_id: str, suffix: str, ext: str,
         )
     template = ctx["template"]
     vars_dict = dict(ctx["vars"])
+    vars_dict.update(_parse_custom_vars(node_custom_vars))
     if "%suffix%" not in template:
         template = template + "%suffix%"
     vars_dict["suffix"] = suffix or ""
@@ -268,6 +286,10 @@ class BD_GetContextPath(io.ComfyNode):
                 io.Boolean.Input("include_increment", default=False, optional=True,
                                  tooltip="When True: full_path includes auto-increment _NNN suffix. "
                                          "filename_prefix never includes increment (let SaveImage handle it)."),
+                io.String.Input("custom_vars", multiline=True, default="", optional=True,
+                                tooltip="Per-fetch extra variables, one per line as key=value. Layered ON TOP "
+                                        "of the context's custom_vars. Examples:\n  subfolder=PBR\n  materials=metal\n"
+                                        "Become %subfolder%, %materials% in the template."),
             ],
             outputs=[
                 io.String.Output(display_name="filename_prefix"),
@@ -288,7 +310,7 @@ class BD_GetContextPath(io.ComfyNode):
     @classmethod
     def execute(cls, context_id="", suffix="", filename_override="",
                 include_extension=False, extension="png",
-                include_increment=False) -> io.NodeOutput:
+                include_increment=False, custom_vars="") -> io.NodeOutput:
         effective_ctx_id = context_id
         if not effective_ctx_id:
             picked = auto_pick_context()
@@ -306,6 +328,7 @@ class BD_GetContextPath(io.ComfyNode):
 
         template = ctx["template"]
         vars_dict = dict(ctx["vars"])
+        vars_dict.update(_parse_custom_vars(custom_vars))
         if "%suffix%" not in template:
             template = template + "%suffix%"
         vars_dict["suffix"] = suffix or ""
@@ -316,6 +339,7 @@ class BD_GetContextPath(io.ComfyNode):
 
         resolved, _ = _resolve_template(template, vars_dict)
         resolved = resolved.replace("\\", "/")
+        resolved = _clean_path(resolved)
 
         output_base = folder_paths.get_output_directory()
         if "/" in resolved:
