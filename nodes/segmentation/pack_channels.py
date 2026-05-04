@@ -47,8 +47,16 @@ def _resize_to(t: torch.Tensor, h: int, w: int, mode: str = "bilinear") -> torch
 def _resolve_channel(image: torch.Tensor | None, mask: torch.Tensor | None,
                      h: int, w: int, b: int,
                      default_value: float, invert: bool,
-                     dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-    """Resolve one channel from IMAGE/MASK/default. Returns (B, H, W) float."""
+                     dtype: torch.dtype, device: torch.device,
+                     image_source: str = "luminance") -> torch.Tensor:
+    """Resolve one channel from IMAGE/MASK/default. Returns (B, H, W) float.
+
+    image_source controls how a multi-channel IMAGE input is reduced:
+      luminance — 0.299R + 0.587G + 0.114B (default for R/G/B output slots)
+      red, green, blue — pick that channel directly
+      alpha — use the alpha channel if image is RGBA, else fall back to luminance
+              (default for ALPHA output slot)
+    """
     if mask is not None:
         ch = mask
         if ch.ndim == 4:
@@ -59,8 +67,22 @@ def _resolve_channel(image: torch.Tensor | None, mask: torch.Tensor | None,
     elif image is not None:
         img = image if image.ndim == 4 else image.unsqueeze(0)
         img = _resize_to(img.float(), h, w, mode="bilinear")
-        weights = _LUMA_WEIGHTS.to(img.device).to(img.dtype)
-        ch = (img[..., :3] * weights).sum(dim=-1)
+        nchan = img.shape[-1]
+        if image_source == "red":
+            ch = img[..., 0]
+        elif image_source == "green":
+            ch = img[..., 1] if nchan >= 2 else img[..., 0]
+        elif image_source == "blue":
+            ch = img[..., 2] if nchan >= 3 else img[..., 0]
+        elif image_source == "alpha":
+            if nchan >= 4:
+                ch = img[..., 3]
+            else:
+                weights = _LUMA_WEIGHTS.to(img.device).to(img.dtype)
+                ch = (img[..., :3] * weights).sum(dim=-1)
+        else:
+            weights = _LUMA_WEIGHTS.to(img.device).to(img.dtype)
+            ch = (img[..., :3] * weights).sum(dim=-1)
     else:
         ch = torch.full((b, h, w), float(default_value), dtype=dtype, device=device)
 
@@ -134,8 +156,11 @@ class BD_PackChannels(io.ComfyNode):
                                  tooltip="If True, output is 4-channel RGBA instead of RGB. Use the alpha_image/"
                                          "alpha_mask/alpha_default inputs to set the A channel."),
                 io.Image.Input("alpha_image", optional=True,
-                               tooltip="IMAGE source for the ALPHA channel — only used when output_alpha=True."),
-                io.Mask.Input("alpha_mask", optional=True),
+                               tooltip="IMAGE source for the ALPHA channel. If RGBA, the alpha channel is used "
+                                       "directly. If RGB, luminance is computed. Wiring this auto-enables output_alpha."),
+                io.Mask.Input("alpha_mask", optional=True,
+                              tooltip="MASK source for the ALPHA channel (wins over alpha_image). "
+                                      "Wiring this auto-enables output_alpha."),
                 io.Float.Input("alpha_default", default=1.0, min=0.0, max=1.0, step=0.05, optional=True,
                                tooltip="Value to fill ALPHA with when no alpha source is wired (default 1.0 = opaque)."),
                 io.Boolean.Input("alpha_invert", default=False, optional=True),
@@ -172,12 +197,19 @@ class BD_PackChannels(io.ComfyNode):
                 dtype = s.dtype if s.dtype.is_floating_point else torch.float32
                 break
 
-        r = _resolve_channel(red_image, red_mask, h, w, b, red_default, red_invert, dtype, device)
-        g = _resolve_channel(green_image, green_mask, h, w, b, green_default, green_invert, dtype, device)
-        bl = _resolve_channel(blue_image, blue_mask, h, w, b, blue_default, blue_invert, dtype, device)
-        a = _resolve_channel(alpha_image, alpha_mask, h, w, b, alpha_default, alpha_invert, dtype, device)
+        r = _resolve_channel(red_image, red_mask, h, w, b, red_default, red_invert,
+                             dtype, device, image_source="luminance")
+        g = _resolve_channel(green_image, green_mask, h, w, b, green_default, green_invert,
+                             dtype, device, image_source="luminance")
+        bl = _resolve_channel(blue_image, blue_mask, h, w, b, blue_default, blue_invert,
+                              dtype, device, image_source="luminance")
+        a = _resolve_channel(alpha_image, alpha_mask, h, w, b, alpha_default, alpha_invert,
+                             dtype, device, image_source="alpha")
 
-        if output_alpha:
+        alpha_was_wired = (alpha_image is not None) or (alpha_mask is not None)
+        effective_output_alpha = bool(output_alpha) or alpha_was_wired
+
+        if effective_output_alpha:
             stacked = torch.stack([r, g, bl, a], dim=-1)
         else:
             stacked = torch.stack([r, g, bl], dim=-1)
