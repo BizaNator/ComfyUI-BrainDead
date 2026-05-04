@@ -187,6 +187,14 @@ class BD_SaveFile(io.ComfyNode):
         return filepath, "GENERIC"
 
     @classmethod
+    def fingerprint_inputs(cls, **kwargs) -> str:
+        # Save nodes are side-effect operations — force re-execution each Run so
+        # downstream context changes (e.g. BD_SaveContext updates) are picked up
+        # instead of returning a cached file_path from the previous Run.
+        import time
+        return f"savefile_{time.time()}"
+
+    @classmethod
     def execute(cls, data, filename: str, skip_if_exists: bool = True,
                 name_prefix: str = "", extension: str = "",
                 context_id: str = "", suffix: str = "") -> io.NodeOutput:
@@ -295,6 +303,14 @@ class BD_BulkSave(io.ComfyNode):
                 io.String.Output(display_name="status"),
             ],
         )
+
+    @classmethod
+    def fingerprint_inputs(cls, **kwargs) -> str:
+        # Same reasoning as BD_SaveFile — force re-execution every Run so context
+        # updates upstream are reflected. Without this, wiring an output (e.g. status
+        # to PreviewText) was the only way to get the node to run.
+        import time
+        return f"bulksave_{time.time()}"
 
     @classmethod
     def execute(cls, labels="", label_prefix="_", context_id="",

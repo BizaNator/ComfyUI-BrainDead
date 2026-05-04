@@ -279,6 +279,13 @@ class BD_GetContextPath(io.ComfyNode):
         )
 
     @classmethod
+    def fingerprint_inputs(cls, **kwargs) -> str:
+        # Force re-execution every Run so changes to BD_SaveContext upstream are
+        # reflected. The context dict is global state; we can't detect changes via
+        # input hashes alone.
+        return f"getpath_{time.time()}"
+
+    @classmethod
     def execute(cls, context_id="", suffix="", filename_override="",
                 include_extension=False, extension="png",
                 include_increment=False) -> io.NodeOutput:
