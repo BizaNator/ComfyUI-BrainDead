@@ -224,7 +224,8 @@ class BD_DerivePBR(io.ComfyNode):
                 io.Mask.Input("metallic_zone_mask", optional=True,
                               tooltip="Optional MASK restricting where metallic CAN occur. Multiplies the metallic "
                                       "output, so only pixels inside the zone can be metal. Wire your clothing or "
-                                      "accessories mask here (from BD_SeeThroughExtractSkinMask, ClothesSegment, etc.) "
+                                      "accessories mask here (from a SAM3 'accessories,jewelry,metal' prompt, "
+                                      "ClothesSegment, MaskResolver, etc.) "
                                       "— most game-character metal lives on jewelry/buckles/armor/details which align "
                                       "with the accessories category. Without this, metallic detection fires everywhere "
                                       "and produces false positives."),

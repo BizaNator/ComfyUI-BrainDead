@@ -30,6 +30,7 @@ from .nodes.trellis2 import TRELLIS2_V3_NODES
 from .nodes.character import CHARACTER_V3_NODES
 from .nodes.prompt import PROMPT_V3_NODES
 from .nodes.segmentation import SEGMENTATION_V3_NODES
+from .nodes.depth import DEPTH_V3_NODES
 
 # =============================================================================
 # V3 Extension Entry Point
@@ -48,6 +49,7 @@ class BrainDeadExtension(ComfyExtension):
             *CHARACTER_V3_NODES,
             *PROMPT_V3_NODES,
             *SEGMENTATION_V3_NODES,
+            *DEPTH_V3_NODES,
         ]
 
 
@@ -68,6 +70,7 @@ from .nodes.trellis2 import NODE_CLASS_MAPPINGS as TRELLIS2_NODES, NODE_DISPLAY_
 from .nodes.character import NODE_CLASS_MAPPINGS as CHARACTER_NODES, NODE_DISPLAY_NAME_MAPPINGS as CHARACTER_DISPLAY
 from .nodes.prompt import NODE_CLASS_MAPPINGS as PROMPT_NODES, NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY
 from .nodes.segmentation import NODE_CLASS_MAPPINGS as SEGMENTATION_NODES, NODE_DISPLAY_NAME_MAPPINGS as SEGMENTATION_DISPLAY
+from .nodes.depth import NODE_CLASS_MAPPINGS as DEPTH_NODES, NODE_DISPLAY_NAME_MAPPINGS as DEPTH_DISPLAY
 
 # Aggregate all node mappings for V1 registration
 NODE_CLASS_MAPPINGS = {
@@ -78,6 +81,7 @@ NODE_CLASS_MAPPINGS = {
     **CHARACTER_NODES,
     **PROMPT_NODES,
     **SEGMENTATION_NODES,
+    **DEPTH_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -88,6 +92,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **CHARACTER_DISPLAY,
     **PROMPT_DISPLAY,
     **SEGMENTATION_DISPLAY,
+    **DEPTH_DISPLAY,
 }
 
 # Web directory for JavaScript extensions (toast notifications, etc.)
@@ -116,4 +121,5 @@ print(f"  - TRELLIS2: {len(TRELLIS2_NODES)} nodes")
 print(f"  - Character: {len(CHARACTER_NODES)} nodes")
 print(f"  - Prompt: {len(PROMPT_NODES)} nodes")
 print(f"  - Segmentation: {len(SEGMENTATION_NODES)} nodes")
+print(f"  - Depth: {len(DEPTH_NODES)} nodes")
 print("=" * 60)

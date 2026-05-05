@@ -121,8 +121,11 @@ class BD_SaveFile(io.ComfyNode):
                                         "If empty AND exactly ONE context is registered, that one is auto-used. "
                                         "If empty AND zero or multiple contexts: legacy filename-based behavior."),
                 io.String.Input("suffix", default="", optional=True,
-                                tooltip="Per-save suffix exposed as %suffix% in the context's template "
-                                        "(e.g. '_albedo', '_skin_mask', '_head'). Only used when context is active."),
+                                tooltip="Per-save suffix appended after filename (e.g. '_albedo', '_shoes', '_head'). "
+                                        "Wire from BD_ForEachRun.label or Iterator.tag for per-iteration filenames. "
+                                        "With context: also exposed as %suffix% in the template. "
+                                        "Without context: appended literally to filename — caller controls separator "
+                                        "(convention: leading underscore)."),
                 io.String.Input("custom_vars", multiline=True, default="", optional=True,
                                 tooltip="Per-save extra variables, one per line as key=value. Layered ON TOP of "
                                         "the context's custom_vars (this node's keys override context for matching "
@@ -237,6 +240,11 @@ class BD_SaveFile(io.ComfyNode):
             full_name = f"{name_prefix}_{filename}"
         else:
             full_name = filename
+
+        # Apply suffix in legacy mode too (e.g. ForEachRun's `_shoes` `_shirt` labels).
+        # Suffix is appended literally — caller controls separator (typical convention: leading underscore).
+        if suffix:
+            full_name = f"{full_name}{suffix}"
 
         if extension:
             ext = extension.strip()

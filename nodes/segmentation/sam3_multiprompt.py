@@ -395,7 +395,11 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                 ),
                 io.Boolean.Input(
                     "invert_combined", default=False, optional=True,
-                    tooltip="Invert the FINAL combined mask. Global flip — turns 'detected' into 'not detected'.",
+                    tooltip="Invert the FINAL combined mask. Global flip — turns 'detected' into 'not detected'.\n\n"
+                            "WARNING: if you wire combined_mask into BD_PartsBuilder.combined_mask "
+                            "downstream, leaving this ON will INVERT the silhouette and zero every "
+                            "real per-class mask. Symptom: only one full-image leftover part survives. "
+                            "Keep this OFF for Parts pipeline workflows.",
                 ),
             ],
             outputs=[
@@ -465,6 +469,12 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                 mask = mask.squeeze(0)
             if mask.ndim == 2:
                 mask = mask.unsqueeze(0)
+            # CRITICAL: SAM3 may return multiple instances when its detector finds
+            # >1 region matching the prompt (e.g. "earrings" → left + right). Collapse
+            # via pixel-wise max so we always emit exactly ONE mask per prompt — keeps
+            # label↔mask alignment intact for BD_PartsRefine / BD_PartsBuilder.
+            if mask.ndim == 3 and mask.shape[0] > 1:
+                mask = mask.amax(dim=0, keepdim=True)
             if sil_active is not None:
                 sil = sil_active.to(mask.device).to(mask.dtype)
                 if sil.shape[-2:] != mask.shape[-2:]:
