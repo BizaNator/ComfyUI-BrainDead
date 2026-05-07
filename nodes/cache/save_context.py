@@ -183,14 +183,18 @@ class BD_SaveContext(io.ComfyNode):
         }
 
         preview, unresolved = _resolve_template(template, vars_dict)
+        # `suffix` is the canonical per-save placeholder filled by individual
+        # save nodes (BD_SaveFile, BD_PartsExport). It's expected to be
+        # unresolved at registration — only flag genuinely missing vars.
+        unresolved_real = [u for u in unresolved if u != "suffix"]
         status = (
             f"context_id='{context_id}' registered\n"
             f"  template: {template}\n"
             f"  vars: {vars_dict}\n"
             f"  preview (no suffix): {preview}"
         )
-        if unresolved:
-            status += f"\n  WARNING: undefined in template: {sorted(set(unresolved))}"
+        if unresolved_real:
+            status += f"\n  WARNING: undefined in template: {sorted(set(unresolved_real))}"
         print(f"[BD SaveContext] {status}", flush=True)
         return io.NodeOutput(context_id, status)
 
