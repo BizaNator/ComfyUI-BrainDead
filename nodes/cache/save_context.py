@@ -132,15 +132,20 @@ class BD_SaveContext(io.ComfyNode):
                             "if you have multiple parallel contexts (e.g. 'character_v1' and 'mannequin_v1')."
                 ),
                 io.String.Input(
-                    "template", default="characters/%character%/%name%_v%version%%suffix%",
+                    "template",
+                    default="%project%/%character%/%subfolder%/%character%_%name%_v%version%%suffix%",
                     tooltip="Base template with %varname% placeholders. The save node's `suffix` input "
                             "is appended to this template before resolution. Use %suffix% in the template "
-                            "to control suffix placement (defaults to end if omitted)."
+                            "to control suffix placement (defaults to end if omitted). Empty %vars% are "
+                            "cleaned up — `//` collapses to `/`."
                 ),
                 io.String.Input("character", default="", optional=True),
                 io.String.Input("name", default="", optional=True),
                 io.String.Input("version", default="01", optional=True),
                 io.String.Input("project", default="", optional=True),
+                io.String.Input("subfolder", default="", optional=True,
+                                tooltip="Sub-organization within the character folder — e.g. 'parts', "
+                                        "'pbr', 'mannequin'. Empty cleans up to nothing in the path."),
                 io.String.Input("tag", default="", optional=True,
                                 tooltip="Generic tag — typical use: part name like 'face', 'topwear', 'arm-l'."),
                 io.String.Input(
@@ -166,11 +171,11 @@ class BD_SaveContext(io.ComfyNode):
 
     @classmethod
     def execute(cls, context_id, template, character="", name="", version="01",
-                project="", tag="", custom_vars="",
+                project="", subfolder="", tag="", custom_vars="",
                 auto_increment=True, increment_padding=3, strict=False) -> io.NodeOutput:
         vars_dict = {
             "character": character, "name": name, "version": version,
-            "project": project, "tag": tag,
+            "project": project, "subfolder": subfolder, "tag": tag,
         }
         vars_dict.update(_parse_custom_vars(custom_vars))
 
