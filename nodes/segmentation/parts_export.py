@@ -58,9 +58,13 @@ def _resolve_legacy_folder(filename: str, name_prefix: str, auto_increment: bool
     return folder, base
 
 
-def _save_layered_psd(parts: dict, out_path: str) -> int:
+def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0) -> int:
     """Write all parts as a single layered PSD. Returns layer count.
     Uses RAW compression — Photoshop fails to open pytoshop's zip variant.
+
+    output_size: if > 0, the canvas (and per-layer xyxy/dims) is scaled so the
+    longest frame_size edge equals output_size. Layer pixel dims are scaled
+    to match the new bbox dims at that canvas resolution. 0 = use frame_size.
     """
     from pytoshop import enums
     from pytoshop.user.nested_layers import Image as PsdImage, nested_layers_to_psd
@@ -68,7 +72,14 @@ def _save_layered_psd(parts: dict, out_path: str) -> int:
     tag2pinfo = parts.get("tag2pinfo", {})
     frame_h, frame_w = _frame_size(parts)
 
-    # Sort back-to-front (matches Compose painting order)
+    # Compute scale factor from frame_size to canvas
+    if output_size > 0 and frame_h > 0 and frame_w > 0:
+        scale = output_size / max(frame_h, frame_w)
+    else:
+        scale = 1.0
+    canvas_w = int(round(frame_w * scale)) if frame_w > 0 else 0
+    canvas_h = int(round(frame_h * scale)) if frame_h > 0 else 0
+
     sorted_items = sorted(
         tag2pinfo.items(),
         key=lambda kv: -float(kv[1].get("depth_median", 0.5)),
@@ -86,11 +97,13 @@ def _save_layered_psd(parts: dict, out_path: str) -> int:
         if arr.shape[2] == 3:
             alpha = np.full(arr.shape[:2], 255, dtype=np.uint8)
             arr = np.concatenate([arr, alpha[..., None]], axis=-1)
-        x1, y1, x2, y2 = (int(v) for v in xyxy)
+        # Scale xyxy from frame_size space to canvas space
+        x1 = int(round(int(xyxy[0]) * scale))
+        y1 = int(round(int(xyxy[1]) * scale))
+        x2 = int(round(int(xyxy[2]) * scale))
+        y2 = int(round(int(xyxy[3]) * scale))
         bbox_w, bbox_h = max(1, x2 - x1), max(1, y2 - y1)
-        # If img was edited at higher working resolution (BD_PartsBatchEdit), resize
-        # to bbox dims so the layer paints at the correct on-canvas size. PSD doesn't
-        # auto-scale layer pixels — placement uses raw layer dimensions.
+        # Resize layer pixels to match bbox dims at the chosen canvas resolution.
         if arr.shape[:2] != (bbox_h, bbox_w):
             pil = Image.fromarray(arr.astype(np.uint8), mode="RGBA")
             pil = pil.resize((bbox_w, bbox_h), Image.LANCZOS)
@@ -107,14 +120,14 @@ def _save_layered_psd(parts: dict, out_path: str) -> int:
             },
         ))
 
-    # Default canvas to layer extent if frame_size missing
-    if frame_w <= 0 or frame_h <= 0:
-        frame_w = max((int(info.get("xyxy", [0, 0, 0, 0])[2])
-                       for info in tag2pinfo.values()), default=64)
-        frame_h = max((int(info.get("xyxy", [0, 0, 0, 0])[3])
-                       for info in tag2pinfo.values()), default=64)
+    # Fallback canvas if frame_size missing
+    if canvas_w <= 0 or canvas_h <= 0:
+        canvas_w = max((int(info.get("xyxy", [0, 0, 0, 0])[2])
+                        for info in tag2pinfo.values()), default=64)
+        canvas_h = max((int(info.get("xyxy", [0, 0, 0, 0])[3])
+                        for info in tag2pinfo.values()), default=64)
 
-    psd = nested_layers_to_psd(layers, color_mode=3, size=(frame_w, frame_h),
+    psd = nested_layers_to_psd(layers, color_mode=3, size=(canvas_w, canvas_h),
                                compression=enums.Compression.raw)
     with open(out_path, "wb") as f:
         psd.write(f)
@@ -166,7 +179,9 @@ class BD_PartsExport(io.ComfyNode):
                                  tooltip="Also write {filename}_composite.png (RGBA) and "
                                          "{filename}_composite_alpha.png (mask)."),
                 io.Int.Input("composite_size", default=0, min=0, max=8192, step=64, optional=True,
-                             tooltip="Max side length of composite. 0 = use frame_size as-is."),
+                             tooltip="Max side length of composite PNG AND PSD canvas. Scales xyxy "
+                                     "and layer dims to match. 0 = use frame_size as-is. Set to e.g. "
+                                     "4096 for 4K production output."),
                 io.Boolean.Input("save_psd", default=False, optional=True,
                                  tooltip="Also write {filename}.psd — single layered file with one "
                                          "layer per tag at its xyxy position. Layer order: back-to-front "
@@ -293,7 +308,7 @@ class BD_PartsExport(io.ComfyNode):
             else:
                 psd_path = os.path.join(folder, f"{base}.psd")
             try:
-                n_layers = _save_layered_psd(parts, psd_path)
+                n_layers = _save_layered_psd(parts, psd_path, output_size=int(composite_size))
                 summary_lines.append(f"  layered PSD: {os.path.basename(psd_path)}  ({n_layers} layers, raw)")
             except Exception as e:
                 summary_lines.append(f"  PSD save FAILED: {e}")
