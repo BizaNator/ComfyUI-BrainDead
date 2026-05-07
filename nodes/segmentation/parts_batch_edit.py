@@ -1002,6 +1002,19 @@ class BD_PartsBatchEdit(io.ComfyNode):
                     rgba_new, alpha_threshold=32, padding_px=4,
                 )
 
+            # Stash the ORIGINAL SAM3 alpha (pre-edit) so PartsExport can save it
+            # as a separate mask layer/file for users who want to re-apply the
+            # original visibility cut. Resize to match the rebuilt img dims.
+            if rgba_new.shape[:2] != orig_alpha.shape:
+                orig_resized = np.asarray(
+                    Image.fromarray(orig_alpha, mode="L").resize(
+                        (rgba_new.shape[1], rgba_new.shape[0]), Image.BILINEAR,
+                    )
+                )
+            else:
+                orig_resized = orig_alpha
+            info["original_alpha"] = orig_resized
+
             # Mutate the bundle (img now at working resolution; xyxy unchanged)
             info["img"] = rgba_new
             edited.append((tag, rgba_new))

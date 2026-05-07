@@ -181,25 +181,23 @@ Iterate through multiple prompts with automatic filename generation, plus per-Ru
 - `template`: `{base}_{index:03d}_{suffix}`
 
 ### Segmentation Nodes (`BrainDead/Segmentation`)
-Character segmentation, PBR map derivation, and game-texture asset prep.
+Character segmentation, parts pipeline, PBR map derivation, asset prep.
 
-**SeeThrough pipeline** — operates on `SEETHROUGH_PARTS` dict from `SeeThrough_PostProcess`:
+**Parts pipeline** — single-execution character processing using the `PARTS_BUNDLE` type:
 
 | Node | Description |
 |------|-------------|
-| **BD SeeThrough Extract Skin Mask** | Slice a global skin MASK into per-part skin masks (intersect with each part's xyxy + alpha). Excluded-tag and clothing-alpha-subtract options. |
-| **BD SeeThrough Get Part** | Pull one tag's IMAGE + body_mask + skin_mask + bbox + depth_median |
-| **BD SeeThrough Set Part** | Replace one tag's image (mutates in place — required for queue-iteration accumulation) |
-| **BD SeeThrough Composite** | Assemble parts back to a flat RGBA image (depth-sorted). `trigger=is_last` gate so heavy compose runs once. |
-| **BD SeeThrough Part Iterator** | Cycle through tags per queue Run (sequential/manual/single + filter modes) |
-| **BD SeeThrough List Tags** | Diagnostic: report all detected tags + per-tag stats |
-| **BD SeeThrough Export PNGs** | Per-tag PNGs + composite + skin-composite saved to disk |
+| **BD Parts Builder** | Crop and composite each segmented part into its own image. Wire SAM3 `per_prompt_masks` + labels OR Sapiens2 `labels` directly. Outputs PARTS_BUNDLE + image_batch + label_list + bbox_list. Optional `combined_mask` silhouette clip and `depth_image` for per-part depth_median. |
+| **BD Parts Refine** | IoU-based dedup of overlapping prompts (e.g. "shoe" + "sneaker" + "left shoe" → 1 entry). Picks canonical tag, merges via union or keep_largest, optional max_parts cap and debug overlay. |
+| **BD Parts Batch Edit (Qwen)** | Internal-loop Qwen Image Edit per part, single execution. Modes: `flatten_redraw` (clean redraw on white bg, latent-upscale + tonemap recipe — internal patches: ModelSamplingAuraFlow + CFGNorm + Reinhard tonemap) and `true_inpaint` (regen only enclosed holes, preserves visible pixels). Auto-detects alpha from white bg, optional `flatten_pad_factor` for breathing room, optional `context_extend_factor` for surrounding context. |
+| **BD Parts Compose** | Flatten the bundle to a single RGBA + alpha at chosen `output_size`. Back-to-front by depth_median. |
+| **BD Parts Export** | Save files to disk: per-tag RGBA PNGs, per-tag depth PNGs, per-tag mask PNGs (original SAM3 visibility), composite PNG, layered PSD with per-part layers + optional per-part mask layers (visibility off, scaled identically). `composite_size` drives PSD canvas. SaveContext-aware. |
 
 **SAM3 multi-prompt + mask cleanup:**
 
 | Node | Description |
 |------|-------------|
-| **BD SAM3 Multi-Prompt** | One node replaces 12-chain SAM3Segment. Vote/weighted_vote modes (majority counting), positive + negative prompts, color filter (off/exclude/include/exclude_and_include/remove_matching), adaptive LAB color sampling (works for any category — skin, clothing, hair), silhouette enforcement |
+| **BD SAM3 Multi-Prompt** | One node replaces 12-chain SAM3Segment. Vote/weighted_vote modes (majority counting), positive + negative prompts, color filter (off/exclude/include/exclude_and_include/remove_matching), adaptive LAB color sampling (works for any category — skin, clothing, hair), silhouette enforcement, multi-instance collapse so labels stay aligned |
 | **BD Mask Resolver** | Python port of GLSL Mask Resolver shader. Priority-based separation (skin/clothes/accessories) with adaptive LAB color, neighbor-vote gap fill |
 | **BD Human Parser Mask Clean** | Per-class morphological cleanup + min-area filter on parse maps |
 | **BD Human Parser Mask Split** | Split a parse map into per-region MASK outputs |
@@ -212,12 +210,6 @@ Character segmentation, PBR map derivation, and game-texture asset prep.
 |------|-------------|
 | **BD Fashn Human Parser** | SegFormer-B4 from fashn-ai (NVIDIA license). 18 FASHN classes. |
 | **BD ATR Human Parser** | mattmdjaga/segformer_b2_clothes (MIT). 18 ATR classes. |
-
-**BrainPed bridge:**
-
-| Node | Description |
-|------|-------------|
-| **BD Parts Remap 26 → 11 (BrainPed)** | Translate SeeThrough's 26-tag dict into BrainPed's 11-part rig vocabulary. Mirrors BrainPed's `LAYER_TO_PART_MAP`; reads `config/segments/{Part}.json` for per-part crop_bounds. L/R-ambiguous parts bbox-masked. |
 
 **Asset prep / game textures:**
 
@@ -243,6 +235,40 @@ ALL into BD Derive PBR Maps with metallic_zone_mask=accessories_mask
 → BD Bulk Save with labels=albedo,normal,roughness,metallic,ao,orm,arm
    → context auto-pick → 7 files saved in one Run
 ```
+
+**Recommended character parts pipeline** (rebuild + composite via SAM3 + Qwen Image Edit):
+
+```
+[Source IMAGE]
+   ├─→ [external VLM, e.g. ComfyUI-QwenVL] → newline-separated part list
+   │
+   ├─→ BD_Lotus2ModelLoader (depth) → BD_Lotus2Predict → depth_image
+   │
+   └─→ BD_SAM3MultiPrompt
+         ↓ combined_mask, per_prompt_masks
+       BD_PartsRefine (iou_threshold=0.7)
+         ↓ refined_masks, refined_labels
+       BD_PartsBuilder
+         masks=refined_masks, labels=refined_labels,
+         combined_mask=combined_mask, depth_image=depth
+         ↓ parts (PARTS_BUNDLE)
+       BD_PartsBatchEdit (Qwen)
+         model + clip + vae from your Qwen Image Edit 2509 + Lightning subgraph
+         inpaint_mode=flatten_redraw, alpha_after_edit=auto_from_white_bg
+         tonemap=2.0, shift=3.0, cfg_norm=0.85 (matches manual recipe)
+         ↓ parts (rebuilt) + image_batch
+       BD_PartsExport
+         composite_size=4096 (or whatever), save_psd=true, save_masks=true
+         → per-tag PNGs + composite PNG + layered PSD with optional mask layers
+```
+
+### Depth Nodes (`BrainDead/Depth`)
+SOTA monocular geometry prediction.
+
+| Node | Description |
+|------|-------------|
+| **BD Lotus-2 Model Loader** | Load FLUX.1-dev base + Lotus-2 depth or normal LoRA + LCM bridge. Module-level cache so reuse across Predict calls is instant. Optional CPU offload toggle for stacking with other models. |
+| **BD Lotus-2 Predict** | Run a loaded Lotus-2 model on an image. Outputs map (IMAGE), raw_linear ([0,1] normalized), and colorized_preview. Diffusion-based, much higher quality than feedforward depth estimators (DepthAnything/MiDaS). |
 
 ## Installation
 
@@ -337,7 +363,7 @@ output/
 
 ## Node Counts at a Glance
 
-90+ nodes across 8 categories:
+~90 nodes across 9 categories:
 
 - **Cache** — caching, save/load, save-context system (~16)
 - **Mesh** — 3D processing, color sampling, simplification, OVoxel PBR baking (~24)
@@ -345,19 +371,22 @@ output/
 - **TRELLIS2** — TRELLIS2-specific shape/texture nodes (~9)
 - **Character** — Qwen-Image character consistency (~4)
 - **Prompt** — prompt iteration, filename templates, ForEach iteration (~5)
-- **Segmentation** — SeeThrough/SAM3/MaskResolver pipeline + asset prep + PBR derivation (~16)
+- **Segmentation** — SAM3 multi-prompt + Parts pipeline (Builder/Refine/BatchEdit/Compose/Export) + MaskResolver + Human parsers (~14)
+- **Depth** — Lotus-2 (FLUX-based diffusion depth/normal) (~2)
 - **PBR / asset prep** — MaskFlatten, PackChannels, DerivePBR (in Segmentation)
 
 ## Node Categories
 
 ```
 BrainDead/
-├── Cache/       # Caching and file I/O nodes
-├── Mesh/        # 3D mesh processing and color tools
-├── Blender/     # Blender-based mesh operations
-├── TRELLIS2/    # TRELLIS2-specific caching
-├── Character/   # Qwen-Image character consistency
-└── Prompt/      # Prompt iteration tools
+├── Cache/         # Caching and file I/O nodes
+├── Mesh/          # 3D mesh processing and color tools
+├── Blender/       # Blender-based mesh operations
+├── TRELLIS2/      # TRELLIS2-specific caching
+├── Character/     # Qwen-Image character consistency
+├── Prompt/        # Prompt iteration tools
+├── Segmentation/  # SAM3 + Parts pipeline + asset prep
+└── Depth/         # Lotus-2 depth/normal
 ```
 
 ## Tips

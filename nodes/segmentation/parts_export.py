@@ -58,13 +58,19 @@ def _resolve_legacy_folder(filename: str, name_prefix: str, auto_increment: bool
     return folder, base
 
 
-def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0) -> int:
+def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
+                      include_masks: bool = False) -> int:
     """Write all parts as a single layered PSD. Returns layer count.
     Uses RAW compression — Photoshop fails to open pytoshop's zip variant.
 
     output_size: if > 0, the canvas (and per-layer xyxy/dims) is scaled so the
     longest frame_size edge equals output_size. Layer pixel dims are scaled
     to match the new bbox dims at that canvas resolution. 0 = use frame_size.
+
+    include_masks: if True, ALSO add a `{tag}_mask` layer per part containing
+    the original SAM3 visibility mask (white = was visible). Mask layers are
+    placed at the same scaled xyxy as their part, sized identically, and start
+    with visibility OFF — drag them in PS to use as layer masks if needed.
     """
     from pytoshop import enums
     from pytoshop.user.nested_layers import Image as PsdImage, nested_layers_to_psd
@@ -103,13 +109,14 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0) -> int:
         x2 = int(round(int(xyxy[2]) * scale))
         y2 = int(round(int(xyxy[3]) * scale))
         bbox_w, bbox_h = max(1, x2 - x1), max(1, y2 - y1)
+        tag_safe = _safe_filename(tag)
         # Resize layer pixels to match bbox dims at the chosen canvas resolution.
         if arr.shape[:2] != (bbox_h, bbox_w):
             pil = Image.fromarray(arr.astype(np.uint8), mode="RGBA")
             pil = pil.resize((bbox_w, bbox_h), Image.LANCZOS)
             arr = np.asarray(pil)
         layers.append(PsdImage(
-            name=_safe_filename(tag),
+            name=tag_safe,
             top=y1, left=x1,
             bottom=y1 + bbox_h, right=x1 + bbox_w,
             channels={
@@ -119,6 +126,36 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0) -> int:
                 2:  arr[..., 2],
             },
         ))
+
+        # Optional: add a `{tag}_mask` layer with the ORIGINAL SAM3 visibility
+        # mask, sized identically to the part, visibility OFF.
+        if include_masks:
+            orig = info.get("original_alpha")
+            if orig is not None:
+                mask_arr = np.asarray(orig).astype(np.uint8)
+                # Resize to match the part's bbox dims at canvas resolution
+                if mask_arr.shape != (bbox_h, bbox_w):
+                    mask_arr = np.asarray(
+                        Image.fromarray(mask_arr, mode="L").resize(
+                            (bbox_w, bbox_h), Image.BILINEAR,
+                        )
+                    )
+                # Render as a grayscale-looking layer (RGB = mask value, alpha=255).
+                # Visibility off so user can toggle on when they want to use it.
+                gray_rgb = np.stack([mask_arr] * 3, axis=-1)
+                full_alpha = np.full(mask_arr.shape, 255, dtype=np.uint8)
+                layers.append(PsdImage(
+                    name=f"{tag_safe}_mask",
+                    visible=False,
+                    top=y1, left=x1,
+                    bottom=y1 + bbox_h, right=x1 + bbox_w,
+                    channels={
+                        -1: full_alpha,
+                        0:  gray_rgb[..., 0],
+                        1:  gray_rgb[..., 1],
+                        2:  gray_rgb[..., 2],
+                    },
+                ))
 
     # Fallback canvas if frame_size missing
     if canvas_w <= 0 or canvas_h <= 0:
@@ -175,6 +212,15 @@ class BD_PartsExport(io.ComfyNode):
                 io.Boolean.Input("save_depth", default=False, optional=True,
                                  tooltip="Also write {tag}_depth.png grayscale per part. "
                                          "Requires bundle to carry per-part depth (wire depth_image into BD_PartsBuilder)."),
+                io.Boolean.Input("save_masks", default=False, optional=True,
+                                 tooltip="Also write {tag}_mask.png — single-channel grayscale of "
+                                         "the ORIGINAL SAM3 mask (the visible region in the source, "
+                                         "before Qwen redraw), resized to match the rebuilt part "
+                                         "dims. Drop into Photoshop to re-apply the original "
+                                         "visibility cut on a redrawn layer. White = was visible, "
+                                         "Black = was occluded.\n\n"
+                                         "If the bundle was never edited (no PartsBatchEdit step), "
+                                         "falls back to the part's current alpha channel."),
                 io.Boolean.Input("save_composite", default=True, optional=True,
                                  tooltip="Also write {filename}_composite.png (RGBA) and "
                                          "{filename}_composite_alpha.png (mask)."),
@@ -203,7 +249,7 @@ class BD_PartsExport(io.ComfyNode):
     @classmethod
     def execute(cls, parts, filename="parts", name_prefix="",
                 auto_increment=True, context_id="",
-                save_pngs=True, save_depth=False,
+                save_pngs=True, save_depth=False, save_masks=False,
                 save_composite=True, composite_size=0,
                 save_psd=False) -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
@@ -267,6 +313,28 @@ class BD_PartsExport(io.ComfyNode):
                         depth_path = os.path.join(folder, f"{tag_safe}_depth.png")
                     Image.fromarray(depth_arr, mode="L").save(depth_path, optimize=True)
 
+                if save_masks:
+                    # Prefer the ORIGINAL SAM3 mask stashed by PartsBatchEdit
+                    # (the pre-edit visibility shape resized to match rebuilt dims).
+                    # Fall back to the current alpha if the part was never edited.
+                    orig = info.get("original_alpha")
+                    if orig is not None:
+                        mask_arr = np.asarray(orig).astype(np.uint8)
+                    elif arr.shape[-1] == 4:
+                        mask_arr = arr[..., 3].astype(np.uint8)
+                    else:
+                        mask_arr = None
+                    if mask_arr is not None:
+                        if use_context:
+                            mask_path, _ = resolve_context_path(
+                                effective_ctx_id, f"_{tag_safe}_mask", "png",
+                                node_filename=filename, node_name_prefix=name_prefix,
+                            )
+                            os.makedirs(os.path.dirname(mask_path), exist_ok=True)
+                        else:
+                            mask_path = os.path.join(folder, f"{tag_safe}_mask.png")
+                        Image.fromarray(mask_arr, mode="L").save(mask_path, optimize=True)
+
         # Composite + alpha
         composite_tensor = None
         if save_composite or save_psd:
@@ -308,7 +376,10 @@ class BD_PartsExport(io.ComfyNode):
             else:
                 psd_path = os.path.join(folder, f"{base}.psd")
             try:
-                n_layers = _save_layered_psd(parts, psd_path, output_size=int(composite_size))
+                n_layers = _save_layered_psd(
+                    parts, psd_path, output_size=int(composite_size),
+                    include_masks=bool(save_masks),
+                )
                 summary_lines.append(f"  layered PSD: {os.path.basename(psd_path)}  ({n_layers} layers, raw)")
             except Exception as e:
                 summary_lines.append(f"  PSD save FAILED: {e}")
