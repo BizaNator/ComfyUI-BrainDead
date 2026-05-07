@@ -60,6 +60,26 @@ def _rgba_to_rgb_on_neutral(rgba: np.ndarray, bg_value: float = 0.5) -> torch.Te
     return torch.from_numpy(rgb.astype(np.float32)).unsqueeze(0)
 
 
+def _extend_bbox(xyxy, factor: float, src_h: int, src_w: int) -> tuple[list[int], list[int]]:
+    """Extend bbox by `factor` while keeping the same center, clipped to source dims.
+    Returns (extended_xyxy, original_xyxy_relative_to_extended_crop).
+    """
+    x1, y1, x2, y2 = (int(v) for v in xyxy)
+    bw, bh = x2 - x1, y2 - y1
+    cx, cy = x1 + bw / 2, y1 + bh / 2
+    new_w, new_h = bw * factor, bh * factor
+    ex1 = max(0, int(round(cx - new_w / 2)))
+    ey1 = max(0, int(round(cy - new_h / 2)))
+    ex2 = min(src_w, int(round(cx + new_w / 2)))
+    ey2 = min(src_h, int(round(cy + new_h / 2)))
+    # Where the original part bbox sits within the extended crop's coords:
+    ox1 = x1 - ex1
+    oy1 = y1 - ey1
+    ox2 = ox1 + bw
+    oy2 = oy1 + bh
+    return [ex1, ey1, ex2, ey2], [ox1, oy1, ox2, oy2]
+
+
 def _crop_source_to_bbox(source_image: torch.Tensor, xyxy) -> torch.Tensor:
     """Crop full source IMAGE (B, H, W, C) to the part's bbox. Returns (1, h, w, 3)."""
     if source_image.dim() == 4:
@@ -153,6 +173,10 @@ def _prefill_occluders(source_crop: torch.Tensor, part_alpha_2d: np.ndarray,
             src[inpaint_mask_bool] = avg
     elif mode == "neutral_gray":
         src[inpaint_mask_bool] = 0.5
+    elif mode == "white":
+        src[inpaint_mask_bool] = 1.0
+    elif mode == "black":
+        src[inpaint_mask_bool] = 0.0
     return torch.from_numpy(src).unsqueeze(0)
 
 
@@ -167,38 +191,58 @@ def _dilate_alpha(alpha_2d: np.ndarray, pixels: int) -> np.ndarray:
 
 
 def _encode_qwen_edit_plus(clip, vae, prompt: str, image_rgb: torch.Tensor,
+                           image_rgb_2: torch.Tensor | None = None,
                            target_pixels: int = 1024 * 1024):
-    """Inline replica of TextEncodeQwenImageEditPlus for a single image input.
+    """Inline replica of TextEncodeQwenImageEditPlus for 1-2 image inputs.
 
-    Returns (positive_conditioning, ref_latent (full tensor), (h_lat, w_lat) pixel dims).
-    The latent tensor is needed when running true inpaint (samples + noise_mask).
+    image_rgb (image1): primary reference (the part to rebuild).
+    image_rgb_2 (image2, optional): secondary reference (depth, etc.) for
+        Qwen's cross-attention guidance.
+
+    Returns (positive_conditioning, ref_latent (full tensor of image1),
+             (h_lat, w_lat) pixel dims of image1).
     """
-    samples = image_rgb.movedim(-1, 1)  # (1, 3, H, W)
+    images = [image_rgb] + ([image_rgb_2] if image_rgb_2 is not None else [])
+    images_vl = []
+    ref_latents = []
+    image_prompt = ""
+    primary_latent = None
+    primary_h_lat = None
+    primary_w_lat = None
 
-    # VL token sizing: ~384x384 area
-    total_vl = int(384 * 384)
-    scale_vl = math.sqrt(total_vl / (samples.shape[3] * samples.shape[2]))
-    w_vl = round(samples.shape[3] * scale_vl)
-    h_vl = round(samples.shape[2] * scale_vl)
-    s_vl = comfy.utils.common_upscale(samples, w_vl, h_vl, "area", "disabled")
-    image_vl = s_vl.movedim(1, -1)
+    for i, img in enumerate(images):
+        samples = img.movedim(-1, 1)  # (1, 3, H, W)
 
-    # Ref latent sizing: target_pixels area, multiples of 8
-    scale_lat = math.sqrt(target_pixels / (samples.shape[3] * samples.shape[2]))
-    w_lat = round(samples.shape[3] * scale_lat / 8.0) * 8
-    h_lat = round(samples.shape[2] * scale_lat / 8.0) * 8
-    s_lat = comfy.utils.common_upscale(samples, w_lat, h_lat, "area", "disabled")
-    ref_image = s_lat.movedim(1, -1)[:, :, :, :3]
-    ref_latent = vae.encode(ref_image)  # (1, 16, h_lat/8, w_lat/8)
+        # VL token sizing: ~384x384 area
+        total_vl = int(384 * 384)
+        scale_vl = math.sqrt(total_vl / (samples.shape[3] * samples.shape[2]))
+        w_vl = round(samples.shape[3] * scale_vl)
+        h_vl = round(samples.shape[2] * scale_vl)
+        s_vl = comfy.utils.common_upscale(samples, w_vl, h_vl, "area", "disabled")
+        images_vl.append(s_vl.movedim(1, -1))
 
-    image_prompt = "Picture 1: <|vision_start|><|image_pad|><|vision_end|>"
-    tokens = clip.tokenize(image_prompt + prompt, images=[image_vl],
+        # Ref latent sizing: target_pixels area, multiples of 8
+        scale_lat = math.sqrt(target_pixels / (samples.shape[3] * samples.shape[2]))
+        w_lat = round(samples.shape[3] * scale_lat / 8.0) * 8
+        h_lat = round(samples.shape[2] * scale_lat / 8.0) * 8
+        s_lat = comfy.utils.common_upscale(samples, w_lat, h_lat, "area", "disabled")
+        ref_image = s_lat.movedim(1, -1)[:, :, :, :3]
+        ref_latent = vae.encode(ref_image)
+        ref_latents.append(ref_latent)
+
+        if i == 0:
+            primary_latent = ref_latent
+            primary_h_lat, primary_w_lat = h_lat, w_lat
+
+        image_prompt += f"Picture {i + 1}: <|vision_start|><|image_pad|><|vision_end|>"
+
+    tokens = clip.tokenize(image_prompt + prompt, images=images_vl,
                            llama_template=_LLAMA_TEMPLATE)
     conditioning = clip.encode_from_tokens_scheduled(tokens)
     conditioning = node_helpers.conditioning_set_values(
-        conditioning, {"reference_latents": [ref_latent]}, append=True,
+        conditioning, {"reference_latents": ref_latents}, append=True,
     )
-    return conditioning, ref_latent, (h_lat, w_lat)
+    return conditioning, primary_latent, (primary_h_lat, primary_w_lat)
 
 
 def _encode_negative(clip, prompt: str = ""):
@@ -298,16 +342,51 @@ class BD_PartsBatchEdit(io.ComfyNode):
                 ),
                 io.Combo.Input(
                     "prefill_mode",
-                    options=["average_color", "nearest_part_pixel", "neutral_gray", "none"],
-                    default="average_color",
-                    tooltip="How to fill occluder pixels in the source crop BEFORE Qwen sees it. Used "
-                            "only with inpaint_mode=true_inpaint.\n"
-                            "  average_color (DEFAULT): mean color of part pixels — Qwen sees uniform "
-                            "patches, fills with detail. Best for clothing/large items.\n"
-                            "  nearest_part_pixel: Voronoi color spread from nearest part pixel — "
-                            "preserves color gradients. Best for clothing with color variation.\n"
-                            "  neutral_gray: solid 50% gray — strongest signal that this is fill area.\n"
-                            "  none: pass source as-is (Qwen sees occluders).",
+                    options=["white", "nearest_part_pixel", "average_color",
+                             "neutral_gray", "black", "none"],
+                    default="white",
+                    tooltip="How to fill HOLE pixels (enclosed cutouts inside the part) in the source "
+                            "crop BEFORE Qwen sees it.\n"
+                            "  white (DEFAULT): solid white. Empirically the best trigger for vanilla "
+                            "Qwen Image Edit 2509 to recognize 'fill this region'. Matches BD_MaskFlatten "
+                            "+ invert_mask + white_bg pattern.\n"
+                            "  nearest_part_pixel: Voronoi color spread (preserves shading gradients).\n"
+                            "  average_color: mean color of part pixels.\n"
+                            "  neutral_gray: solid 50% gray.\n"
+                            "  black: REQUIRED for Qwen Image Edit Inpaint LoRA (prompt must start "
+                            "with 'Inpaint the black areas.'). Hard edges only.\n"
+                            "  none: pass source as-is (Qwen sees occluders — usually wrong).",
+                ),
+                io.Boolean.Input(
+                    "use_part_depth_as_image2", default=False, optional=True,
+                    tooltip="If True AND the parts bundle has per-part depth (wire depth_image into "
+                            "BD_PartsBuilder upstream), pass each part's pre-cropped depth to Qwen as "
+                            "image2 (secondary reference) for cross-attention guidance. Note: Qwen "
+                            "Image Edit isn't trained on depth as a structural input — this is a "
+                            "weak signal. For real depth conditioning, use a depth ControlNet.",
+                ),
+                io.Float.Input(
+                    "context_extend_factor", default=1.0, min=1.0, max=3.0, step=0.1, optional=True,
+                    tooltip="CropAndStitch-style context expansion. Multiplier applied to each part's "
+                            "bbox before cropping the source for Qwen. 1.0 = use part bbox as-is "
+                            "(default). 1.5 = crop 50% bigger so Qwen sees more surrounding visual "
+                            "context (skin tones, lighting, neighboring items). After Qwen output, "
+                            "we crop back to the original part bbox region only — the extended pixels "
+                            "are discarded but their context already informed the generation.",
+                ),
+                io.Int.Input(
+                    "mask_expand_pixels", default=0, min=0, max=128, optional=True,
+                    tooltip="CropAndStitch-style buffer zone. Dilate the noise_mask outward by N "
+                            "pixels so existing part pixels at the boundary get partially regenerated "
+                            "alongside the holes. Helps the model blend the regen smoothly with the "
+                            "preserved area. 4-8 is a good starting range. 0 = mask exactly matches "
+                            "the detected holes (sharp boundary).",
+                ),
+                io.Int.Input(
+                    "mask_blend_pixels", default=4, min=0, max=64, optional=True,
+                    tooltip="Soft-edge alpha feathering on the FINAL output. Blurs the alpha by N "
+                            "pixels at edges so cutouts blend cleanly with whatever they're composited "
+                            "over. 0 = sharp PNG cutouts. 4-8 = soft anti-aliased edges.",
                 ),
                 io.Combo.Input(
                     "target_pixels",
@@ -376,7 +455,10 @@ class BD_PartsBatchEdit(io.ComfyNode):
     def execute(cls, parts, model, clip, vae,
                 prompt_template="rebuild this {tag} in the same style",
                 source_image=None, inpaint_mode="true_inpaint",
-                prefill_mode="average_color",
+                prefill_mode="white",
+                use_part_depth_as_image2=False,
+                context_extend_factor=1.0,
+                mask_expand_pixels=0, mask_blend_pixels=4,
                 target_pixels="1024x1024", target_pixels_custom=1048576,
                 negative_prompt="", seed=0, steps=4, cfg=1.0,
                 sampler_name="euler", scheduler="simple", denoise=1.0,
@@ -438,29 +520,63 @@ class BD_PartsBatchEdit(io.ComfyNode):
             else:
                 orig_alpha = np.full((h, w), 255, dtype=np.uint8)
 
+            # Compute extended bbox if context_extend_factor > 1.0.
+            # Working alpha for extended crop is the original alpha placed at the
+            # right offset within the larger crop, with surrounding zeros.
+            xyxy_orig = info["xyxy"]
+            if context_extend_factor > 1.0 and source_image is not None:
+                src_h_full = (source_image.shape[1] if source_image.dim() == 4
+                              else source_image.shape[0])
+                src_w_full = (source_image.shape[2] if source_image.dim() == 4
+                              else source_image.shape[1])
+                ext_xyxy, orig_in_ext = _extend_bbox(
+                    xyxy_orig, float(context_extend_factor), src_h_full, src_w_full,
+                )
+                ex_w = ext_xyxy[2] - ext_xyxy[0]
+                ex_h = ext_xyxy[3] - ext_xyxy[1]
+                # Build extended alpha: zeros except where original part lives
+                work_alpha = np.zeros((ex_h, ex_w), dtype=np.uint8)
+                ox1, oy1, ox2, oy2 = orig_in_ext
+                work_alpha[oy1:oy2, ox1:ox2] = orig_alpha
+            else:
+                ext_xyxy = xyxy_orig
+                orig_in_ext = [0, 0, w, h]
+                work_alpha = orig_alpha
+
             # Detect ENCLOSED HOLES inside the part (gun-shaped cutout inside pants
             # outline, etc.). Background outside the part is NOT a hole.
-            holes_bool, filled_alpha = _detect_enclosed_holes(orig_alpha)
+            holes_bool, filled_alpha = _detect_enclosed_holes(work_alpha)
             has_holes = holes_bool.any()
 
-            # Choose Qwen reference image
+            # Choose Qwen reference image (cropped to extended bbox)
             if effective_mode in ("true_inpaint", "source_crop"):
-                ref_t = _crop_source_to_bbox(source_image, info["xyxy"])
+                ref_t = _crop_source_to_bbox(source_image, ext_xyxy)
                 if ref_t is None:
                     # Bbox out of source bounds — fall back
                     ref_t = _rgba_to_rgb_on_neutral(arr, bg_value=0.5)
                 # For true_inpaint: pre-fill ONLY enclosed holes (not whole non-part)
                 if effective_mode == "true_inpaint" and prefill_mode != "none" and has_holes:
-                    ref_t = _prefill_occluders(ref_t, orig_alpha, holes_bool, mode=prefill_mode)
+                    ref_t = _prefill_occluders(ref_t, work_alpha, holes_bool, mode=prefill_mode)
             else:
                 ref_t = _rgba_to_rgb_on_neutral(arr, bg_value=0.5)
 
             # Build per-part prompt
             prompt = _interpolate_template(prompt_template, tag)
 
+            # Optional secondary depth reference (image2) — read from parts dict
+            # (PartsBuilder stores per-part depth under info['depth'] when wired).
+            depth_ref_t = None
+            if use_part_depth_as_image2:
+                depth_arr = info.get("depth")
+                if depth_arr is not None:
+                    depth_np = np.asarray(depth_arr).astype(np.float32) / 255.0
+                    if depth_np.ndim == 2:
+                        depth_np = np.stack([depth_np] * 3, axis=-1)  # gray → RGB for Qwen
+                    depth_ref_t = torch.from_numpy(depth_np).unsqueeze(0)
+
             # Encode positive (with reference_latent attached) at target resolution
             pos_cond, ref_latent, (h_lat, w_lat) = _encode_qwen_edit_plus(
-                clip, vae, prompt, ref_t, target_pixels=tp,
+                clip, vae, prompt, ref_t, image_rgb_2=depth_ref_t, target_pixels=tp,
             )
 
             # Build the starting latent.
@@ -468,12 +584,20 @@ class BD_PartsBatchEdit(io.ComfyNode):
             #   (= holes/occlusions). KSampler regenerates only those pixels.
             # - source_crop / masked_part: empty noise, full denoise — Qwen reproduces
             #   the whole crop as text-conditioned synthesis.
-            if effective_mode == "true_inpaint" and has_holes:
-                # Inpaint mask = ONLY enclosed holes (not entire non-part region).
-                # Pants with gun-hole: only the gun area gets regenerated.
-                # Background outside pants is NOT touched by the sampler.
-                inpaint_pixel = (holes_bool.astype(np.uint8) * 255)
-                pil_mask = Image.fromarray(inpaint_pixel, mode="L").resize(
+            if effective_mode == "true_inpaint":
+                # Inpaint mask = enclosed holes (+ optional buffer dilation).
+                # If no holes detected, fall back to "regen everything inside the
+                # part outline" so the part still gets a quality refresh per user
+                # request (no skip — every part goes through KSampler).
+                if has_holes:
+                    inpaint_seed_2d = holes_bool.astype(np.uint8) * 255
+                else:
+                    # No enclosed holes — regen the whole filled-part shape so Qwen
+                    # at least cleans/refines the whole region at full target res.
+                    inpaint_seed_2d = filled_alpha
+                if mask_expand_pixels > 0:
+                    inpaint_seed_2d = _dilate_alpha(inpaint_seed_2d, int(mask_expand_pixels))
+                pil_mask = Image.fromarray(inpaint_seed_2d, mode="L").resize(
                     (w_lat, h_lat), Image.NEAREST,
                 )
                 noise_mask_2d = np.asarray(pil_mask).astype(np.float32) / 255.0
@@ -482,48 +606,52 @@ class BD_PartsBatchEdit(io.ComfyNode):
                     "samples": ref_latent.to(dtype=torch.float32),
                     "noise_mask": noise_mask_t,
                 }
-            elif effective_mode == "true_inpaint":
-                # No enclosed holes detected — skip inpaint, output original part as-is
-                start_latent = None  # signal to skip ksampler
             else:
                 start_latent = {"samples": torch.zeros(
                     ref_latent.shape, dtype=torch.float32,
                     device=comfy.model_management.intermediate_device(),
                 )}
 
-            # Sample (skip if no holes detected — original part is already clean)
+            # Always sample — every part goes through KSampler at full target
+            # resolution for the quality lift, even if no enclosed holes exist.
             t0 = _time.time()
-            if start_latent is None:
-                # No KSampler call needed; reuse original part. Just compute output
-                # at working resolution from the original RGBA crop.
-                rgb_out = _rgba_to_rgb_on_neutral(arr, bg_value=0.0)
-                # Resize to working dims to match what KSampler would have produced
-                samples_chw = rgb_out.movedim(-1, 1)
-                s = comfy.utils.common_upscale(samples_chw, w_lat, h_lat, "lanczos", "disabled")
-                rgb_out = s.movedim(1, -1)
-                dt = 0.0
-                out_latent = None
-            else:
-                (out_latent,) = common_ksampler(
-                    model, int(seed), int(steps), float(cfg),
-                    sampler_name, scheduler,
-                    pos_cond, neg_cond, start_latent, denoise=float(denoise),
-                )
-                dt = _time.time() - t0
+            (out_latent,) = common_ksampler(
+                model, int(seed), int(steps), float(cfg),
+                sampler_name, scheduler,
+                pos_cond, neg_cond, start_latent, denoise=float(denoise),
+            )
+            dt = _time.time() - t0
 
             # Decode — keep at WORKING resolution (don't resize back to crop dims).
             # PartsCompose / PartsExport scale at paint time, so high-res pixels survive.
-            if out_latent is not None:
-                rgb_out = _decode_to_rgb(vae, out_latent)
-            # else: rgb_out already set above (no-holes shortcut)
+            rgb_out = _decode_to_rgb(vae, out_latent)
             out_h, out_w = rgb_out.shape[1], rgb_out.shape[2]
+
+            # If we extended the bbox, crop the output back to ONLY the original
+            # part region. Map original_in_ext (in source pixels) → output pixels.
+            if context_extend_factor > 1.0:
+                ex_w = ext_xyxy[2] - ext_xyxy[0]
+                ex_h = ext_xyxy[3] - ext_xyxy[1]
+                sx = out_w / max(ex_w, 1)
+                sy = out_h / max(ex_h, 1)
+                ox1, oy1, ox2, oy2 = orig_in_ext
+                cy1 = int(round(oy1 * sy))
+                cy2 = int(round(oy2 * sy))
+                cx1 = int(round(ox1 * sx))
+                cx2 = int(round(ox2 * sx))
+                rgb_out = rgb_out[:, cy1:cy2, cx1:cx2, :]
+                out_h, out_w = rgb_out.shape[1], rgb_out.shape[2]
+                # Update work_alpha and filled_alpha to original-only region for
+                # the alpha computation below.
+                work_alpha = orig_alpha
+                _, filled_alpha = _detect_enclosed_holes(orig_alpha)
             rgb_np = (rgb_out[0].cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
 
-            # Build alpha at WORKING resolution per alpha_after_edit mode.
+            # Build alpha — always sourced from ORIGINAL part dims, since by this
+            # point rgb_out has been cropped back to the original part region.
             if alpha_after_edit == "fill_holes":
-                # Use the flood-fill-detected part shape (original + enclosed holes).
-                # This is the part's ACTUAL silhouette with internal cutouts filled.
-                src_alpha = filled_alpha
+                _, filled_orig = _detect_enclosed_holes(orig_alpha)
+                src_alpha = filled_orig
             elif alpha_after_edit == "bbox_full":
                 src_alpha = np.full(orig_alpha.shape, 255, dtype=np.uint8)
             elif alpha_after_edit == "original_dilated":
@@ -535,19 +663,35 @@ class BD_PartsBatchEdit(io.ComfyNode):
             alpha = np.asarray(
                 Image.fromarray(src_alpha, mode="L").resize((out_w, out_h), Image.BILINEAR)
             )
+            # Optional soft-edge blend for cleaner cutouts when composited
+            if mask_blend_pixels > 0:
+                from PIL import ImageFilter
+                pil_a = Image.fromarray(alpha, mode="L").filter(
+                    ImageFilter.GaussianBlur(radius=float(mask_blend_pixels))
+                )
+                alpha = np.asarray(pil_a)
             rgba_new = np.concatenate([rgb_np, alpha[..., None]], axis=-1)
 
             # Mutate the bundle (img now at working resolution; xyxy unchanged)
             info["img"] = rgba_new
             edited.append((tag, rgba_new))
             part_idx += 1
-            holes_pct = 100.0 * holes_bool.sum() / max(orig_alpha.size, 1)
-            ks_str = "skipped (no holes)" if dt == 0.0 else f"{dt:.1f}s"
-            prefill_str = f" prefill={prefill_mode}" if effective_mode == "true_inpaint" else ""
+            holes_pct = 100.0 * holes_bool.sum() / max(work_alpha.size, 1)
+            depth_str = " +depth_ref" if depth_ref_t is not None else ""
+            extras = []
+            if context_extend_factor > 1.0:
+                extras.append(f"context={context_extend_factor:.1f}x")
+            if effective_mode == "true_inpaint":
+                extras.append(f"prefill={prefill_mode}")
+            if mask_expand_pixels > 0:
+                extras.append(f"expand={mask_expand_pixels}px")
+            if mask_blend_pixels > 0:
+                extras.append(f"blend={mask_blend_pixels}px")
+            extras_str = " " + " ".join(extras) if extras else ""
             print(f"[BD PartsBatchEdit] [{part_idx}/{total_parts}] '{tag}' "
                   f"crop={w}x{h} → working={w_lat}x{h_lat} holes={holes_pct:.1f}% "
-                  f"mode={effective_mode}{prefill_str} alpha={alpha_after_edit} "
-                  f"ksampler={ks_str}",
+                  f"mode={effective_mode}{depth_str}{extras_str} "
+                  f"alpha={alpha_after_edit} ksampler={dt:.1f}s",
                   flush=True)
 
         run_dt = _time.time() - run_start
