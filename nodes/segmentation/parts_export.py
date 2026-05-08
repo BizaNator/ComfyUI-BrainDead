@@ -22,6 +22,7 @@ import torch
 from PIL import Image
 
 import folder_paths
+import comfy.utils
 from comfy_api.latest import io
 
 from .parts_types import PARTS_BUNDLE, ensure_bundle, frame_size as _frame_size
@@ -59,7 +60,8 @@ def _resolve_legacy_folder(filename: str, name_prefix: str, auto_increment: bool
 
 
 def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
-                      include_masks: bool = False) -> int:
+                      include_masks: bool = False,
+                      base_image: "torch.Tensor | None" = None) -> int:
     """Write all parts as a single layered PSD. Returns layer count.
     Uses RAW compression — Photoshop fails to open pytoshop's zip variant.
 
@@ -71,6 +73,9 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
     the original SAM3 visibility mask (white = was visible). Mask layers are
     placed at the same scaled xyxy as their part, sized identically, and start
     with visibility OFF — drag them in PS to use as layer masks if needed.
+
+    base_image: optional (1, H, W, 3) IMAGE that gets added as the BOTTOM
+    layer of the PSD covering the full canvas. Resized to canvas dim if needed.
     """
     from pytoshop import enums
     from pytoshop.user.nested_layers import Image as PsdImage, nested_layers_to_psd
@@ -92,6 +97,33 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
     )
 
     layers = []
+
+    # Bottom layer: base_image (e.g. nude mannequin) covering full canvas.
+    # Added FIRST so it sits at the bottom of the layer stack in PS.
+    if base_image is not None:
+        bi = base_image[0] if base_image.dim() == 4 else base_image
+        bi_np = bi.detach().cpu().numpy()
+        bi_uint = (bi_np * 255.0).clip(0, 255).astype(np.uint8)
+        if bi_uint.shape[-1] == 3:
+            alpha_full = np.full(bi_uint.shape[:2], 255, dtype=np.uint8)
+            bi_uint = np.concatenate([bi_uint, alpha_full[..., None]], axis=-1)
+        # Resize to canvas
+        if bi_uint.shape[:2] != (canvas_h, canvas_w):
+            pil = Image.fromarray(bi_uint, mode="RGBA")
+            pil = pil.resize((canvas_w, canvas_h), Image.LANCZOS)
+            bi_uint = np.asarray(pil)
+        layers.append(PsdImage(
+            name="base",
+            top=0, left=0,
+            bottom=canvas_h, right=canvas_w,
+            channels={
+                -1: bi_uint[..., 3],
+                0:  bi_uint[..., 0],
+                1:  bi_uint[..., 1],
+                2:  bi_uint[..., 2],
+            },
+        ))
+
     for tag, info in sorted_items:
         img = info.get("img")
         xyxy = info.get("xyxy")
@@ -232,12 +264,19 @@ class BD_PartsExport(io.ComfyNode):
                                  tooltip="Also write {filename}.psd — single layered file with one "
                                          "layer per tag at its xyxy position. Layer order: back-to-front "
                                          "by depth_median. RAW compression (Photoshop-compatible)."),
+                io.Image.Input(
+                    "base_image", optional=True,
+                    tooltip="Optional base IMAGE (e.g. nude mannequin) painted UNDER all parts. "
+                            "Becomes the bottom layer of the PSD (full canvas, visible) and the "
+                            "base of the composite PNG. Resized to canvas dim if needed.",
+                ),
             ],
             outputs=[
                 io.Custom(PARTS_BUNDLE).Output(display_name="parts"),
                 io.String.Output(display_name="output_dir"),
                 io.String.Output(display_name="summary"),
                 io.Image.Output(display_name="composite_image"),
+                io.Image.Output(display_name="parts_image_batch"),
             ],
         )
 
@@ -251,7 +290,7 @@ class BD_PartsExport(io.ComfyNode):
                 auto_increment=True, context_id="",
                 save_pngs=True, save_depth=False, save_masks=False,
                 save_composite=True, composite_size=0,
-                save_psd=False) -> io.NodeOutput:
+                save_psd=False, base_image=None) -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
 
         from ..cache.save_context import resolve_context_path, get_context, auto_pick_context
@@ -342,6 +381,21 @@ class BD_PartsExport(io.ComfyNode):
             comp_out = BD_PartsCompose.execute(parts, output_size=composite_size, trigger=True)
             composite_tensor, alpha_tensor = comp_out.args
 
+            # If base_image is wired, blend the parts composite OVER the base.
+            # Resize base to canvas dim if needed.
+            if base_image is not None:
+                base_t = base_image if base_image.dim() == 4 else base_image.unsqueeze(0)
+                ch, cw = composite_tensor.shape[1], composite_tensor.shape[2]
+                if base_t.shape[1] != ch or base_t.shape[2] != cw:
+                    base_chw = base_t.movedim(-1, 1)
+                    base_chw = comfy.utils.common_upscale(base_chw, cw, ch, "lanczos", "disabled")
+                    base_t = base_chw.movedim(1, -1)
+                base_rgb = base_t[..., :3]
+                a3 = alpha_tensor[..., None] if alpha_tensor.dim() == 3 else alpha_tensor.unsqueeze(-1)
+                composite_tensor = composite_tensor * a3 + base_rgb * (1.0 - a3)
+                # Alpha after compositing onto base = fully opaque (we have a base now)
+                alpha_tensor = torch.ones_like(alpha_tensor)
+
             if save_composite:
                 rgb = (composite_tensor[0].cpu().numpy() * 255).astype(np.uint8)
                 a = (alpha_tensor[0].cpu().numpy() * 255).astype(np.uint8)
@@ -379,6 +433,7 @@ class BD_PartsExport(io.ComfyNode):
                 n_layers = _save_layered_psd(
                     parts, psd_path, output_size=int(composite_size),
                     include_masks=bool(save_masks),
+                    base_image=base_image,
                 )
                 summary_lines.append(f"  layered PSD: {os.path.basename(psd_path)}  ({n_layers} layers, raw)")
             except Exception as e:
@@ -393,11 +448,66 @@ class BD_PartsExport(io.ComfyNode):
             h, w = (h or 64), (w or 64)
             composite_tensor = torch.zeros((1, h, w, 3))
 
+        # Build parts_image_batch — N parts as RGBA batch where:
+        #   RGB = full Qwen rebuild (info["img"] RGB, NOT cut to mask)
+        #   alpha = original SAM3 visibility mask (info["original_alpha"] if set,
+        #           else info["img"]'s alpha as fallback for un-edited bundles)
+        # Padded to common max-dim shape for downstream batched processing.
+        tag2pinfo = parts["tag2pinfo"]
+        parts_for_batch = []
+        for tag, info in tag2pinfo.items():
+            if not isinstance(info, dict):
+                continue
+            img = info.get("img")
+            if img is None:
+                continue
+            arr = np.asarray(img)
+            if arr.ndim != 3 or arr.shape[2] not in (3, 4):
+                continue
+            # RGB always from info["img"]
+            if arr.shape[2] == 4:
+                rgb = arr[..., :3]
+            else:
+                rgb = arr
+            # Alpha preference: original SAM3 mask (resized to match) if available
+            orig = info.get("original_alpha")
+            if orig is not None:
+                a = np.asarray(orig).astype(np.uint8)
+                if a.shape != rgb.shape[:2]:
+                    a = np.asarray(
+                        Image.fromarray(a, mode="L").resize(
+                            (rgb.shape[1], rgb.shape[0]), Image.BILINEAR,
+                        )
+                    )
+            elif arr.shape[2] == 4:
+                a = arr[..., 3]
+            else:
+                a = np.full(rgb.shape[:2], 255, dtype=np.uint8)
+            rgba = np.concatenate([rgb, a[..., None]], axis=-1).astype(np.uint8)
+            parts_for_batch.append(rgba)
+
+        if parts_for_batch:
+            max_h = max(r.shape[0] for r in parts_for_batch)
+            max_w = max(r.shape[1] for r in parts_for_batch)
+            padded = []
+            for rgba in parts_for_batch:
+                h_, w_ = rgba.shape[:2]
+                pad_t = (max_h - h_) // 2
+                pad_l = (max_w - w_) // 2
+                canvas = np.zeros((max_h, max_w, 4), dtype=np.uint8)
+                canvas[pad_t:pad_t + h_, pad_l:pad_l + w_] = rgba
+                padded.append(canvas)
+            parts_image_batch = torch.from_numpy(
+                np.stack(padded, axis=0).astype(np.float32) / 255.0
+            )
+        else:
+            parts_image_batch = torch.zeros((1, 1, 1, 4))
+
         header = (f"BD PartsExport: {written} per-tag PNGs to {out_dir}"
                   + (f" via context='{effective_ctx_id}'" if use_context else ""))
         summary = header + ("\n" + "\n".join(summary_lines) if summary_lines else "")
         print(f"[BD PartsExport] {summary}", flush=True)
-        return io.NodeOutput(parts, out_dir, summary, composite_tensor)
+        return io.NodeOutput(parts, out_dir, summary, composite_tensor, parts_image_batch)
 
 
 PARTS_EXPORT_V3_NODES = [BD_PartsExport]
