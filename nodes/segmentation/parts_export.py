@@ -61,7 +61,8 @@ def _resolve_legacy_folder(filename: str, name_prefix: str, auto_increment: bool
 
 def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
                       include_masks: bool = False,
-                      base_image: "torch.Tensor | None" = None) -> int:
+                      base_image: "torch.Tensor | None" = None,
+                      background_image: "torch.Tensor | None" = None) -> int:
     """Write all parts as a single layered PSD. Returns layer count.
     Uses RAW compression — Photoshop fails to open pytoshop's zip variant.
 
@@ -96,24 +97,20 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
         key=lambda kv: -float(kv[1].get("depth_median", 0.5)),
     )
 
-    layers = []
-
-    # Bottom layer: base_image (e.g. nude mannequin) covering full canvas.
-    # Added FIRST so it sits at the bottom of the layer stack in PS.
-    if base_image is not None:
-        bi = base_image[0] if base_image.dim() == 4 else base_image
+    def _full_canvas_layer(name: str, img_t):
+        """Build a full-canvas RGBA PSD layer from an IMAGE tensor."""
+        bi = img_t[0] if img_t.dim() == 4 else img_t
         bi_np = bi.detach().cpu().numpy()
         bi_uint = (bi_np * 255.0).clip(0, 255).astype(np.uint8)
         if bi_uint.shape[-1] == 3:
             alpha_full = np.full(bi_uint.shape[:2], 255, dtype=np.uint8)
             bi_uint = np.concatenate([bi_uint, alpha_full[..., None]], axis=-1)
-        # Resize to canvas
         if bi_uint.shape[:2] != (canvas_h, canvas_w):
             pil = Image.fromarray(bi_uint, mode="RGBA")
             pil = pil.resize((canvas_w, canvas_h), Image.LANCZOS)
             bi_uint = np.asarray(pil)
-        layers.append(PsdImage(
-            name="base",
+        return PsdImage(
+            name=name,
             top=0, left=0,
             bottom=canvas_h, right=canvas_w,
             channels={
@@ -122,7 +119,15 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
                 1:  bi_uint[..., 1],
                 2:  bi_uint[..., 2],
             },
-        ))
+        )
+
+    layers = []
+    # Layer order back-to-front: background_image → base_image → parts → masks.
+    # nested_layers_to_psd appends in list order, with index 0 = bottom of stack.
+    if background_image is not None:
+        layers.append(_full_canvas_layer("background", background_image))
+    if base_image is not None:
+        layers.append(_full_canvas_layer("base", base_image))
 
     for tag, info in sorted_items:
         img = info.get("img")
@@ -267,8 +272,16 @@ class BD_PartsExport(io.ComfyNode):
                 io.Image.Input(
                     "base_image", optional=True,
                     tooltip="Optional base IMAGE (e.g. nude mannequin) painted UNDER all parts. "
-                            "Becomes the bottom layer of the PSD (full canvas, visible) and the "
-                            "base of the composite PNG. Resized to canvas dim if needed.",
+                            "Becomes the SECOND-FROM-BOTTOM PSD layer (full canvas, visible, above "
+                            "background_image if any) and the base of composite_image. Resized to "
+                            "canvas dim if needed.",
+                ),
+                io.Image.Input(
+                    "background_image", optional=True,
+                    tooltip="Optional background IMAGE painted UNDER base_image. Becomes the BOTTOM "
+                            "layer of the PSD (full canvas, visible). NOT included in composite_image "
+                            "outputs by default — keeps the composite clean. PSD layer order back-to-"
+                            "front: background_image → base_image → parts (z-sorted) → mask layers.",
                 ),
             ],
             outputs=[
@@ -276,6 +289,7 @@ class BD_PartsExport(io.ComfyNode):
                 io.String.Output(display_name="output_dir"),
                 io.String.Output(display_name="summary"),
                 io.Image.Output(display_name="composite_image"),
+                io.Image.Output(display_name="composite_image_masked"),
                 io.Image.Output(display_name="parts_image_batch"),
             ],
         )
@@ -290,7 +304,7 @@ class BD_PartsExport(io.ComfyNode):
                 auto_increment=True, context_id="",
                 save_pngs=True, save_depth=False, save_masks=False,
                 save_composite=True, composite_size=0,
-                save_psd=False, base_image=None) -> io.NodeOutput:
+                save_psd=False, base_image=None, background_image=None) -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
 
         from ..cache.save_context import resolve_context_path, get_context, auto_pick_context
@@ -374,15 +388,53 @@ class BD_PartsExport(io.ComfyNode):
                             mask_path = os.path.join(folder, f"{tag_safe}_mask.png")
                         Image.fromarray(mask_arr, mode="L").save(mask_path, optimize=True)
 
-        # Composite + alpha
+        # Composite + alpha — TWO variants:
+        #   composite_tensor         = parts using their CURRENT alpha (post-edit
+        #                              auto_from_white_bg / fill_holes / etc.)
+        #   composite_masked_tensor  = parts using their ORIGINAL SAM3 alpha
+        #                              (the source visibility shape — re-applies
+        #                              the original occlusion to the rebuilt content)
         composite_tensor = None
+        composite_masked_tensor = None
         if save_composite or save_psd:
             from .parts_compose import BD_PartsCompose
             comp_out = BD_PartsCompose.execute(parts, output_size=composite_size, trigger=True)
             composite_tensor, alpha_tensor = comp_out.args
 
-            # If base_image is wired, blend the parts composite OVER the base.
-            # Resize base to canvas dim if needed.
+            # Build the masked variant by swapping each part's img alpha to its
+            # original_alpha (when available) before composing, then restoring.
+            stash = {}
+            for tag, info in parts["tag2pinfo"].items():
+                if not isinstance(info, dict):
+                    continue
+                orig = info.get("original_alpha")
+                img = info.get("img")
+                if orig is None or img is None:
+                    continue
+                arr = np.asarray(img)
+                if arr.ndim != 3 or arr.shape[2] not in (3, 4):
+                    continue
+                stash[tag] = arr  # keep original to restore
+                rgb = arr[..., :3] if arr.shape[2] == 4 else arr
+                a = np.asarray(orig).astype(np.uint8)
+                if a.shape != rgb.shape[:2]:
+                    a = np.asarray(
+                        Image.fromarray(a, mode="L").resize(
+                            (rgb.shape[1], rgb.shape[0]), Image.BILINEAR,
+                        )
+                    )
+                info["img"] = np.concatenate([rgb, a[..., None]], axis=-1).astype(np.uint8)
+            try:
+                masked_out = BD_PartsCompose.execute(
+                    parts, output_size=composite_size, trigger=True,
+                )
+                composite_masked_tensor, masked_alpha_tensor = masked_out.args
+            finally:
+                # Restore originals
+                for tag, original_arr in stash.items():
+                    parts["tag2pinfo"][tag]["img"] = original_arr
+
+            # If base_image is wired, blend BOTH composites OVER the base.
             if base_image is not None:
                 base_t = base_image if base_image.dim() == 4 else base_image.unsqueeze(0)
                 ch, cw = composite_tensor.shape[1], composite_tensor.shape[2]
@@ -393,8 +445,11 @@ class BD_PartsExport(io.ComfyNode):
                 base_rgb = base_t[..., :3]
                 a3 = alpha_tensor[..., None] if alpha_tensor.dim() == 3 else alpha_tensor.unsqueeze(-1)
                 composite_tensor = composite_tensor * a3 + base_rgb * (1.0 - a3)
-                # Alpha after compositing onto base = fully opaque (we have a base now)
+                a3m = (masked_alpha_tensor[..., None] if masked_alpha_tensor.dim() == 3
+                       else masked_alpha_tensor.unsqueeze(-1))
+                composite_masked_tensor = composite_masked_tensor * a3m + base_rgb * (1.0 - a3m)
                 alpha_tensor = torch.ones_like(alpha_tensor)
+                masked_alpha_tensor = torch.ones_like(masked_alpha_tensor)
 
             if save_composite:
                 rgb = (composite_tensor[0].cpu().numpy() * 255).astype(np.uint8)
@@ -434,6 +489,7 @@ class BD_PartsExport(io.ComfyNode):
                     parts, psd_path, output_size=int(composite_size),
                     include_masks=bool(save_masks),
                     base_image=base_image,
+                    background_image=background_image,
                 )
                 summary_lines.append(f"  layered PSD: {os.path.basename(psd_path)}  ({n_layers} layers, raw)")
             except Exception as e:
@@ -447,6 +503,8 @@ class BD_PartsExport(io.ComfyNode):
             h, w = _frame_size(parts) or (64, 64)
             h, w = (h or 64), (w or 64)
             composite_tensor = torch.zeros((1, h, w, 3))
+        if composite_masked_tensor is None:
+            composite_masked_tensor = composite_tensor
 
         # Build parts_image_batch — N parts as RGBA batch where:
         #   RGB = full Qwen rebuild (info["img"] RGB, NOT cut to mask)
@@ -507,7 +565,8 @@ class BD_PartsExport(io.ComfyNode):
                   + (f" via context='{effective_ctx_id}'" if use_context else ""))
         summary = header + ("\n" + "\n".join(summary_lines) if summary_lines else "")
         print(f"[BD PartsExport] {summary}", flush=True)
-        return io.NodeOutput(parts, out_dir, summary, composite_tensor, parts_image_batch)
+        return io.NodeOutput(parts, out_dir, summary, composite_tensor,
+                             composite_masked_tensor, parts_image_batch)
 
 
 PARTS_EXPORT_V3_NODES = [BD_PartsExport]
