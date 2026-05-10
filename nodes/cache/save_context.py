@@ -210,7 +210,18 @@ def get_context(context_id: str) -> dict | None:
 
 
 def auto_pick_context() -> str | None:
-    """If exactly one context is registered, return its id. Else None."""
+    """Auto-pick a registered save context for nodes with empty context_id.
+
+    Priority:
+      1. If 'default' is registered, return 'default' (regardless of how many
+         other contexts are registered). Lets users keep multiple named
+         contexts without breaking the auto-pick path for save nodes that
+         don't explicitly wire context_id.
+      2. Else if EXACTLY ONE context is registered, return it.
+      3. Else None.
+    """
+    if "default" in _SAVE_CONTEXTS:
+        return "default"
     if len(_SAVE_CONTEXTS) == 1:
         return next(iter(_SAVE_CONTEXTS))
     return None

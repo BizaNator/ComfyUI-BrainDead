@@ -351,13 +351,18 @@ class BD_BulkSave(io.ComfyNode):
             picked = auto_pick_context()
             if picked is not None:
                 effective_ctx_id = picked
-        if not effective_ctx_id or get_context(effective_ctx_id) is None:
-            available = sorted([k for k in __import__('builtins').dict.fromkeys([])])
-            return io.NodeOutput(
-                0, "",
-                f"BD_BatchSave: no usable context. context_id='{context_id}' not registered, "
-                "and auto-pick failed (zero or multiple contexts registered). Add a BD_SaveContext upstream."
+        # Resolve context, but DON'T bail if it's missing. Fall back to a flat
+        # save in OUTPUT_DIR so data is never silently lost.
+        ctx_resolved = bool(effective_ctx_id and get_context(effective_ctx_id) is not None)
+        fallback_warning = None
+        if not ctx_resolved:
+            fallback_warning = (
+                f"WARNING: no usable BD_SaveContext (context_id='{context_id}', "
+                f"auto-pick returned None). Falling back to flat save in "
+                f"{OUTPUT_DIR}/bd_bulksave_fallback/<label>_<idx>.<ext>. "
+                f"Add a BD_SaveContext upstream named 'default' for proper paths."
             )
+            print(f"[BD BulkSave] {fallback_warning}", flush=True)
 
         label_list = [l.strip() for l in (labels or "").strip().split("\n")]
         ext = format if format != "jpg" else "jpg"
@@ -366,15 +371,27 @@ class BD_BulkSave(io.ComfyNode):
         status_lines = []
         skipped = 0
         errors = 0
+        fallback_dir = os.path.join(OUTPUT_DIR, "bd_bulksave_fallback")
 
         for i, (slot, data) in enumerate(wired):
             label_raw = label_list[i] if i < len(label_list) else ""
             suffix = (label_prefix or "") + label_raw if label_raw else ""
             try:
-                filepath, rel_path = resolve_context_path(
-                    effective_ctx_id, suffix, ext,
-                    node_custom_vars=custom_vars,
-                )
+                if ctx_resolved:
+                    filepath, rel_path = resolve_context_path(
+                        effective_ctx_id, suffix, ext,
+                        node_custom_vars=custom_vars,
+                    )
+                else:
+                    # Fallback: flat save with auto-numbered filename
+                    os.makedirs(fallback_dir, exist_ok=True)
+                    base_name = (label_raw or f"slot{slot:02d}").strip("_")
+                    filepath = os.path.join(
+                        fallback_dir,
+                        f"{base_name}_{i:03d}.{ext}",
+                    )
+                    rel_path = os.path.relpath(filepath, OUTPUT_DIR).replace("\\", "/")
+
                 if '/' in filepath or '\\' in filepath:
                     os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
@@ -392,12 +409,21 @@ class BD_BulkSave(io.ComfyNode):
                 errors += 1
                 status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} ERROR: {e}")
 
-        auto_str = " (auto-picked)" if not context_id else ""
-        summary = (
-            f"saved={len(saved_paths) - skipped} skipped={skipped} errors={errors} "
-            f"context='{effective_ctx_id}'{auto_str}\n" + "\n".join(status_lines)
-        )
-        print(f"[BD BatchSaveWithContext] {summary}", flush=True)
+        if ctx_resolved:
+            auto_str = " (auto-picked)" if not context_id else ""
+            header = (
+                f"saved={len(saved_paths) - skipped} skipped={skipped} errors={errors} "
+                f"context='{effective_ctx_id}'{auto_str}"
+            )
+        else:
+            header = (
+                f"saved={len(saved_paths) - skipped} skipped={skipped} errors={errors} "
+                f"context=FALLBACK (data preserved in {fallback_dir})"
+            )
+        summary = header + "\n" + "\n".join(status_lines)
+        if fallback_warning:
+            summary = fallback_warning + "\n" + summary
+        print(f"[BD BulkSave] {summary}", flush=True)
         return io.NodeOutput(len(saved_paths), "\n".join(saved_paths), summary)
 
 
