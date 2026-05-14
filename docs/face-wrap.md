@@ -13,8 +13,10 @@ left.png  ─┼─→ BD_FaceLandmarks (batch)  ─→  LANDMARKS_BATCH
 right.png ─┤
 rear.png  ─┘
 
-LANDMARKS_BATCH ─→ BD_FaceFit  ─→  FACE_FIT (mesh + per-view 2D/3D verts)
+LANDMARKS_BATCH ─→ BD_FaceFit   ─→  FACE_FIT  (mesh + per-view 2D/3D verts)
                    mesh_source: mediapipe_canonical | ict_facekit
+              ──or BD_FlameFit  ─→  FACE_FIT  (FLAME morphable-model fit —
+                                               subject-accurate, full head)
 
 images + FACE_FIT ─→ BD_FaceTextureBake (all views, nvdiffrast)
                       └─→ uv_textures   (N × UV partials)
@@ -72,8 +74,33 @@ final texture ─→ BD_UVTransfer (donor UV → CC5/Metahuman/your-mesh UV)
   identity-coeff fit.
 - **Rear view / no detection:** flagged `detected=False`; per-view fields
   zero-filled. `BD_FaceTextureBake` skips undetected views.
-- **Future swap-in:** `BD_FlameFit` can produce the same FACE_FIT type
-  using FLAME 2023 (requires MPI auth).
+
+### `BD_FlameFit`
+- **Inputs:** `LANDMARKS_BATCH`, `flame_npz_path` STRING (optional),
+  `embedding_npz_path` STRING (optional), `shape_coeffs` INT (default 100),
+  `expr_coeffs` INT (default 50), `iterations` INT (default 300).
+- **Outputs:** `FACE_FIT` (`mesh_source="flame"`), `status`.
+- **Drop-in alternative to `BD_FaceFit`** — emits the identical FACE_FIT
+  contract, so bake / blend / transfer are unchanged. Wire it in place of
+  `BD_FaceFit`.
+- **Why it's the quality fix:** FLAME is a proper morphable model. The
+  canonical and ICT paths *warp a neutral mesh*, which can't fix the
+  cheeks/forehead. Fitting FLAME's shape + expression **basis** produces a
+  *subject-accurate* face — the basis only spans real face shapes.
+- **Implementation:** FLAME forward (shape+expr basis → joints → pose
+  blendshapes → 5-joint linear-blend skinning). Per view, a **staged**
+  Adam fit — Stage A camera + global pose, Stage B + shape, Stage C +
+  expression + jaw/neck pose — with a closed-form scale/translation init.
+  Staging matters: joint optimisation from zero is under-constrained (168
+  params vs 105 landmarks) and lands in bad minima. Targets are the 105
+  landmarks of the official `mediapipe_landmark_embedding.npz` (exact
+  FLAME barycentric positions — no guessed index map). Typical fit:
+  ~3–4px landmark RMSE, ~2s/view on GPU.
+- **Model assets** (NOT bundled — FLAME license): run
+  `tools/convert_flame.py` once to produce `flame2023_facewrap.npz`
+  (chumpy-free numpy) + place `mediapipe_landmark_embedding.npz` beside
+  it. Defaults to `/srv/AI_Stuff/models/flame/`.
+- **Full head:** 5023 verts / 9976 faces — face + scalp + neck.
 
 ### `BD_FaceTextureBake`
 - **Inputs:** `IMAGE` (photo batch), `FACE_FIT`, `view_index` INT
@@ -191,6 +218,7 @@ nodes/facewrap/
 ├── types.py               # LANDMARKS_BATCH, FACE_FIT custom-type helpers
 ├── landmarks.py           # BD_FaceLandmarks
 ├── face_fit.py            # BD_FaceFit (mediapipe_canonical | ict_facekit)
+├── flame_fit.py           # BD_FlameFit (FLAME morphable-model fit)
 ├── texture_bake.py        # BD_FaceTextureBake
 ├── confidence_blend.py    # BD_UVConfidenceBlend
 ├── qwen_composite.py      # BD_FaceWrapComposite
@@ -205,7 +233,8 @@ lib/facewrap/
 
 tools/
 ├── build_correspondence.py   # one-time per-rig: donor→target UV warp map
-└── preprocess_ict.py         # one-time: ICT neutral mesh → bundled head skin
+├── preprocess_ict.py         # one-time: ICT neutral mesh → bundled head skin
+└── convert_flame.py          # one-time: FLAME .pkl (chumpy) → clean .npz
 ```
 
 Add `FACEWRAP_V3_NODES` to the top-level `__init__.py` alongside the other
