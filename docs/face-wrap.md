@@ -66,10 +66,18 @@ finalized FLAME texture ─→ BD_UVTransfer (FLAME→CC5/Metahuman) ─→ reta
   custom type using FLAME 2023 (requires MPI auth) or ICT-FaceKit (open).
 
 ### `BD_FaceTextureBake`
-- **Inputs:** `IMAGE`, `FACE_FIT`, `view_index` INT (which view to bake
-  through), `texture_size` INT (default 2048).
-- **Outputs:** `IMAGE` (partial UV texture), `MASK` (visibility/confidence —
-  per-texel cosine of triangle normal vs view direction, clamped to [0,1]).
+- **Inputs:** `IMAGE` (photo batch), `FACE_FIT`, `view_index` INT
+  (default `-1` = bake ALL detected views; `>= 0` = bake just that view),
+  `texture_size` INT (default 2048), `min_confidence` FLOAT (optional).
+- **Outputs:** `IMAGE` (`uv_textures` — an N-length batch of partial UV
+  textures), `MASK` (`confidences` — N-length batch of per-texel
+  view-cosine masks in [0,1]).
+- **Batched by default:** the node bakes every detected view in one call
+  and outputs batches that wire straight into `BD_UVConfidenceBlend` —
+  no per-view nodes or merge nodes needed. `view_index >= 0` still works
+  for debugging a single view (output is a 1-length batch). Undetected
+  views (rear / failed detection) are skipped — they carry no usable
+  landmarks.
 - **Implementation:** Reuses the exact UV-rasterization recipe from
   `ovoxel_texture_bake.py:191-220` — `dr.rasterize` UVs in NDC to get
   per-texel (face_id, barycentric). With v1's MediaPipe canonical fit we
@@ -77,7 +85,8 @@ finalized FLAME texture ─→ BD_UVTransfer (FLAME→CC5/Metahuman) ─→ reta
   a known 2D position in the source photo (`verts_2d` from the FACE_FIT),
   so we just `dr.interpolate(verts_2d, rast, faces)` to get per-texel
   source-image coords, then bilinear-sample. Confidence = per-face normal
-  in 3D-landmark space dotted with view direction, clamp to [0,1].
+  in 3D-landmark space dotted with view direction, clamp to [0,1]. One
+  `RasterizeCudaContext` is created and reused across all baked views.
 - **Failure mode:** if the interpolated source coord lands outside the
   photo bounds, confidence = 0 for that texel.
 

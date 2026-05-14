@@ -1,13 +1,16 @@
 """
-BD_FaceTextureBake — per-view bake of a source photo into the canonical
-UV layout using nvdiffrast.
+BD_FaceTextureBake — bake source photos into the canonical UV layout
+using nvdiffrast.
 
-For each output UV texel:
+By default bakes EVERY detected view in the FACE_FIT and outputs batches
+(uv_textures, confidences) that plug straight into BD_UVConfidenceBlend.
+Set view_index >= 0 to bake just one view (for debugging / inspection).
+
+For each output UV texel of a given view:
   1. Rasterize the canonical UV layout in NDC → per-texel (face_id, barycentric)
   2. Interpolate the 3 per-corner verts_2d positions → source-image coord
   3. Bilinear-sample the source image at that coord
-  4. Compute per-texel confidence = front-facingness of the underlying
-     triangle, clamped to [0, 1]
+  4. Confidence = front-facingness of the underlying triangle, clamped [0,1]
 
 Reuses the UV-rasterization recipe from `nodes/mesh/ovoxel_texture_bake.py`.
 """
@@ -86,8 +89,77 @@ def _per_face_view_cosine(verts_3d: torch.Tensor,
     return cos
 
 
+def _bake_one_view(
+    ctx,
+    dr,
+    src_image_gpu: torch.Tensor,
+    view: dict,
+    uvs_ndc: torch.Tensor,
+    face_uvs: torch.Tensor,
+    faces_v: torch.Tensor,
+    uv_to_vert: torch.Tensor,
+    texture_size: int,
+    min_confidence: float,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    """Bake a single view into the canonical UV layout.
+
+    Returns (texture (H,W,3), confidence (H,W), n_filled_texels).
+    """
+    verts_2d_per_3d = torch.from_numpy(view["verts_2d"]).to(device, dtype=torch.float32)
+    verts_3d = torch.from_numpy(view["verts_3d"]).to(device, dtype=torch.float32)
+
+    # Per-UV-index 2D positions in source-image pixel space
+    verts_2d_per_uv = verts_2d_per_3d[uv_to_vert]  # (V_uv, 2)
+
+    # (V_uv, 4) homogeneous clip-space positions: (x, y, z=0, w=1)
+    rast_pos = torch.cat([
+        uvs_ndc * 2.0 - 1.0,
+        torch.zeros_like(uvs_ndc[:, :1]),
+        torch.ones_like(uvs_ndc[:, :1]),
+    ], dim=-1).unsqueeze(0)  # (1, V_uv, 4)
+
+    rast, _ = dr.rasterize(
+        ctx, rast_pos, face_uvs,
+        resolution=[texture_size, texture_size],
+    )
+    # rast: (1, H, W, 4) — last channel = triangle_id+1 (0 = empty)
+    tri_mask = rast[0, ..., 3] > 0
+
+    # Interpolate verts_2d_per_uv across the UV-rasterized mesh
+    attrs_2d = verts_2d_per_uv.unsqueeze(0)  # (1, V_uv, 2)
+    interp_2d, _ = dr.interpolate(attrs_2d, rast, face_uvs)
+    sample_xy = interp_2d[0]  # (H, W, 2) in source-image pixel space
+
+    # Bilinear-sample the source image
+    h_src, w_src, _ = src_image_gpu.shape
+    in_bounds = (
+        (sample_xy[..., 0] >= 0) & (sample_xy[..., 0] < w_src - 1) &
+        (sample_xy[..., 1] >= 0) & (sample_xy[..., 1] < h_src - 1)
+    )
+    valid = tri_mask & in_bounds
+    sampled = _bilinear_sample(
+        src_image_gpu, sample_xy.reshape(-1, 2), valid.reshape(-1)
+    )
+    texture = sampled.reshape(texture_size, texture_size, 3)
+
+    # Per-face confidence from view-cosine
+    face_cos = _per_face_view_cosine(verts_3d, faces_v)  # (F,)
+    face_idx = (rast[0, ..., 3] - 1).long()
+    tex_cos = face_cos[face_idx.clamp(min=0)]  # (H, W)
+    tex_cos = tex_cos * tri_mask.float() * in_bounds.float()
+
+    if min_confidence > 0:
+        tex_cos = torch.where(tex_cos < min_confidence,
+                              torch.zeros_like(tex_cos), tex_cos)
+
+    texture = texture * (tex_cos > 0).float().unsqueeze(-1)
+    n_filled = int((tex_cos > 0).sum().item())
+    return texture, tex_cos, n_filled
+
+
 class BD_FaceTextureBake(io.ComfyNode):
-    """Bake a source photo into the canonical UV layout for one view."""
+    """Bake source photos into the canonical UV layout — all views by default."""
 
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -96,15 +168,21 @@ class BD_FaceTextureBake(io.ComfyNode):
             display_name="BD Face Texture Bake",
             category="🧠BrainDead/FaceWrap",
             description=(
-                "Bake one source photo into the canonical UV layout using\n"
-                "nvdiffrast. Outputs a partial UV texture + a confidence mask\n"
-                "(per-texel front-facingness, clamped to [0,1]).\n\n"
-                "Pair with BD_UVConfidenceBlend to composite multiple views."
+                "Bake source photos into the canonical UV layout using\n"
+                "nvdiffrast. By DEFAULT bakes every detected view and outputs\n"
+                "(uv_textures, confidences) batches that plug straight into\n"
+                "BD_UVConfidenceBlend.\n\n"
+                "Set view_index >= 0 to bake just one view (debug/inspection);\n"
+                "the output is still a 1-length batch so wiring is unchanged.\n\n"
+                "Undetected views (rear / failed detection) are skipped — they\n"
+                "carry no usable landmarks, so they contribute nothing to a\n"
+                "face-UV bake."
             ),
             inputs=[
                 io.Image.Input(
                     "images",
-                    tooltip="Source photo batch — bake samples from images[view_index].",
+                    tooltip="Source photo batch — same order/count as the "
+                            "LANDMARKS_BATCH the FACE_FIT was built from.",
                 ),
                 FaceFitInput(
                     "face_fit",
@@ -113,11 +191,12 @@ class BD_FaceTextureBake(io.ComfyNode):
                 ),
                 io.Int.Input(
                     "view_index",
-                    default=0,
-                    min=0,
+                    default=-1,
+                    min=-1,
                     max=63,
                     step=1,
-                    tooltip="Which view of the FACE_FIT to bake.",
+                    tooltip="-1 = bake ALL detected views (default). "
+                            ">= 0 = bake only that view index.",
                 ),
                 io.Int.Input(
                     "texture_size",
@@ -138,8 +217,8 @@ class BD_FaceTextureBake(io.ComfyNode):
                 ),
             ],
             outputs=[
-                io.Image.Output(display_name="uv_texture"),
-                io.Mask.Output(display_name="confidence"),
+                io.Image.Output(display_name="uv_textures"),
+                io.Mask.Output(display_name="confidences"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -149,137 +228,97 @@ class BD_FaceTextureBake(io.ComfyNode):
         cls,
         images: torch.Tensor,
         face_fit,
-        view_index: int = 0,
+        view_index: int = -1,
         texture_size: int = 2048,
         min_confidence: float = 0.0,
     ) -> io.NodeOutput:
+        empty_img = torch.zeros((1, texture_size, texture_size, 3), dtype=torch.float32)
+        empty_mask = torch.zeros((1, texture_size, texture_size), dtype=torch.float32)
+
         try:
             import nvdiffrast.torch as dr
         except ImportError as e:
-            empty_img = torch.zeros((1, texture_size, texture_size, 3), dtype=torch.float32)
-            empty_mask = torch.zeros((1, texture_size, texture_size), dtype=torch.float32)
             return io.NodeOutput(empty_img, empty_mask, f"ERROR: nvdiffrast not installed ({e})")
 
-        # Validate FACE_FIT
         if not isinstance(face_fit, dict) or "views" not in face_fit:
-            empty_img = torch.zeros((1, texture_size, texture_size, 3), dtype=torch.float32)
-            empty_mask = torch.zeros((1, texture_size, texture_size), dtype=torch.float32)
             return io.NodeOutput(empty_img, empty_mask, "ERROR: invalid FACE_FIT")
 
-        if view_index < 0 or view_index >= len(face_fit["views"]):
-            empty_img = torch.zeros((1, texture_size, texture_size, 3), dtype=torch.float32)
-            empty_mask = torch.zeros((1, texture_size, texture_size), dtype=torch.float32)
-            return io.NodeOutput(empty_img, empty_mask,
-                                 f"ERROR: view_index {view_index} out of range "
-                                 f"(have {len(face_fit['views'])} views)")
-
-        view = face_fit["views"][view_index]
-        if not view["detected"]:
-            empty_img = torch.zeros((1, texture_size, texture_size, 3), dtype=torch.float32)
-            empty_mask = torch.zeros((1, texture_size, texture_size), dtype=torch.float32)
-            return io.NodeOutput(empty_img, empty_mask,
-                                 f"View {view_index} ({view['view_hint']}) not detected — "
-                                 f"returning empty texture.")
-
-        # Pick the source image — use view_index if available, else fall back to 0
         if images is None or images.ndim != 4 or images.shape[0] == 0:
-            empty_img = torch.zeros((1, texture_size, texture_size, 3), dtype=torch.float32)
-            empty_mask = torch.zeros((1, texture_size, texture_size), dtype=torch.float32)
             return io.NodeOutput(empty_img, empty_mask, "ERROR: invalid IMAGE input")
-        img_idx = min(view_index, images.shape[0] - 1)
-        src_image = images[img_idx]  # (H, W, 3)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device.type != "cuda":
-            empty_img = torch.zeros((1, texture_size, texture_size, 3), dtype=torch.float32)
-            empty_mask = torch.zeros((1, texture_size, texture_size), dtype=torch.float32)
             return io.NodeOutput(empty_img, empty_mask, "ERROR: CUDA not available")
 
-        # ---- Pack mesh + view data into CUDA tensors ----
+        all_views = face_fit["views"]
+
+        # Decide which views to bake
+        if view_index >= 0:
+            if view_index >= len(all_views):
+                return io.NodeOutput(empty_img, empty_mask,
+                                     f"ERROR: view_index {view_index} out of range "
+                                     f"(have {len(all_views)} views)")
+            candidate_indices = [view_index]
+        else:
+            candidate_indices = list(range(len(all_views)))
+
+        # Filter to detected views only
+        bake_indices = [i for i in candidate_indices if all_views[i]["detected"]]
+        skipped = [i for i in candidate_indices if not all_views[i]["detected"]]
+
+        if not bake_indices:
+            hint = (f"view {view_index}" if view_index >= 0
+                    else "any view")
+            return io.NodeOutput(empty_img, empty_mask,
+                                 f"No detected views to bake ({hint} not detected).")
+
+        # ---- Pack the shared canonical mesh into CUDA tensors once ----
         uvs = torch.from_numpy(face_fit["canonical_uvs"]).to(device, dtype=torch.float32)
         face_uvs = torch.from_numpy(face_fit["face_uvs"]).to(device, dtype=torch.int32)
         faces_v = torch.from_numpy(face_fit["faces"]).to(device, dtype=torch.int64)
         uv_to_vert = torch.from_numpy(face_fit["uv_to_vert"]).to(device, dtype=torch.int64)
 
-        verts_2d_per_3d = torch.from_numpy(view["verts_2d"]).to(device, dtype=torch.float32)
-        verts_3d = torch.from_numpy(view["verts_3d"]).to(device, dtype=torch.float32)
-        src_image_gpu = src_image.to(device, dtype=torch.float32)
-
-        # Per-UV-index 2D positions in source-image pixel space
-        verts_2d_per_uv = verts_2d_per_3d[uv_to_vert]  # (V_uv, 2)
-
-        # ---- Set up nvdiffrast rasterization in UV space ----
         # UV → NDC: flip V (OpenGL convention) then map [0,1] → [-1,1]
         uvs_ndc = uvs.clone()
         uvs_ndc[:, 1] = 1.0 - uvs_ndc[:, 1]
-        # (V_uv, 4) homogeneous clip-space positions: (x, y, z=0, w=1)
-        rast_pos = torch.cat([
-            uvs_ndc * 2.0 - 1.0,
-            torch.zeros_like(uvs_ndc[:, :1]),
-            torch.ones_like(uvs_ndc[:, :1]),
-        ], dim=-1).unsqueeze(0)  # (1, V_uv, 4)
 
-        try:
-            ctx = dr.RasterizeCudaContext(device=device)
-            rast, _ = dr.rasterize(
-                ctx, rast_pos, face_uvs,
-                resolution=[texture_size, texture_size],
+        ctx = dr.RasterizeCudaContext(device=device)
+
+        textures = []
+        confidences = []
+        per_view_report = []
+        total_texels = texture_size * texture_size
+
+        for i in bake_indices:
+            view = all_views[i]
+            img_idx = min(i, images.shape[0] - 1)
+            src_image_gpu = images[img_idx].to(device, dtype=torch.float32)
+
+            texture, tex_cos, n_filled = _bake_one_view(
+                ctx, dr, src_image_gpu, view,
+                uvs_ndc, face_uvs, faces_v, uv_to_vert,
+                texture_size, min_confidence, device,
             )
-            # rast: (1, H, W, 4) — last channel = triangle_id+1 (0 = empty)
-            tri_mask = rast[0, ..., 3] > 0
+            textures.append(texture.cpu())
+            confidences.append(tex_cos.cpu())
+            cov = 100.0 * n_filled / total_texels
+            per_view_report.append(f"{i}:{view['view_hint']}={cov:.0f}%")
 
-            # Interpolate verts_2d_per_uv across the UV-rasterized mesh
-            attrs_2d = verts_2d_per_uv.unsqueeze(0)  # (1, V_uv, 2)
-            interp_2d, _ = dr.interpolate(attrs_2d, rast, face_uvs)
-            sample_xy = interp_2d[0]  # (H, W, 2) in source-image pixel space
+        out_textures = torch.stack(textures, dim=0)      # (N, H, W, 3)
+        out_confidences = torch.stack(confidences, dim=0)  # (N, H, W)
 
-            # ---- Bilinear-sample the source image ----
-            h_src, w_src, _ = src_image_gpu.shape
-            in_bounds = (
-                (sample_xy[..., 0] >= 0) & (sample_xy[..., 0] < w_src - 1) &
-                (sample_xy[..., 1] >= 0) & (sample_xy[..., 1] < h_src - 1)
-            )
-            valid = tri_mask & in_bounds
-            sample_xy_flat = sample_xy.reshape(-1, 2)
-            valid_flat = valid.reshape(-1)
-            sampled = _bilinear_sample(src_image_gpu, sample_xy_flat, valid_flat)
-            texture = sampled.reshape(texture_size, texture_size, 3)
-
-            # ---- Per-face confidence from view-cosine ----
-            face_cos = _per_face_view_cosine(verts_3d, faces_v)  # (F,)
-            # rast's triangle_id is +1; subtract 1 to get face index (-1 = miss)
-            face_idx = (rast[0, ..., 3] - 1).long()
-            face_idx_clamped = face_idx.clamp(min=0)
-            tex_cos = face_cos[face_idx_clamped]  # (H, W)
-            tex_cos = tex_cos * tri_mask.float() * in_bounds.float()
-
-            if min_confidence > 0:
-                tex_cos = torch.where(
-                    tex_cos < min_confidence,
-                    torch.zeros_like(tex_cos),
-                    tex_cos,
-                )
-
-            # Black out texels below the confidence floor
-            texture = texture * (tex_cos > 0).float().unsqueeze(-1)
-
-        finally:
-            # Free intermediate tensors
-            pass
-
-        # Output shapes: ComfyUI IMAGE = (B,H,W,3), MASK = (B,H,W) on CPU
-        out_image = texture.unsqueeze(0).cpu()
-        out_mask = tex_cos.unsqueeze(0).cpu()
-
-        n_filled = int((tex_cos > 0).sum().item())
-        n_total = texture_size * texture_size
-        coverage = 100.0 * n_filled / n_total
+        mode = f"view {view_index}" if view_index >= 0 else "all views"
         status = (
-            f"baked view {view_index} ({view['view_hint']}) | "
-            f"texture {texture_size}x{texture_size} | "
-            f"coverage {coverage:.1f}% ({n_filled:,}/{n_total:,})"
+            f"baked {len(bake_indices)} view(s) [{mode}] @ "
+            f"{texture_size}x{texture_size} | coverage {', '.join(per_view_report)}"
         )
-        return io.NodeOutput(out_image, out_mask, status)
+        if skipped:
+            skipped_hints = ", ".join(
+                f"{i}:{all_views[i]['view_hint']}" for i in skipped
+            )
+            status += f" | skipped undetected: [{skipped_hints}]"
+
+        return io.NodeOutput(out_textures, out_confidences, status)
 
 
 FACEWRAP_TEXTURE_BAKE_V3_NODES = [BD_FaceTextureBake]
