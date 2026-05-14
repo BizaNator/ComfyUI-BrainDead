@@ -177,6 +177,61 @@ def _umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[float, np.ndarray, np.nd
     return s, R, t
 
 
+def _tps_refine(
+    procrustes_verts: np.ndarray,
+    landmark_idx: np.ndarray,
+    mp_targets: np.ndarray,
+    strength: float,
+) -> np.ndarray:
+    """Landmark-exact thin-plate-spline refinement of a Procrustes fit.
+
+    The rigid Umeyama fit gets the gross pose/scale right but poses ICT's
+    *neutral* shape — individual landmarks land several px off the subject,
+    smearing the baked face. This warps the Procrustes-aligned verts so the
+    68 landmark verts hit their MediaPipe targets exactly.
+
+    Done on the RESIDUAL (target − procrustes_landmark), so the correction
+    is small and TPS extrapolation stays mild. A Gaussian distance falloff
+    damps the correction for verts far from any landmark (ears / scalp /
+    back of head have no landmark constraints) — those stay close to the
+    pure-Procrustes pose.
+
+    procrustes_verts: (V, 3) — rigid-fit verts
+    landmark_idx:     (68,)  — indices of the landmark verts within V
+    mp_targets:       (68, 3) — MediaPipe landmark targets (same metric space)
+    strength:         0..1 blend of the correction (1 = full landmark-exact)
+    Returns (V, 3) refined verts.
+    """
+    if strength <= 0.0:
+        return procrustes_verts
+
+    try:
+        from scipy.interpolate import RBFInterpolator
+        from scipy.spatial import cKDTree
+    except ImportError:
+        print("[BD FaceFit] scipy unavailable — skipping TPS refine, using rigid fit")
+        return procrustes_verts
+
+    ctrl = procrustes_verts[landmark_idx].astype(np.float64)   # (68, 3)
+    residual = mp_targets.astype(np.float64) - ctrl            # (68, 3)
+
+    # TPS maps 3D position → 3D residual; smoothing=0 → exact hit at controls.
+    rbf = RBFInterpolator(ctrl, residual, kernel="thin_plate_spline", smoothing=0.0)
+    correction = rbf(procrustes_verts.astype(np.float64))      # (V, 3)
+
+    # Gaussian falloff by distance to the nearest landmark control point.
+    # falloff_dist ≈ the control-point spread, so face-region verts get the
+    # full correction and far verts (ears/scalp/back) fade toward rigid pose.
+    tree = cKDTree(ctrl)
+    dist, _ = tree.query(procrustes_verts, k=1)                # (V,)
+    ctrl_centroid = ctrl.mean(axis=0)
+    falloff_dist = float(np.linalg.norm(ctrl - ctrl_centroid, axis=1).mean()) + 1e-6
+    falloff = np.exp(-((dist / falloff_dist) ** 2))            # (V,) 1 near → 0 far
+
+    refined = procrustes_verts + (strength * falloff[:, None] * correction)
+    return refined.astype(np.float32)
+
+
 def _assemble_canonical_views(mesh: dict, in_views: list) -> list:
     """mediapipe_canonical: the 468 mesh verts ARE landmarks 0..467."""
     n_verts = mesh["verts"].shape[0]
@@ -205,14 +260,23 @@ def _assemble_canonical_views(mesh: dict, in_views: list) -> list:
     return out
 
 
-def _fit_ict_views(mesh: dict, ict_lm68_idx: np.ndarray, in_views: list) -> list:
-    """ict_facekit: Procrustes-fit the ICT head to MediaPipe's landmarks per view.
+def _fit_ict_views(mesh: dict, ict_lm68_idx: np.ndarray, in_views: list,
+                   landmark_warp: float = 1.0) -> list:
+    """ict_facekit: fit the ICT head to MediaPipe's landmarks per view.
+
+    Two stages:
+      1. Rigid Umeyama similarity transform (scale + rotation + translation)
+         — gets the gross pose/scale right, including the ear/scalp/back
+         verts that have no landmark constraints.
+      2. Landmark-exact TPS refinement (_tps_refine, strength=landmark_warp)
+         — warps the result so the 68 landmark verts hit MediaPipe's targets
+         exactly, fixing the face distortion that the neutral-shape rigid
+         fit leaves behind. landmark_warp=0 = pure rigid (old behaviour).
 
     MediaPipe's landmarks_3d are normalized (x by width, y by height, z by
     width). We lift them to a common pixel-scale metric space [x*W, y*H, z*W]
-    so a single-scale similarity transform fits all three axes, then fit the
-    ICT neutral head's 68 landmark verts to that. The fitted verts_3d are in
-    pixel space; verts_2d is just its first two columns.
+    so a single-scale similarity transform fits all three axes. The fitted
+    verts_3d are in pixel space; verts_2d is just its first two columns.
     """
     ict_verts = mesh["verts"].astype(np.float64)        # (V, 3)
     ict_lm = ict_verts[ict_lm68_idx]                     # (68, 3)
@@ -238,8 +302,17 @@ def _fit_ict_views(mesh: dict, ict_lm68_idx: np.ndarray, in_views: list) -> list
         mp_lm = v["landmarks_3d"][mp_idx].astype(np.float64)   # (68, 3)
         mp_lm_metric = mp_lm * np.array([w, h, w], dtype=np.float64)
 
+        # Stage 1: rigid similarity fit
         s, R, t = _umeyama(ict_lm, mp_lm_metric)
-        verts_3d = (s * (ict_verts @ R.T) + t).astype(np.float32)   # (V, 3) pixel space
+        verts_3d = s * (ict_verts @ R.T) + t                   # (V, 3) pixel space
+
+        # Stage 2: landmark-exact TPS refinement of the residual
+        verts_3d = _tps_refine(
+            verts_3d.astype(np.float32), ict_lm68_idx,
+            mp_lm_metric.astype(np.float32), strength=landmark_warp,
+        )
+
+        verts_3d = verts_3d.astype(np.float32)
         verts_2d = verts_3d[:, :2].copy()
 
         out.append({
@@ -297,6 +370,20 @@ class BD_FaceFit(io.ComfyNode):
                     tooltip="Override path to the mesh .obj. Empty = use the "
                             "bundled asset for the selected mesh_source.",
                 ),
+                io.Float.Input(
+                    "ict_landmark_warp",
+                    default=1.0,
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                    optional=True,
+                    tooltip="ict_facekit only: strength of the landmark-exact "
+                            "TPS warp applied after the rigid fit. 1.0 = the "
+                            "68 landmarks hit MediaPipe's targets exactly "
+                            "(fixes neutral-shape face distortion); 0.0 = pure "
+                            "rigid Procrustes (the older, more distorted fit). "
+                            "Ignored for mediapipe_canonical.",
+                ),
             ],
             outputs=[
                 FaceFitOutput(display_name="face_fit"),
@@ -310,6 +397,7 @@ class BD_FaceFit(io.ComfyNode):
         landmarks_batch,
         mesh_source: str = "mediapipe_canonical",
         mesh_obj_path: str = "",
+        ict_landmark_warp: float = 1.0,
     ) -> io.NodeOutput:
         if not isinstance(landmarks_batch, dict) or "views" not in landmarks_batch:
             return io.NodeOutput(None, "ERROR: invalid LANDMARKS_BATCH input")
@@ -349,7 +437,8 @@ class BD_FaceFit(io.ComfyNode):
             if ict_lm68_idx.shape[0] != 68:
                 return io.NodeOutput(None, f"ERROR: expected 68 ICT landmark verts, "
                                            f"got {ict_lm68_idx.shape[0]}")
-            out_views = _fit_ict_views(mesh, ict_lm68_idx, in_views)
+            out_views = _fit_ict_views(mesh, ict_lm68_idx, in_views,
+                                       landmark_warp=ict_landmark_warp)
 
         n_verts = mesh["verts"].shape[0]
         n_faces = mesh["faces"].shape[0]
@@ -371,6 +460,8 @@ class BD_FaceFit(io.ComfyNode):
             f"views: {n_detected}/{len(out_views)} detected | "
             f"hints: [{hints}]"
         )
+        if mesh_source == "ict_facekit":
+            status += f" | landmark_warp={ict_landmark_warp:.2f}"
         return io.NodeOutput(face_fit, status)
 
 
