@@ -13,20 +13,24 @@ left.png  ─┼─→ BD_FaceLandmarks (batch)  ─→  LANDMARKS_BATCH
 right.png ─┤
 rear.png  ─┘
 
-LANDMARKS_BATCH ─→ BD_FlameFit  ─→  FLAME_FIT (verts + cameras, per view)
+LANDMARKS_BATCH ─→ BD_FaceFit  ─→  FACE_FIT (mesh + per-view 2D/3D verts)
+                   mesh_source: mediapipe_canonical | ict_facekit
 
-FLAME_FIT + images ─→ BD_FlameTextureBake (per view, nvdiffrast)
-                       └─→ TEXTURE_BATCH    (4 × UV partials)
-                       └─→ CONFIDENCE_BATCH (4 × view-cosine masks)
+images + FACE_FIT ─→ BD_FaceTextureBake (all views, nvdiffrast)
+                      └─→ uv_textures   (N × UV partials)
+                      └─→ confidences   (N × view-cosine masks)
 
-TEXTURE_BATCH + CONFIDENCE_BATCH ─→ BD_UVConfidenceBlend
-                                     └─→ IMAGE   (FLAME-UV composite)
-                                     └─→ MASK    (filled vs gap)
+uv_textures + confidences ─→ BD_UVConfidenceBlend
+                              └─→ uv_texture  (composite)
+                              └─→ filled_mask (filled vs gap)
 
-IMAGE + MASK ─→ [existing Qwen Image Edit nodes] ─→ finalized FLAME texture
+uv_texture + filled_mask ─→ [Qwen Image Edit inpaint] ─→ qwen_output
+                                          ↓
+        uv_texture + filled_mask + qwen_output ─→ BD_FaceWrapComposite
+                              └─→ uv_texture (face preserved, gaps filled)
 
 (optional retarget to a different rig:)
-finalized FLAME texture ─→ BD_UVTransfer (FLAME→CC5/Metahuman) ─→ retargeted texture
+final texture ─→ BD_UVTransfer (donor UV → CC5/Metahuman/your-mesh UV)
 ```
 
 ## Node-by-node contract
@@ -43,27 +47,33 @@ finalized FLAME texture ─→ BD_UVTransfer (FLAME→CC5/Metahuman) ─→ reta
   rear (no face detected → user must label). User can override per image.
 
 ### `BD_FaceFit`
-- **Inputs:** `LANDMARKS_BATCH`, `model_path` STRING (default
-  `lib/facewrap/canonical_face_model.obj` shipped with the pack).
+- **Inputs:** `LANDMARKS_BATCH`, `mesh_source` combo
+  (`mediapipe_canonical` | `ict_facekit`), `mesh_obj_path` STRING
+  (optional override; empty = bundled asset for the source).
 - **Outputs:** `FACE_FIT` (see `nodes/facewrap/types.py`).
-- **Model (v1):** MediaPipe canonical face mesh — 468 vertices, 898 triangle
-  faces, per-vertex UVs. Apache-2.0 licensed, bundled in `lib/facewrap/`.
-  The 468 vertex indices correspond 1:1 with FaceLandmarker landmarks
-  0..467; the extra 10 iris/pupil landmarks (468..477) are NOT mesh
-  vertices and are dropped at fit time.
-- **Implementation:** NO optimization in v1 — MediaPipe already produces
-  subject-specific 2D + 3D per-vertex positions, and the 4x4 transform
-  gives per-view pose. We just assemble the LANDMARKS_BATCH into a
-  shape-and-pose-bearing FACE_FIT for the bake node to consume.
-- **Why this is enough for textures:** the bake step only needs to know
-  where each vertex projects in the source photo. MediaPipe's 2D landmarks
-  ARE that projection. No shape basis, no L-BFGS — Delaunay-warp the
-  photo into UV space using 468 control points.
+- **mesh_source = `mediapipe_canonical`** (default): MediaPipe canonical
+  face mesh — 468 verts, 898 faces, per-vertex UVs (Apache-2.0, bundled).
+  The 468 vertices correspond 1:1 with FaceLandmarker landmarks 0..467,
+  so the fit is **pure assembly** — no optimization. MediaPipe already
+  produces subject-specific 2D + 3D per-vertex positions; the bake only
+  needs each vertex's 2D projection in the photo, which the landmarks
+  ARE. Face-only: **no ears, scalp, or back of head.**
+- **mesh_source = `ict_facekit`**: ICT-FaceKit head-skin mesh — 14,062
+  verts, 28,068 tris (MIT, bundled; preprocessed by
+  `tools/preprocess_ict.py` from ICT's `generic_neutral_mesh.obj` —
+  extracts the `M_Face` + `M_BackHead` skin, triangulates, packs the
+  two UDIM tiles into one [0,1] atlas). **Full head incl. ears + scalp
+  + back.** Per view, the ICT neutral head is Procrustes-fitted
+  (Umeyama similarity: scale + rotation + translation) to MediaPipe's
+  68 iBUG landmarks. The fit poses the **neutral** ICT shape — not
+  per-subject shape-accurate, so the baked face is somewhat distorted,
+  but it gives the bake somewhere to land ear / scalp / rear pixels.
+  Fit-quality upgrade tracked: landmark-exact TPS warp or per-subject
+  identity-coeff fit.
 - **Rear view / no detection:** flagged `detected=False`; per-view fields
-  zero-filled. The bake node skips them or uses a pose synthesized from
-  camera baselines.
-- **Future swap-in:** `BD_FlameFit` can later produce the same FACE_FIT
-  custom type using FLAME 2023 (requires MPI auth) or ICT-FaceKit (open).
+  zero-filled. `BD_FaceTextureBake` skips undetected views.
+- **Future swap-in:** `BD_FlameFit` can produce the same FACE_FIT type
+  using FLAME 2023 (requires MPI auth).
 
 ### `BD_FaceTextureBake`
 - **Inputs:** `IMAGE` (photo batch), `FACE_FIT`, `view_index` INT
@@ -91,26 +101,70 @@ finalized FLAME texture ─→ BD_UVTransfer (FLAME→CC5/Metahuman) ─→ reta
   photo bounds, confidence = 0 for that texel.
 
 ### `BD_UVConfidenceBlend`
-- **Inputs:** `IMAGE` batch (N partial textures), `MASK` batch (N confidence
-  maps), `blend_mode` combo (`linear` / `multiband`), `seam_dilate` INT
-  (default 4).
-- **Outputs:** `IMAGE` (composite), `MASK` (binary "filled" — Qwen inpaint mask).
-- **Implementation:** linear = per-pixel weighted average by confidence;
-  multiband = Laplacian pyramid blend at confidence boundaries (better seam
-  hiding). Edge-dilate the output by `seam_dilate` to prevent black-bleed
-  at UV seams when sampled.
+- **Inputs:** `uv_textures` IMAGE batch (N partial textures), `confidences`
+  MASK batch (N view-cosine maps), `seam_dilate` INT (default 4),
+  `fill_threshold` FLOAT (optional), `confidence_gamma` FLOAT (default 3).
+- **Outputs:** `uv_texture` IMAGE (composite), `confidence` MASK (combined),
+  `filled_mask` MASK (binary — the Qwen inpaint region).
+- **Implementation:** per-pixel confidence-weighted average. `confidence_gamma`
+  raises the per-view weights to a power so the highest-confidence view
+  dominates each texel instead of averaging in slightly-misaligned weaker
+  views (cuts ghosting/blur — default 3, was 1). The fill decision uses the
+  raw pre-gamma confidence so gamma can't push texels below `fill_threshold`.
+  `seam_dilate` grows the filled region by N px via **non-blurring edge
+  extend** (each new pixel copies a filled neighbour, no averaging) to
+  prevent black-bleed at UV seams under bilinear sampling.
 
-### `BD_UVTransfer` (FLAME → CC5/Metahuman, OPTIONAL)
-- **Inputs:** `IMAGE` (source texture in source UV), `TRIMESH` source mesh,
-  `TRIMESH` target mesh, `correspondence_path` STRING (path to a pre-built
-  `.npz` with vertex-pair indices), `output_size` INT.
-- **Outputs:** `IMAGE` (texture in target UV), `MASK` (target-UV alpha).
+### `BD_FaceWrapComposite` (Qwen form guarantee)
+- **Inputs:** `original_texture` IMAGE (the pre-Qwen blend output),
+  `filled_mask` MASK (the blend's filled_mask), `qwen_output` IMAGE
+  (Qwen Image Edit inpaint result), `feather` INT (default 2).
+- **Outputs:** `uv_texture` IMAGE — `filled*original + (1-filled)*qwen`.
+- **Why:** the Qwen-fill step must only invent the *gap* regions; the
+  baked face is real photo data and must not drift. Even a hard latent
+  noise mask can shift the "preserved" region via VAE round-trips / mask
+  bleed. This node makes the guarantee explicit — the baked face pixels
+  come back byte-identical. `feather` softens the preserved/filled seam.
+  Resolution drift (Qwen output at a different size) is auto-resized.
+
+### `BD_UVTransfer` (donor UV → CC5/Metahuman/your-mesh, OPTIONAL)
+- **Inputs:** `source_texture` IMAGE (texture in the donor UV),
+  `correspondence_path` STRING (path to a pre-built `.npz`),
+  `output_size` INT, `source_mask` MASK (optional).
+- **Outputs:** `uv_texture` IMAGE (texture in target UV), `filled_mask` MASK.
 - **Implementation:** for each target-UV texel: rasterize target mesh in
-  target UV → get (target_face_id, target_bary). Map target-face vertices
-  via correspondence → source-face vertices → source UV → sample source
-  texture. nvdiffrast rasterize + bilinear interpolate. Pre-built
-  correspondence is built ONCE per rig with a small utility (closest-point
-  match between FLAME and the target mesh, hand-tweakable in Blender).
+  target UV → (target_face_id, target_bary) → `dr.interpolate` the
+  per-target-vertex source-UV lookup → bilinear-sample the source texture.
+  The correspondence `.npz` is built ONCE per target rig with
+  `tools/build_correspondence.py` (BVH closest-point match donor→target).
+
+### Qwen-fill wiring (between Blend and Transfer)
+
+Run Qwen **on the blend output, in the donor-mesh UV** — before
+`BD_UVTransfer`, not after. The donor UV (canonical / ICT) is consistent
+and well-formed; a target rig's UV (low-poly, hard-edged) is much harder
+for Qwen to match.
+
+```
+BD_UVConfidenceBlend
+  ├─ uv_texture ──→ VAE Encode ──→ latent ──────────────┐
+  ├─ filled_mask ─→ InvertMask ──→ gap_mask ──→ SetLatentNoiseMask
+  └─ uv_texture ──→ (also feed as the reference image) ─┤
+                                                        ↓
+        TextEncodeQwenImageEditPlus (prompt: "seamlessly complete the
+        facial skin texture, consistent skin tone + lighting, preserve
+        all existing detail, add no new features")
+                                                        ↓
+                          KSampler → VAE Decode → qwen_output
+                                                        ↓
+        BD_FaceWrapComposite(original=uv_texture, filled_mask, qwen_output)
+                                                        ↓
+                          BD_UVTransfer → target rig UV
+```
+
+Three layers protect "form": the hard noise mask (Qwen only denoises the
+gap), `BD_FaceWrapComposite` (baked pixels pasted back byte-identical),
+and feeding `uv_texture` as Qwen's reference (gap-fill matches skin tone).
 
 ## Custom types
 
@@ -136,14 +190,22 @@ nodes/facewrap/
 ├── __init__.py            # registers FACEWRAP_V3_NODES + V1 dicts
 ├── types.py               # LANDMARKS_BATCH, FACE_FIT custom-type helpers
 ├── landmarks.py           # BD_FaceLandmarks
-├── face_fit.py            # BD_FaceFit (MediaPipe canonical)
+├── face_fit.py            # BD_FaceFit (mediapipe_canonical | ict_facekit)
 ├── texture_bake.py        # BD_FaceTextureBake
 ├── confidence_blend.py    # BD_UVConfidenceBlend
+├── qwen_composite.py      # BD_FaceWrapComposite
 └── uv_transfer.py         # BD_UVTransfer
 
 lib/facewrap/
 ├── canonical_face_model.obj  # MediaPipe canonical (Apache-2.0, bundled)
+├── ict/
+│   ├── ict_head_skin.obj     # ICT-FaceKit head skin (MIT, preprocessed)
+│   └── ict_landmarks_68.json # 68 iBUG landmark vertex indices
 └── NOTICE.md                 # Third-party attribution
+
+tools/
+├── build_correspondence.py   # one-time per-rig: donor→target UV warp map
+└── preprocess_ict.py         # one-time: ICT neutral mesh → bundled head skin
 ```
 
 Add `FACEWRAP_V3_NODES` to the top-level `__init__.py` alongside the other
