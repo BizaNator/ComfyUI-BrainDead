@@ -12,51 +12,70 @@ output tells Qwen what NOT to overwrite.
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from comfy_api.latest import io
 
 
-def _dilate_texture(image: torch.Tensor, mask: torch.Tensor,
-                    radius: int) -> tuple[torch.Tensor, torch.Tensor]:
-    """Iteratively grow an image's filled region by `radius` pixels.
+# 8-neighbour offsets, ordered so axis-aligned neighbours take priority over
+# diagonals (axis-aligned copies look slightly cleaner along straight seams).
+_EDGE_EXTEND_OFFSETS = [
+    (-1, 0), (1, 0), (0, -1), (0, 1),       # N, S, W, E
+    (-1, -1), (-1, 1), (1, -1), (1, 1),     # NW, NE, SW, SE
+]
 
-    Each iteration: for each unfilled pixel, take the average of its
-    filled neighbors (3x3 kernel). Stops early if no more pixels can be
-    filled.
+
+def _edge_extend_texture(image: torch.Tensor, mask: torch.Tensor,
+                         radius: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Grow the filled region by `radius` pixels via non-blurring edge extend.
+
+    Unlike an averaging dilation, each newly-filled pixel COPIES the value
+    of one filled neighbour rather than averaging all of them — so the
+    boundary is extended without softening color gradients. This matters
+    because the dilated ring is sampled by downstream 3D renderers; an
+    averaged ring reads as a blurry halo at UV seams.
 
     image: (H, W, 3) float
     mask:  (H, W) bool — True where image has valid pixels
-    Returns (dilated_image, dilated_mask).
+    Returns (extended_image, extended_mask).
     """
     if radius <= 0:
         return image, mask
 
-    img = image.permute(2, 0, 1).unsqueeze(0).float()       # (1, 3, H, W)
-    m = mask.unsqueeze(0).unsqueeze(0).float()              # (1, 1, H, W)
+    img = image.clone()
+    m = mask.clone()
+    h, w = m.shape
 
-    # Mask the image so unfilled pixels are 0 (so the kernel sees them as 0)
-    img_masked = img * m
-
-    kernel = torch.ones((1, 1, 3, 3), device=img.device, dtype=img.dtype)
     for _ in range(radius):
-        if m.sum() == m.numel():
-            break  # already full
-        # Sum of neighbor values for each channel separately
-        neighbor_sum_c = F.conv2d(img_masked, kernel.expand(3, 1, 3, 3),
-                                  padding=1, groups=3)
-        neighbor_count = F.conv2d(m, kernel, padding=1)
-        # Fill only currently-empty pixels that have ≥1 filled neighbor
-        new_fill = (m == 0) & (neighbor_count > 0)
-        avg = neighbor_sum_c / neighbor_count.clamp(min=1.0)
-        # Update img and mask
-        img_masked = torch.where(new_fill.expand_as(img_masked), avg, img_masked)
-        m = m + new_fill.float()
-        m = m.clamp(max=1.0)
+        if m.all():
+            break
+        empty = ~m
+        if not empty.any():
+            break
+        # `filled_this_iter` guards each empty pixel so it's filled by exactly
+        # one neighbour (the first direction in priority order that has data).
+        newly_filled = torch.zeros_like(m)
+        for dy, dx in _EDGE_EXTEND_OFFSETS:
+            # Shift mask + image so that [y, x] sees neighbour [y+dy, x+dx]
+            shifted_m = torch.roll(m, shifts=(dy, dx), dims=(0, 1))
+            shifted_img = torch.roll(img, shifts=(dy, dx), dims=(0, 1))
+            # Kill wrap-around contributions at the rolled edges
+            if dy > 0:
+                shifted_m[:dy, :] = False
+            elif dy < 0:
+                shifted_m[dy:, :] = False
+            if dx > 0:
+                shifted_m[:, :dx] = False
+            elif dx < 0:
+                shifted_m[:, dx:] = False
 
-    out_img = img_masked.squeeze(0).permute(1, 2, 0)
-    out_mask = m.squeeze(0).squeeze(0).bool()
-    return out_img, out_mask
+            can_fill = empty & shifted_m & ~newly_filled
+            if can_fill.any():
+                img = torch.where(can_fill.unsqueeze(-1), shifted_img, img)
+                newly_filled = newly_filled | can_fill
+
+        m = m | newly_filled
+
+    return img, m
 
 
 class BD_UVConfidenceBlend(io.ComfyNode):
@@ -92,9 +111,11 @@ class BD_UVConfidenceBlend(io.ComfyNode):
                     min=0,
                     max=32,
                     step=1,
-                    tooltip="Iteratively grow the filled region by this many pixels "
-                            "to prevent black-bleed at UV seams under bilinear "
-                            "sampling. 0 disables.",
+                    tooltip="Grow the filled region by this many pixels via "
+                            "non-blurring edge extend (each new pixel copies a "
+                            "filled neighbour, no averaging) to prevent "
+                            "black-bleed at UV seams under bilinear sampling. "
+                            "0 disables.",
                 ),
                 io.Float.Input(
                     "fill_threshold",
@@ -108,14 +129,17 @@ class BD_UVConfidenceBlend(io.ComfyNode):
                 ),
                 io.Float.Input(
                     "confidence_gamma",
-                    default=1.0,
+                    default=3.0,
                     min=0.1,
-                    max=4.0,
+                    max=8.0,
                     step=0.1,
                     optional=True,
                     tooltip="Raise confidences to this power before blending. "
-                            ">1 makes the highest-confidence view dominate more "
-                            "sharply (sharper seam); 1 = standard linear blend.",
+                            ">1 makes the highest-confidence view dominate each "
+                            "texel more sharply, which cuts ghosting/blur from "
+                            "averaging slightly-misaligned views. 1 = flat "
+                            "linear blend (more prone to blur); 3 = default; "
+                            "higher = closer to hard winner-take-all.",
                 ),
             ],
             outputs=[
@@ -133,7 +157,7 @@ class BD_UVConfidenceBlend(io.ComfyNode):
         confidences: torch.Tensor,
         seam_dilate: int = 4,
         fill_threshold: float = 0.05,
-        confidence_gamma: float = 1.0,
+        confidence_gamma: float = 3.0,
     ) -> io.NodeOutput:
         if uv_textures is None or uv_textures.ndim != 4:
             return io.NodeOutput(
@@ -161,29 +185,33 @@ class BD_UVConfidenceBlend(io.ComfyNode):
         device = uv_textures.device
         N, H, W, _ = uv_textures.shape
 
-        textures = uv_textures.float()           # (N, H, W, 3)
-        conf = confidences.float().clamp(min=0)  # (N, H, W)
-        if confidence_gamma != 1.0:
-            conf = conf.pow(confidence_gamma)
+        textures = uv_textures.float()                 # (N, H, W, 3)
+        conf_raw = confidences.float().clamp(min=0)     # (N, H, W) — raw view-cosine
 
-        # Weighted sum
-        weighted_sum = (textures * conf.unsqueeze(-1)).sum(dim=0)  # (H, W, 3)
-        conf_sum = conf.sum(dim=0)                                 # (H, W)
+        # gamma sharpens only the BLEND WEIGHTS — where one view is more
+        # confident than another, high gamma makes it dominate that texel
+        # rather than averaging in the weaker (and likely misaligned) view.
+        # The raw confidence is kept separately for the fill decision so
+        # gamma can't push otherwise-covered texels below fill_threshold.
+        conf_weight = conf_raw.pow(confidence_gamma) if confidence_gamma != 1.0 else conf_raw
+
+        # Weighted sum (gamma'd weights)
+        weighted_sum = (textures * conf_weight.unsqueeze(-1)).sum(dim=0)  # (H, W, 3)
+        conf_sum = conf_weight.sum(dim=0)                                 # (H, W)
         eps = 1e-8
-        composite = weighted_sum / (conf_sum.unsqueeze(-1) + eps)  # (H, W, 3)
+        composite = weighted_sum / (conf_sum.unsqueeze(-1) + eps)         # (H, W, 3)
 
-        # Use the max across views as the "trust" signal for the output mask
-        conf_max = conf.max(dim=0).values                          # (H, W)
-
-        # filled_mask = where any view contributed meaningfully
+        # Fill decision + output confidence use the RAW (pre-gamma) cosine,
+        # so "did any view see this texel" is independent of the gamma knob.
+        conf_max = conf_raw.max(dim=0).values                            # (H, W)
         filled_mask = conf_max > fill_threshold
 
         # Zero out unfilled regions in the composite
         composite = composite * filled_mask.float().unsqueeze(-1)
 
-        # Optional seam dilation — fill outward by averaging into empty neighbors
+        # Optional seam dilation — non-blurring edge extend into empty neighbours
         if seam_dilate > 0:
-            composite, dilated_mask = _dilate_texture(composite, filled_mask, seam_dilate)
+            composite, dilated_mask = _edge_extend_texture(composite, filled_mask, seam_dilate)
         else:
             dilated_mask = filled_mask
 
