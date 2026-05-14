@@ -42,33 +42,43 @@ finalized FLAME texture ─→ BD_UVTransfer (FLAME→CC5/Metahuman) ─→ reta
   pose MediaPipe returns: front (|yaw|<25°), left (yaw>25°), right (yaw<-25°),
   rear (no face detected → user must label). User can override per image.
 
-### `BD_FlameFit`
-- **Inputs:** `LANDMARKS_BATCH`, `flame_model_path` STRING (default
-  `/srv/AI_Stuff/models/flame/FLAME2023.npz`), `shape_coeffs` INT (default 100),
-  `exp_coeffs` INT (default 50), `iterations` INT (default 200).
-- **Outputs:** `FLAME_FIT` (custom type — `{verts: (V,3) tensor, faces: (F,3)
-  tensor, uvs: (V_uv,2) tensor, face_uv_idx: (F,3) tensor, cameras:
-  [{intrinsics, R, t, view_hint} per input image]}`).
-- **Implementation:** PyTorch L-BFGS on 4 views *jointly* — single shared
-  shape/expression, per-view pose + camera. Loss = MediaPipe→FLAME landmark
-  index map reprojection error + symmetric shape prior. No DECA, no CNN
-  inference. ~200 lines of fit code + the 99-point MediaPipe→FLAME index
-  map from FLAME's standard release.
-- **Rear view:** if MediaPipe finds no face, drop that view from the fit
-  but keep its image+rough-pose for the bake step (pose inferred from camera
-  baseline + symmetry).
+### `BD_FaceFit`
+- **Inputs:** `LANDMARKS_BATCH`, `model_path` STRING (default
+  `lib/facewrap/canonical_face_model.obj` shipped with the pack).
+- **Outputs:** `FACE_FIT` (see `nodes/facewrap/types.py`).
+- **Model (v1):** MediaPipe canonical face mesh — 468 vertices, 898 triangle
+  faces, per-vertex UVs. Apache-2.0 licensed, bundled in `lib/facewrap/`.
+  The 468 vertex indices correspond 1:1 with FaceLandmarker landmarks
+  0..467; the extra 10 iris/pupil landmarks (468..477) are NOT mesh
+  vertices and are dropped at fit time.
+- **Implementation:** NO optimization in v1 — MediaPipe already produces
+  subject-specific 2D + 3D per-vertex positions, and the 4x4 transform
+  gives per-view pose. We just assemble the LANDMARKS_BATCH into a
+  shape-and-pose-bearing FACE_FIT for the bake node to consume.
+- **Why this is enough for textures:** the bake step only needs to know
+  where each vertex projects in the source photo. MediaPipe's 2D landmarks
+  ARE that projection. No shape basis, no L-BFGS — Delaunay-warp the
+  photo into UV space using 468 control points.
+- **Rear view / no detection:** flagged `detected=False`; per-view fields
+  zero-filled. The bake node skips them or uses a pose synthesized from
+  camera baselines.
+- **Future swap-in:** `BD_FlameFit` can later produce the same FACE_FIT
+  custom type using FLAME 2023 (requires MPI auth) or ICT-FaceKit (open).
 
-### `BD_FlameTextureBake`
-- **Inputs:** `IMAGE`, `FLAME_FIT`, `view_index` INT (which camera to bake
+### `BD_FaceTextureBake`
+- **Inputs:** `IMAGE`, `FACE_FIT`, `view_index` INT (which view to bake
   through), `texture_size` INT (default 2048).
 - **Outputs:** `IMAGE` (partial UV texture), `MASK` (visibility/confidence —
   per-texel cosine of triangle normal vs view direction, clamped to [0,1]).
 - **Implementation:** Reuses the exact UV-rasterization recipe from
   `ovoxel_texture_bake.py:191-220` — `dr.rasterize` UVs in NDC to get
-  per-texel (face_id, barycentric), `dr.interpolate` to get 3D position +
-  normal, project 3D → 2D via the fit's camera matrix, sample the photo
-  with bilinear interpolation. Multiply alpha by cos(normal·view_dir).
-- **Failure mode:** if the camera projection puts a texel outside the
+  per-texel (face_id, barycentric). With v1's MediaPipe canonical fit we
+  skip the 3D-camera-projection step entirely: each vertex already has
+  a known 2D position in the source photo (`verts_2d` from the FACE_FIT),
+  so we just `dr.interpolate(verts_2d, rast, faces)` to get per-texel
+  source-image coords, then bilinear-sample. Confidence = per-face normal
+  in 3D-landmark space dotted with view direction, clamp to [0,1].
+- **Failure mode:** if the interpolated source coord lands outside the
   photo bounds, confidence = 0 for that texel.
 
 ### `BD_UVConfidenceBlend`
@@ -95,13 +105,14 @@ finalized FLAME texture ─→ BD_UVTransfer (FLAME→CC5/Metahuman) ─→ reta
 
 ## Custom types
 
-Two new entries in `nodes/mesh/types.py` (or a new
-`nodes/facewrap/types.py` if we go subfolder route):
+Two opaque types defined in `nodes/facewrap/types.py`. The "FLAME_FIT" name
+was generalized to "FACE_FIT" so the same type works regardless of which
+parametric / canonical mesh actually generated it (MediaPipe canonical
+today, FLAME / ICT-FaceKit tomorrow).
 
 ```python
-# Opaque types — full schema lives in the node file
 LANDMARKS_BATCH = io.Custom("BD_LANDMARKS_BATCH")
-FLAME_FIT       = io.Custom("BD_FLAME_FIT")
+FACE_FIT        = io.Custom("BD_FACE_FIT")
 ```
 
 Each carries a Python dict with the fields above. No validation node yet —
@@ -114,12 +125,16 @@ New subfolder: `nodes/facewrap/`. Mirrors the segmentation/blender layout.
 ```
 nodes/facewrap/
 ├── __init__.py            # registers FACEWRAP_V3_NODES + V1 dicts
-├── types.py               # LANDMARKS_BATCH, FLAME_FIT custom-type helpers
+├── types.py               # LANDMARKS_BATCH, FACE_FIT custom-type helpers
 ├── landmarks.py           # BD_FaceLandmarks
-├── flame_fit.py           # BD_FlameFit
-├── texture_bake.py        # BD_FlameTextureBake
+├── face_fit.py            # BD_FaceFit (MediaPipe canonical)
+├── texture_bake.py        # BD_FaceTextureBake
 ├── confidence_blend.py    # BD_UVConfidenceBlend
 └── uv_transfer.py         # BD_UVTransfer
+
+lib/facewrap/
+├── canonical_face_model.obj  # MediaPipe canonical (Apache-2.0, bundled)
+└── NOTICE.md                 # Third-party attribution
 ```
 
 Add `FACEWRAP_V3_NODES` to the top-level `__init__.py` alongside the other
@@ -129,28 +144,31 @@ domain bundles.
 
 | Asset | Path | Source | Size | Required for |
 |-------|------|--------|------|--------------|
-| FLAME 2023 model | `/srv/AI_Stuff/models/flame/FLAME2023.npz` | https://download.is.tue.mpg.de/download.php?domain=flame&sfile=FLAME2023Open.zip | ~150MB | `BD_FlameFit`, `BD_FlameTextureBake` |
-| FLAME UV layout | bundled with FLAME 2023 release | — | — | `BD_FlameTextureBake` |
-| MediaPipe → FLAME landmark map | static `.npy` shipped in `lib/facewrap/landmark_map.npy` | published in FLAME docs / DECA repo | <1KB | `BD_FlameFit` |
-| FLAME ↔ CC5 correspondence | `/srv/AI_Stuff/models/flame/correspondences/cc5.npz` | built once with `tools/build_correspondence.py` | ~1MB | `BD_UVTransfer` |
-| FLAME ↔ Metahuman correspondence | `/srv/AI_Stuff/models/flame/correspondences/metahuman.npz` | built once with same util | ~1MB | `BD_UVTransfer` |
+| MediaPipe FaceLandmarker model | `/srv/AI_Stuff/models/mediapipe/face_landmarker.task` | auto-downloaded from `storage.googleapis.com/mediapipe-models/face_landmarker/...` | ~3.6 MB | `BD_FaceLandmarks` |
+| MediaPipe canonical face mesh | `lib/facewrap/canonical_face_model.obj` (bundled in repo) | github.com/google-ai-edge/mediapipe `mediapipe/modules/face_geometry/data/` — Apache-2.0 | ~45 KB | `BD_FaceFit`, `BD_FaceTextureBake` |
+| Canonical ↔ CC5 correspondence | `/srv/AI_Stuff/models/facewrap/correspondences/cc5.npz` | built once with `tools/build_correspondence.py` | ~1 MB | `BD_UVTransfer` |
+| Canonical ↔ Metahuman correspondence | `/srv/AI_Stuff/models/facewrap/correspondences/metahuman.npz` | built once with same util | ~1 MB | `BD_UVTransfer` |
 
-License note: FLAME 2023 Open release is the carved-out version that drops
-the research-only restriction. Verify `LICENSE.txt` inside the zip matches
-intended use before bundling.
+**Future (when FLAME credentials are available):**
+- FLAME 2023 Open release at https://download.is.tue.mpg.de/download.php?domain=flame&sfile=FLAME2023Open.zip
+- Requires MPI account registration — the URL serves an auth page to logged-out clients.
+- Once obtained, a `BD_FlameFit` node can produce the same `FACE_FIT`
+  custom type using FLAME's parametric shape/expression basis and full
+  head topology (including scalp/neck — wider coverage than the canonical
+  face-only mesh).
 
 ## MVP ordering
 
 Land in this order — each layer is testable on its own:
 
 1. `BD_FaceLandmarks` — proves the MediaPipe install + the per-view batch
-   shape. No big deps.
-2. `BD_FlameFit` — needs FLAME .npz + the landmark map. Tests the optimizer
-   alone (no rendering).
-3. `BD_FlameTextureBake` — uses fit + image; first node that actually
+   shape. ✅ landed.
+2. `BD_FaceFit` — loads the canonical .obj, assembles LANDMARKS_BATCH into
+   FACE_FIT. Pure assembly in v1, no optimization.
+3. `BD_FaceTextureBake` — uses fit + image; first node that actually
    produces a partial UV texture.
-4. `BD_UVConfidenceBlend` — pure-numpy/torch, no new deps, easy to land.
-5. `BD_UVTransfer` — only after the FLAME-side pipeline is solid AND a
+4. `BD_UVConfidenceBlend` — pure-torch, no new deps, easy to land.
+5. `BD_UVTransfer` — only after the canonical pipeline is solid AND a
    correspondence has been built for one target rig.
 
 ## Existing infra we leverage
@@ -167,12 +185,14 @@ Land in this order — each layer is testable on its own:
 
 ## Out of scope (intentional)
 
-- DECA / EMOCA / MICA — landmark-only fit gets us 90% of the quality for
-  texture purposes (we don't need DECA's fine geometry; we need the canonical
-  FLAME mesh in the right pose).
-- Per-rig retraining of a ControlNet — Qwen-fill against a fixed FLAME UV
-  is enough for v1.
-- Hair / scalp generation — FLAME 2023 covers down to upper neck;
-  hair is a separate problem and the Qwen-fill step covers minor scalp gaps.
+- DECA / EMOCA / MICA — MediaPipe's landmarks already encode subject
+  shape; the canonical-mesh fit gets us 90% of the quality for texture
+  purposes (we don't need fine geometry; we need each vertex's 2D
+  projection in the source photo, which MediaPipe already gives us).
+- Per-rig retraining of a ControlNet — Qwen-fill against the canonical
+  UV (or whichever target UV) is enough for v1.
+- Hair / scalp generation — the canonical face mesh covers face area only.
+  Scalp + rear coverage is the Qwen-fill step's job. A FLAME-based future
+  node would extend down to the upper neck.
 - Animation rig binding — pure texture pipeline; rig handoff is the user's
   problem downstream.
