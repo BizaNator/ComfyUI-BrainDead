@@ -396,59 +396,67 @@ class BD_FlameFit(io.ComfyNode):
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Pack the model into torch tensors once
-        flame_t = {
-            "v_template": torch.from_numpy(flame["v_template"]).float().to(device),
-            "shapedirs": torch.from_numpy(flame["shapedirs"]).float().to(device),
-            "posedirs": torch.from_numpy(flame["posedirs"]).float().to(device),
-            "weights": torch.from_numpy(flame["weights"]).float().to(device),
-            "J_regressor": torch.from_numpy(flame["J_regressor"]).float().to(device),
-            "kintree": torch.from_numpy(flame["kintree"]).long().to(device),
-        }
-        faces_t = torch.from_numpy(flame["faces"]).long().to(device)
-        emb_t = {
-            "lmk_face_idx": torch.from_numpy(emb["lmk_face_idx"]).long().to(device),
-            "lmk_b_coords": torch.from_numpy(emb["lmk_b_coords"]).float().to(device),
-        }
-        mp_lmk_idx = emb["landmark_indices"]   # (105,) which MP landmarks
+        # ComfyUI executes nodes under torch.inference_mode(), which makes any
+        # tensor created here an "inference tensor" that cannot participate in
+        # autograd — loss.backward() then fails. The FLAME fit IS an
+        # optimization, so re-enable grad for ALL tensor work below: the model
+        # constants (flame_t/faces_t/emb_t) feed _flame_forward alongside the
+        # grad-requiring fit params, so they must not be inference tensors
+        # either.
+        with torch.inference_mode(False), torch.enable_grad():
+            # Pack the model into torch tensors once
+            flame_t = {
+                "v_template": torch.from_numpy(flame["v_template"]).float().to(device),
+                "shapedirs": torch.from_numpy(flame["shapedirs"]).float().to(device),
+                "posedirs": torch.from_numpy(flame["posedirs"]).float().to(device),
+                "weights": torch.from_numpy(flame["weights"]).float().to(device),
+                "J_regressor": torch.from_numpy(flame["J_regressor"]).float().to(device),
+                "kintree": torch.from_numpy(flame["kintree"]).long().to(device),
+            }
+            faces_t = torch.from_numpy(flame["faces"]).long().to(device)
+            emb_t = {
+                "lmk_face_idx": torch.from_numpy(emb["lmk_face_idx"]).long().to(device),
+                "lmk_b_coords": torch.from_numpy(emb["lmk_b_coords"]).float().to(device),
+            }
+            mp_lmk_idx = emb["landmark_indices"]   # (105,) which MP landmarks
 
-        n_shape = min(shape_coeffs, _N_SHAPE_TOTAL)
-        n_expr = min(expr_coeffs, _N_EXPR_TOTAL)
-        n_verts = flame["v_template"].shape[0]
+            n_shape = min(shape_coeffs, _N_SHAPE_TOTAL)
+            n_expr = min(expr_coeffs, _N_EXPR_TOTAL)
+            n_verts = flame["v_template"].shape[0]
 
-        in_views = landmarks_batch["views"]
-        out_views = []
-        reports = []
-        for i, v in enumerate(in_views):
-            h, w = v["image_size"]
-            if not v["detected"]:
+            in_views = landmarks_batch["views"]
+            out_views = []
+            reports = []
+            for i, v in enumerate(in_views):
+                h, w = v["image_size"]
+                if not v["detected"]:
+                    out_views.append({
+                        "verts_2d": np.zeros((n_verts, 2), dtype=np.float32),
+                        "verts_3d": np.zeros((n_verts, 3), dtype=np.float32),
+                        "transform_4x4": v["transform_4x4"].astype(np.float32),
+                        "detected": False,
+                        "view_hint": v["view_hint"],
+                        "image_size": (h, w),
+                        "yaw_estimate": float(v["yaw_estimate"]),
+                    })
+                    continue
+
+                # MediaPipe's 105 embedded landmarks, in pixel coords
+                mp_lm_2d = v["landmarks_2d"][mp_lmk_idx]                 # (105, 2)
+                _v_final, verts_2d, verts_3d, rmse = _fit_flame_view(
+                    flame_t, faces_t, emb_t, mp_lm_2d, (h, w),
+                    n_shape, n_expr, iterations, device,
+                )
                 out_views.append({
-                    "verts_2d": np.zeros((n_verts, 2), dtype=np.float32),
-                    "verts_3d": np.zeros((n_verts, 3), dtype=np.float32),
+                    "verts_2d": verts_2d,
+                    "verts_3d": verts_3d,
                     "transform_4x4": v["transform_4x4"].astype(np.float32),
-                    "detected": False,
+                    "detected": True,
                     "view_hint": v["view_hint"],
                     "image_size": (h, w),
                     "yaw_estimate": float(v["yaw_estimate"]),
                 })
-                continue
-
-            # MediaPipe's 105 embedded landmarks, in pixel coords
-            mp_lm_2d = v["landmarks_2d"][mp_lmk_idx]                 # (105, 2)
-            _v_final, verts_2d, verts_3d, rmse = _fit_flame_view(
-                flame_t, faces_t, emb_t, mp_lm_2d, (h, w),
-                n_shape, n_expr, iterations, device,
-            )
-            out_views.append({
-                "verts_2d": verts_2d,
-                "verts_3d": verts_3d,
-                "transform_4x4": v["transform_4x4"].astype(np.float32),
-                "detected": True,
-                "view_hint": v["view_hint"],
-                "image_size": (h, w),
-                "yaw_estimate": float(v["yaw_estimate"]),
-            })
-            reports.append(f"{i}:{v['view_hint']} rmse={rmse:.1f}px")
+                reports.append(f"{i}:{v['view_hint']} rmse={rmse:.1f}px")
 
         face_fit = {
             "canonical_verts": flame["v_template"].astype(np.float32),
