@@ -62,11 +62,14 @@ def _canonical_strip_coords(mode: str = "cylindrical") -> np.ndarray:
     x, y, z = verts[:, 0], verts[:, 1], verts[:, 2]
 
     if mode == "cylindrical":
-        # Canonical orientation: +x subject-left, -y up (or thereabouts),
-        # +z toward viewer. Use atan2(-x, z) so subject's right side maps to
-        # strip_x = 0.25 and subject's left to 0.75 (mirror what a viewer sees
-        # in the front photo when reading the strip left→right).
-        lon = np.arctan2(-x, z)                      # [-π, π]
+        # Canonical orientation: +x subject-left, +z toward viewer.
+        # Use atan2(x, z) — subject's LEFT (canonical +x) lands at strip_x≈0.75
+        # (right of strip), subject's RIGHT (canonical −x) lands at strip_x≈0.25
+        # (left of strip). This matches natural mirror-view reading: when you
+        # look at a front photo, subject's left is on your right. So the front
+        # photo drops into the strip in the same orientation it has in the
+        # photo, no flip.
+        lon = np.arctan2(x, z)                       # [-π, π]
         strip_x = (lon + np.pi) / (2.0 * np.pi)      # [0, 1], front≈0.5
     else:
         raise ValueError(f"unknown canonical_mode: {mode}")
@@ -89,13 +92,14 @@ def _canonical_strip_coords(mode: str = "cylindrical") -> np.ndarray:
 # ----------------------------------------------------------------------------
 
 # Canonical strip-x centers per view hint, matching the cylindrical projection:
-# atan2(-x, z) → subject's left (canonical +x) lands at strip_x ≈ 0.25,
-# subject's right (canonical -x) lands at strip_x ≈ 0.75. So the LEFT-VIEW
-# photo (which shows the subject's left side) should peak around 0.25.
+# atan2(x, z) → subject's left (canonical +x) lands at strip_x ≈ 0.75 (strip-right),
+# subject's right (canonical −x) lands at strip_x ≈ 0.25 (strip-left). So the
+# LEFT-VIEW photo (which shows the subject's left side) should peak at 0.75,
+# the RIGHT-VIEW photo at 0.25. This is the natural mirror-view reading.
 _VIEW_CENTERS = {
     "front": 0.50,
-    "left":  0.25,
-    "right": 0.75,
+    "left":  0.75,
+    "right": 0.25,
 }
 
 
@@ -207,10 +211,11 @@ def _slot_rear(
     split_col = int(np.clip(round(rear_split_x * w_src), 1, w_src - 1))
 
     # In a rear photo, photographer is behind the subject facing the same
-    # direction → image-LEFT shows subject's-LEFT back-of-head. Subject's
-    # left maps to strip-LEFT in the cylindrical projection, so:
-    # - left half of rear image  → leftmost strip slot
-    # - right half of rear image → rightmost strip slot
+    # direction → image-LEFT shows subject's-LEFT back-of-head. With the new
+    # projection, subject's left maps to strip-RIGHT (and back of head wraps
+    # around past the right edge to wrap-around point at strip_x=1). So:
+    # - left half of rear image  → rightmost strip slot
+    # - right half of rear image → leftmost strip slot
     left_half = rear_image[:, :split_col, :]
     right_half = rear_image[:, split_col:, :]
 
@@ -221,8 +226,8 @@ def _slot_rear(
     out_img = np.zeros((strip_h, strip_w, 3), dtype=np.float32)
     out_mask = np.zeros((strip_h, strip_w), dtype=np.float32)
 
-    out_img[:, :slot_w, :] = left_resized
-    out_img[:, strip_w - slot_w:, :] = right_resized
+    out_img[:, :slot_w, :] = right_resized
+    out_img[:, strip_w - slot_w:, :] = left_resized
     out_mask[:, :slot_w] = 1.0
     out_mask[:, strip_w - slot_w:] = 1.0
     return out_img, out_mask
@@ -263,14 +268,54 @@ class BD_FaceStripCompose(io.ComfyNode):
                 io.Image.Input(
                     "images",
                     tooltip="Source photo batch — same order/count as the "
-                            "LANDMARKS_BATCH (typically 3-4 views: "
+                            "LANDMARKS_BATCH (typically 4 images: "
                             "front, left, right, rear).",
                 ),
                 LandmarksBatchInput(
                     "landmarks_batch",
-                    tooltip="From BD_FaceLandmarks. view_hint per view "
-                            "decides where it lands on the strip; undetected "
-                            "views are treated as rear.",
+                    tooltip="From BD_FaceLandmarks. By default, view_hint "
+                            "per view picks which strip slot each image goes "
+                            "to. Override with the per-slot index inputs below "
+                            "when MediaPipe's yaw classifier misfires.",
+                ),
+                io.Int.Input(
+                    "front_index",
+                    default=-1,
+                    min=-1,
+                    max=63,
+                    step=1,
+                    tooltip="Image index for the FRONT slot. -1 = auto "
+                            "(use the first view classified as 'front'). "
+                            "Set to e.g. 0 to force image 0 into the front slot "
+                            "even if MediaPipe classified it differently.",
+                ),
+                io.Int.Input(
+                    "left_index",
+                    default=-1,
+                    min=-1,
+                    max=63,
+                    step=1,
+                    tooltip="Image index for the LEFT slot (subject's left "
+                            "side, lands at strip-right). -1 = auto.",
+                ),
+                io.Int.Input(
+                    "right_index",
+                    default=-1,
+                    min=-1,
+                    max=63,
+                    step=1,
+                    tooltip="Image index for the RIGHT slot (subject's right "
+                            "side, lands at strip-left). -1 = auto.",
+                ),
+                io.Int.Input(
+                    "rear_index",
+                    default=-1,
+                    min=-1,
+                    max=63,
+                    step=1,
+                    tooltip="Image index for the REAR slot. -1 = auto "
+                            "(first undetected view, or first view classified "
+                            "as 'rear').",
                 ),
                 io.Int.Input(
                     "strip_width",
@@ -367,6 +412,10 @@ class BD_FaceStripCompose(io.ComfyNode):
         cls,
         images: torch.Tensor,
         landmarks_batch,
+        front_index: int = -1,
+        left_index: int = -1,
+        right_index: int = -1,
+        rear_index: int = -1,
         strip_width: int = 4096,
         strip_height: int = 1024,
         rear_split_x: float = 0.5,
@@ -389,26 +438,57 @@ class BD_FaceStripCompose(io.ComfyNode):
             return io.NodeOutput(empty_img, z, z, "ERROR: empty views list")
 
         try:
-            canonical_strip = _canonical_strip_coords(canonical_mode)  # (478, 2) in [0,1]
+            canonical_strip = _canonical_strip_coords(canonical_mode)
         except Exception as e:
             return io.NodeOutput(empty_img, z, z, f"ERROR: canonical projection failed: {e}")
+
+        images_np = images.detach().cpu().numpy()                # (B, H, W, 3) float [0,1]
+        n_imgs = images_np.shape[0]
+        n_views = len(views)
+
+        # --- Resolve slot → image index ---
+        # Explicit (front/left/right/rear)_index overrides auto-classification.
+        # auto picks the first view classified as that hint (rear: first
+        # undetected or hint=='rear').
+        def auto_pick(target_hint: str) -> int:
+            for i, v in enumerate(views):
+                if target_hint == "rear":
+                    if not v["detected"] or v["view_hint"] == "rear":
+                        return i
+                else:
+                    if v["detected"] and v["view_hint"] == target_hint:
+                        return i
+            return -1
+
+        slot_idx = {
+            "front": front_index if front_index >= 0 else auto_pick("front"),
+            "left":  left_index  if left_index  >= 0 else auto_pick("left"),
+            "right": right_index if right_index >= 0 else auto_pick("right"),
+            "rear":  rear_index  if rear_index  >= 0 else auto_pick("rear"),
+        }
+        # Clamp to valid range
+        for k, v in list(slot_idx.items()):
+            if v >= 0 and (v >= n_views or v >= n_imgs):
+                slot_idx[k] = -1
 
         # Per-view accumulators
         accum_color = np.zeros((strip_height, strip_width, 3), dtype=np.float32)
         accum_weight = np.zeros((strip_height, strip_width), dtype=np.float32)
-        per_view_report = []
+        per_slot_report = []
 
-        images_np = images.detach().cpu().numpy()                # (B, H, W, 3) float [0,1]
-
-        for i, view in enumerate(views):
-            img_idx = min(i, images_np.shape[0] - 1)
-            src_img = images_np[img_idx]
-            hint = view["view_hint"]
-
-            if not view["detected"] or hint == "rear":
-                # rear handled separately below
+        # --- Warp the three landmark-driven slots (front, left, right) ---
+        for slot_hint in ("front", "left", "right"):
+            idx = slot_idx[slot_hint]
+            if idx < 0:
+                per_slot_report.append(f"{slot_hint}=skip(no source)")
                 continue
 
+            view = views[idx]
+            if not view["detected"]:
+                per_slot_report.append(f"{slot_hint}=skip(img {idx}: face not detected)")
+                continue
+
+            src_img = images_np[idx]
             try:
                 warped = _warp_view_to_strip(
                     src_img,
@@ -418,26 +498,22 @@ class BD_FaceStripCompose(io.ComfyNode):
                     strip_height,
                 )
             except Exception as e:
-                per_view_report.append(f"{i}:{hint}=ERR({e.__class__.__name__})")
+                per_slot_report.append(f"{slot_hint}=ERR(img {idx}: {e.__class__.__name__})")
                 continue
 
             conf = _view_confidence_bell(
-                hint, strip_width, strip_height, bell_sigma,
+                slot_hint, strip_width, strip_height, bell_sigma,
                 rear_extent=rear_extent,
             )
             accum_color += warped * conf[..., None]
             accum_weight += conf
-            per_view_report.append(f"{i}:{hint}=ok")
+            per_slot_report.append(f"{slot_hint}=img{idx}(was '{view['view_hint']}')")
 
-        # Rear slot — pick the first undetected (or hint==rear) view as the rear source
+        # Rear slot
         rear_img = None
-        rear_idx_used = -1
-        for i, view in enumerate(views):
-            if not view["detected"] or view["view_hint"] == "rear":
-                img_idx = min(i, images_np.shape[0] - 1)
-                rear_img = images_np[img_idx]
-                rear_idx_used = i
-                break
+        rear_idx_used = slot_idx["rear"]
+        if rear_idx_used >= 0 and rear_idx_used < n_imgs:
+            rear_img = images_np[rear_idx_used]
 
         rear_mask = np.zeros((strip_height, strip_width), dtype=np.float32)
         if rear_img is not None and rear_extent > 0:
@@ -447,7 +523,9 @@ class BD_FaceStripCompose(io.ComfyNode):
             rear_w = rear_mask * rear_confidence
             accum_color += rear_strip * rear_w[..., None]
             accum_weight += rear_w
-            per_view_report.append(f"{rear_idx_used}:rear=slotted({rear_extent:.2f})")
+            per_slot_report.append(f"rear=img{rear_idx_used}(slot={rear_extent:.2f})")
+        else:
+            per_slot_report.append("rear=skip")
 
         # Final composite — weighted average
         eps = 1e-6
@@ -474,12 +552,13 @@ class BD_FaceStripCompose(io.ComfyNode):
         out_coverage = torch.from_numpy(coverage).unsqueeze(0).float()      # (1, H, W)
         out_inpaint = torch.from_numpy(inpaint).unsqueeze(0).float()        # (1, H, W)
 
-        n_detected = sum(1 for v in views if v["detected"] and v["view_hint"] != "rear")
         cov_pct = 100.0 * float(coverage.mean())
         inp_pct = 100.0 * float(inpaint.mean())
+        auto_hints = ",".join(v["view_hint"] for v in views)
         status = (
             f"strip {strip_height}x{strip_width} | "
-            f"warped views: {n_detected} ({', '.join(per_view_report)}) | "
+            f"slots: {' | '.join(per_slot_report)} | "
+            f"auto-classified: [{auto_hints}] | "
             f"coverage={cov_pct:.1f}% | inpaint={inp_pct:.1f}% | "
             f"canonical={canonical_mode}"
         )
