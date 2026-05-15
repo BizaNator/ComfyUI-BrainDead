@@ -551,14 +551,16 @@ class BD_FaceStripCompose(io.ComfyNode):
                 ),
                 io.Float.Input(
                     "rear_extent",
-                    default=0.125,
+                    default=0.18,
                     min=0.0,
-                    max=0.25,
+                    max=0.35,
                     step=0.01,
                     optional=True,
                     tooltip="Fraction of strip width occupied by each rear half. "
-                            "0.125 → each rear half takes 1/8 of the strip "
-                            "(combined rear = 1/4).",
+                            "0.18 → each rear half takes ~18% of the strip "
+                            "(combined rear = ~36%, reaching the canonical "
+                            "ear/temple region where face and rear naturally "
+                            "meet anatomically).",
                 ),
                 io.Float.Input(
                     "rear_confidence",
@@ -574,16 +576,19 @@ class BD_FaceStripCompose(io.ComfyNode):
                 ),
                 io.Float.Input(
                     "rear_blend_band",
-                    default=0.04,
+                    default=0.08,
                     min=0.0,
-                    max=0.15,
+                    max=0.20,
                     step=0.01,
                     optional=True,
                     tooltip="Width of the smooth blend band at the rear-slot "
                             "boundary (fraction of strip width). Both the "
                             "side-view bell and the rear-mask ramp linearly "
-                            "across this band so they cross at 50/50. 0 → "
-                            "hard cutoff (legacy behavior, no blending).",
+                            "across this band so they cross at 50/50. Wider → "
+                            "longer crossfade region (better when rear/face "
+                            "colors differ a lot, but the underlying mix is "
+                            "still imperfect — that's what Qwen finalize "
+                            "fixes). 0 → hard cutoff.",
                 ),
                 io.Boolean.Input(
                     "rear_flip_lr",
@@ -619,16 +624,19 @@ class BD_FaceStripCompose(io.ComfyNode):
                 ),
                 io.Float.Input(
                     "bell_sigma",
-                    default=0.30,
+                    default=0.22,
                     min=0.05,
                     max=0.50,
                     step=0.01,
                     optional=True,
                     tooltip="Half-width of the per-view cosine confidence bell "
-                            "(fraction of strip width). 0.30 = each view "
-                            "contributes within ±30% of strip width around its "
-                            "center. Wider = smoother blend; narrower = "
-                            "sharper handoff between views.",
+                            "(fraction of strip width). 0.22 keeps each side "
+                            "view dominant in its own slice without "
+                            "extrapolating across the centerline; smaller = "
+                            "sharper handoff (also reduces 'ghost face' at the "
+                            "ears, where side-TPS can extrapolate occluded "
+                            "back-of-head landmarks). Larger = wider but "
+                            "more cross-contamination between views.",
                 ),
                 io.Combo.Input(
                     "canonical_mode",
@@ -660,13 +668,13 @@ class BD_FaceStripCompose(io.ComfyNode):
         strip_width: int = 4096,
         strip_height: int = 1024,
         rear_split_x: float = 0.5,
-        rear_extent: float = 0.125,
+        rear_extent: float = 0.18,
         rear_confidence: float = 0.5,
-        rear_blend_band: float = 0.04,
+        rear_blend_band: float = 0.08,
         rear_flip_lr: bool = False,
         rear_mask: torch.Tensor = None,
         rear_seam_width: float = 0.04,
-        bell_sigma: float = 0.30,
+        bell_sigma: float = 0.22,
         canonical_mode: str = "cylindrical",
     ) -> io.NodeOutput:
         z = torch.zeros(1, strip_height, strip_width)
@@ -805,13 +813,31 @@ class BD_FaceStripCompose(io.ComfyNode):
 
         coverage = (accum_weight > eps).astype(np.float32)
 
-        # Inpaint mask = where coverage is weak, OR the rear-seam band
+        # Inpaint mask = wherever Qwen should redraw.
+        #   1. Low-coverage areas (almost no view contributed) — must be filled
+        #   2. The rear↔side blend zone — both rear and side contribute partial
+        #      weights and the mix is geometrically uncertain, so Qwen needs
+        #      explicit license to redraw it for a clean transition
+        #   3. (legacy) the narrow `rear_seam_width` band centered on the
+        #      slot boundary — still honored for fine-grained control
         inpaint = (coverage < 0.05).astype(np.float32)
 
+        if rear_extent > 0 and rear_blend_band > 0:
+            # Mark the entire blend zone — where the rear gate is in (0, 1)
+            # exclusive — as inpaint. This is exactly the region where rear and
+            # side bells overlap and produce a geometric blend.
+            gate = _rear_gate_factor(strip_width, rear_extent, rear_blend_band)
+            blend_zone = (gate > 0.02) & (gate < 0.98)
+            inpaint_band = np.broadcast_to(
+                blend_zone.astype(np.float32)[None, :],
+                (strip_height, strip_width),
+            )
+            inpaint = np.maximum(inpaint, inpaint_band)
+
+        # Legacy narrow seam band — preserved for back-compat
         slot_w = max(1, int(round(rear_extent * strip_width)))
         seam_w = max(0, int(round(rear_seam_width * strip_width)))
         if seam_w > 0 and rear_extent > 0:
-            # left rear slot ends at column [slot_w], right rear slot starts at strip_w - slot_w
             l0 = max(0, slot_w - seam_w // 2)
             l1 = min(strip_width, slot_w + seam_w // 2 + seam_w % 2)
             r0 = max(0, strip_width - slot_w - seam_w // 2)
