@@ -161,36 +161,80 @@ def _warp_view_to_strip(
     return warped
 
 
+def _rear_gate_factor(strip_w: int, rear_extent: float, blend_band: float) -> np.ndarray:
+    """Returns (strip_w,) factor in [0,1] for side-view bell weights.
+
+    1.0 outside the rear region (full side contribution), 0.0 deep inside
+    the rear slot (rear-only), linear ramp across a blend band centered at
+    the rear_extent boundary. blend_band=0 → hard gate (legacy behavior).
+    """
+    x = np.linspace(0.0, 1.0, strip_w, dtype=np.float32)
+    half = max(blend_band, 0.0) * 0.5
+    if half <= 0.0:
+        in_rear = (x < rear_extent) | (x > 1.0 - rear_extent)
+        return np.where(in_rear, 0.0, 1.0).astype(np.float32)
+
+    # Distance INTO the strip from each rear-slot boundary (positive = inside
+    # the slot, negative = outside the slot).
+    d_left = rear_extent - x                # >0 inside left slot, <0 outside
+    d_right = x - (1.0 - rear_extent)       # >0 inside right slot, <0 outside
+    d_into_rear = np.maximum(d_left, d_right)
+
+    # gate = 0 when d_into_rear >= half (fully inside slot core, no side bleed)
+    # gate = 1 when d_into_rear <= -half (fully outside, full side)
+    # linear in between
+    gate = np.clip(0.5 - d_into_rear / (2.0 * half), 0.0, 1.0)
+    return gate.astype(np.float32)
+
+
+def _rear_mask_soft(strip_w: int, rear_extent: float, blend_band: float) -> np.ndarray:
+    """Returns (strip_w,) soft rear-presence mask. 1.0 deep inside slot,
+    0.0 outside, linear ramp across blend_band centered on the boundary."""
+    x = np.linspace(0.0, 1.0, strip_w, dtype=np.float32)
+    half = max(blend_band, 0.0) * 0.5
+    if half <= 0.0:
+        in_rear = (x < rear_extent) | (x > 1.0 - rear_extent)
+        return np.where(in_rear, 1.0, 0.0).astype(np.float32)
+
+    d_left = rear_extent - x
+    d_right = x - (1.0 - rear_extent)
+    d_into_rear = np.maximum(d_left, d_right)
+
+    # mask = 1 when d_into_rear >= half, 0 when d_into_rear <= -half
+    mask = np.clip(0.5 + d_into_rear / (2.0 * half), 0.0, 1.0)
+    return mask.astype(np.float32)
+
+
 def _view_confidence_bell(
     view_hint: str,
     strip_w: int,
     strip_h: int,
     bell_sigma: float,
     rear_extent: float = 0.0,
+    rear_blend_band: float = 0.0,
 ) -> np.ndarray:
     """Cosine-bell confidence centered on the view's canonical strip-x.
 
-    If rear_extent > 0, the bell is gated to zero within the rear-slot
-    regions [0, rear_extent] and [1 - rear_extent, 1] so the rear slot has
-    clean ownership of those columns instead of bleeding side-view content.
+    If rear_extent > 0, the bell is multiplied by a rear-gate factor that
+    ramps from 0 inside the slot core to 1 outside, with a smooth blend
+    band of width `rear_blend_band` centered on the slot boundary. Set
+    rear_blend_band=0 for the legacy hard gate.
     Returns (strip_h, strip_w) float32.
     """
     center = _VIEW_CENTERS.get(view_hint, 0.5)
     x_norm = np.linspace(0.0, 1.0, strip_w, dtype=np.float32)
 
-    # wrapped distance on the circle [0,1]
     d = np.abs(x_norm - center)
     d = np.minimum(d, 1.0 - d)               # wrap-aware: max distance = 0.5
 
-    # cosine bell: peak=1 at d=0, falls off, zero past d=bell_sigma
     half = max(bell_sigma, 1e-3)
     norm = np.clip(d / half, 0.0, 1.0)
-    bell_1d = 0.5 * (1.0 + np.cos(np.pi * norm))   # cos bell, 1→0 over [0, half]
+    bell_1d = 0.5 * (1.0 + np.cos(np.pi * norm))
     bell_1d = np.where(d > half, 0.0, bell_1d)
 
     if rear_extent > 0.0:
-        in_rear = (x_norm < rear_extent) | (x_norm > 1.0 - rear_extent)
-        bell_1d = np.where(in_rear, 0.0, bell_1d)
+        gate = _rear_gate_factor(strip_w, rear_extent, rear_blend_band)
+        bell_1d = bell_1d * gate
 
     return np.broadcast_to(bell_1d[None, :], (strip_h, strip_w)).copy()
 
@@ -201,37 +245,52 @@ def _slot_rear(
     strip_w: int,
     strip_h: int,
     rear_extent: float = 0.125,                # fraction of strip width per edge
+    rear_blend_band: float = 0.0,              # ramp band width (fraction of strip)
+    rear_flip_lr: bool = False,                # swap which half goes where
 ) -> tuple[np.ndarray, np.ndarray]:
     """Split rear image at rear_split_x and slot the halves onto strip edges.
 
+    Slot extends `rear_extent + rear_blend_band/2` from each edge so the
+    halves get resized to fill both the slot core AND the blend band; the
+    soft mask in the blend band then fades them out smoothly.
+
+    Default L/R mapping assumes a photo taken from behind the subject with
+    the camera facing the same direction (image-LEFT shows subject's-LEFT
+    back-of-head). With the cylindrical projection, subject's left maps to
+    strip-RIGHT, so left half of rear image → rightmost strip slot.
+    Set rear_flip_lr=True if the rear photo is oriented the opposite way
+    (e.g., front-camera mirrored, or the photographer faced the subject).
+
     Returns (rear_strip_image, rear_strip_mask).
-    rear_strip_image: (strip_h, strip_w, 3) with content only in the edge slots.
-    rear_strip_mask:  (strip_h, strip_w) — 1.0 where rear was placed.
+      rear_strip_mask: soft (0..1) with smooth ramp in the blend band.
     """
     import cv2
     h_src, w_src = rear_image.shape[:2]
     split_col = int(np.clip(round(rear_split_x * w_src), 1, w_src - 1))
 
-    # In a rear photo, photographer is behind the subject facing the same
-    # direction → image-LEFT shows subject's-LEFT back-of-head. With the new
-    # projection, subject's left maps to strip-RIGHT (and back of head wraps
-    # around past the right edge to wrap-around point at strip_x=1). So:
-    # - left half of rear image  → rightmost strip slot
-    # - right half of rear image → leftmost strip slot
     left_half = rear_image[:, :split_col, :]
     right_half = rear_image[:, split_col:, :]
+    if rear_flip_lr:
+        left_half, right_half = right_half, left_half
 
-    slot_w = max(1, int(round(rear_extent * strip_w)))
+    # Total per-side slot width covers slot-core + half of blend band so
+    # the image content fills the entire region the soft mask is non-zero in.
+    full_extent = rear_extent + max(0.0, rear_blend_band) * 0.5
+    slot_w = max(1, int(round(full_extent * strip_w)))
+
     left_resized = cv2.resize(left_half, (slot_w, strip_h), interpolation=cv2.INTER_AREA)
     right_resized = cv2.resize(right_half, (slot_w, strip_h), interpolation=cv2.INTER_AREA)
 
     out_img = np.zeros((strip_h, strip_w, 3), dtype=np.float32)
-    out_mask = np.zeros((strip_h, strip_w), dtype=np.float32)
 
+    # Default mapping: left_half → strip-right, right_half → strip-left
     out_img[:, :slot_w, :] = right_resized
     out_img[:, strip_w - slot_w:, :] = left_resized
-    out_mask[:, :slot_w] = 1.0
-    out_mask[:, strip_w - slot_w:] = 1.0
+
+    # Soft mask: full inside the slot core, ramps down across blend band
+    mask_1d = _rear_mask_soft(strip_w, rear_extent, rear_blend_band)
+    out_mask = np.broadcast_to(mask_1d[None, :], (strip_h, strip_w)).copy()
+
     return out_img, out_mask
 
 
@@ -358,14 +417,38 @@ class BD_FaceStripCompose(io.ComfyNode):
                 ),
                 io.Float.Input(
                     "rear_confidence",
-                    default=0.1,
+                    default=0.5,
                     min=0.0,
                     max=1.0,
                     step=0.05,
                     optional=True,
                     tooltip="Fixed confidence value applied to the rear slots. "
-                            "Low → side views dominate the seam; 0 → rear "
-                            "is purely a fill that Qwen will paint over.",
+                            "0.5 default keeps rear visible while letting the "
+                            "side-view blend band still register. 0 → rear is "
+                            "pure fill that Qwen paints over.",
+                ),
+                io.Float.Input(
+                    "rear_blend_band",
+                    default=0.04,
+                    min=0.0,
+                    max=0.15,
+                    step=0.01,
+                    optional=True,
+                    tooltip="Width of the smooth blend band at the rear-slot "
+                            "boundary (fraction of strip width). Both the "
+                            "side-view bell and the rear-mask ramp linearly "
+                            "across this band so they cross at 50/50. 0 → "
+                            "hard cutoff (legacy behavior, no blending).",
+                ),
+                io.Boolean.Input(
+                    "rear_flip_lr",
+                    default=False,
+                    optional=True,
+                    tooltip="Swap which half of the rear image goes to which "
+                            "strip edge. Default assumes a standard rear photo "
+                            "(photographer behind subject, same facing). Toggle "
+                            "if your rear photo is mirrored or shot from the "
+                            "front (e.g. with the subject turned around).",
                 ),
                 io.Float.Input(
                     "rear_seam_width",
@@ -422,7 +505,9 @@ class BD_FaceStripCompose(io.ComfyNode):
         strip_height: int = 1024,
         rear_split_x: float = 0.5,
         rear_extent: float = 0.125,
-        rear_confidence: float = 0.1,
+        rear_confidence: float = 0.5,
+        rear_blend_band: float = 0.04,
+        rear_flip_lr: bool = False,
         rear_seam_width: float = 0.04,
         bell_sigma: float = 0.30,
         canonical_mode: str = "cylindrical",
@@ -506,6 +591,7 @@ class BD_FaceStripCompose(io.ComfyNode):
             conf = _view_confidence_bell(
                 slot_hint, strip_width, strip_height, bell_sigma,
                 rear_extent=rear_extent,
+                rear_blend_band=rear_blend_band,
             )
             accum_color += warped * conf[..., None]
             accum_weight += conf
@@ -521,11 +607,15 @@ class BD_FaceStripCompose(io.ComfyNode):
         if rear_img is not None and rear_extent > 0:
             rear_strip, rear_mask = _slot_rear(
                 rear_img, rear_split_x, strip_width, strip_height, rear_extent,
+                rear_blend_band=rear_blend_band, rear_flip_lr=rear_flip_lr,
             )
             rear_w = rear_mask * rear_confidence
             accum_color += rear_strip * rear_w[..., None]
             accum_weight += rear_w
-            per_slot_report.append(f"rear=img{rear_idx_used}(slot={rear_extent:.2f})")
+            per_slot_report.append(
+                f"rear=img{rear_idx_used}(slot={rear_extent:.2f},"
+                f"blend={rear_blend_band:.2f}{',flip' if rear_flip_lr else ''})"
+            )
         else:
             per_slot_report.append("rear=skip")
 
