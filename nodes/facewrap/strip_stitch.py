@@ -239,6 +239,101 @@ def _view_confidence_bell(
     return np.broadcast_to(bell_1d[None, :], (strip_h, strip_w)).copy()
 
 
+def _silhouette_bounds(mask_half: np.ndarray, outer_is_left: bool) -> tuple[int, int, int]:
+    """Find (top_y, bottom_y, outer_x) of the head silhouette in a mask half.
+
+    outer_is_left=True  → look for the leftmost mask pixel as 'outer'
+    outer_is_left=False → look for the rightmost mask pixel as 'outer'
+    Returns (-1, -1, -1) if the mask is empty.
+    """
+    rows_with_content = np.where(mask_half.any(axis=1))[0]
+    if rows_with_content.size == 0:
+        return -1, -1, -1
+    top_y = int(rows_with_content[0])
+    bottom_y = int(rows_with_content[-1])
+
+    if outer_is_left:
+        # leftmost non-zero column across all rows
+        cols_with_content = np.where(mask_half.any(axis=0))[0]
+        outer_x = int(cols_with_content[0]) if cols_with_content.size else 0
+    else:
+        cols_with_content = np.where(mask_half.any(axis=0))[0]
+        outer_x = int(cols_with_content[-1]) if cols_with_content.size else mask_half.shape[1] - 1
+    return top_y, bottom_y, outer_x
+
+
+def _warp_rear_half_to_slot(
+    img_half: np.ndarray,       # (h, w_half, 3)
+    mask_half: np.ndarray,      # (h, w_half) bool — head silhouette in this half
+    strip_h: int,
+    slot_outer_x: int,
+    slot_inner_x: int,
+    split_col_image: int,       # x-column in image space at the rear midline split
+    outer_is_left: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Perspective-warp this rear half so the head silhouette fills the slot.
+
+    Maps four corner correspondences (silhouette-derived in the image, slot
+    corners in strip space) into a full strip-sized canvas with that slot
+    region filled. Returns (warped_image_strip_sized, coverage_strip_sized).
+    """
+    import cv2
+    h_img, w_half = mask_half.shape
+
+    top_y, bottom_y, outer_x = _silhouette_bounds(mask_half, outer_is_left)
+    if top_y < 0 or bottom_y <= top_y:
+        # empty silhouette — fall back to filling the slot with the half resized
+        slot_w = abs(slot_inner_x - slot_outer_x)
+        if slot_w < 1:
+            return (np.zeros((strip_h, max(1, abs(slot_inner_x - slot_outer_x)), 3), dtype=np.float32),
+                    np.zeros((strip_h, max(1, abs(slot_inner_x - slot_outer_x))), dtype=np.float32))
+        resized = cv2.resize(img_half, (slot_w, strip_h), interpolation=cv2.INTER_AREA)
+        cov = np.ones((strip_h, slot_w), dtype=np.float32)
+        return resized, cov
+
+    # split_col_image is the x in image-half-space at the rear midline:
+    # - for the LEFT half (split_col_image = w_half - 1, the rightmost image column)
+    # - for the RIGHT half (split_col_image = 0, the leftmost image column)
+    if outer_is_left:
+        # Left-half: outer = leftmost mask col, inner = right edge of half (back midline)
+        img_inner_x = w_half - 1
+    else:
+        # Right-half: outer = rightmost mask col, inner = left edge of half (back midline)
+        img_inner_x = 0
+
+    # 4 image-space corners (outer-top, inner-top, outer-bottom, inner-bottom)
+    src_corners = np.array([
+        [outer_x, top_y],
+        [img_inner_x, top_y],
+        [outer_x, bottom_y],
+        [img_inner_x, bottom_y],
+    ], dtype=np.float32)
+
+    # 4 strip-space corners — full strip height, slot_outer ↔ slot_inner
+    dst_corners = np.array([
+        [slot_outer_x, 0],
+        [slot_inner_x, 0],
+        [slot_outer_x, strip_h - 1],
+        [slot_inner_x, strip_h - 1],
+    ], dtype=np.float32)
+
+    M = cv2.getPerspectiveTransform(src_corners, dst_corners)
+
+    strip_w_canvas = max(slot_outer_x, slot_inner_x) + 1
+    warped_img = cv2.warpPerspective(
+        img_half, M, (strip_w_canvas, strip_h),
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+    )
+    # Coverage = warped mask (1 where the head silhouette ended up)
+    mask_u8 = (mask_half.astype(np.uint8)) * 255
+    warped_mask = cv2.warpPerspective(
+        mask_u8, M, (strip_w_canvas, strip_h),
+        flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+    )
+    coverage = (warped_mask > 127).astype(np.float32)
+    return warped_img, coverage
+
+
 def _slot_rear(
     rear_image: np.ndarray,                   # (H_src, W_src, 3) float in [0,1]
     rear_split_x: float,
@@ -247,6 +342,7 @@ def _slot_rear(
     rear_extent: float = 0.125,                # fraction of strip width per edge
     rear_blend_band: float = 0.0,              # ramp band width (fraction of strip)
     rear_flip_lr: bool = False,                # swap which half goes where
+    rear_mask: np.ndarray | None = None,       # (H_src, W_src) bool — optional head mask
 ) -> tuple[np.ndarray, np.ndarray]:
     """Split rear image at rear_split_x and slot the halves onto strip edges.
 
@@ -262,34 +358,83 @@ def _slot_rear(
     (e.g., front-camera mirrored, or the photographer faced the subject).
 
     Returns (rear_strip_image, rear_strip_mask).
-      rear_strip_mask: soft (0..1) with smooth ramp in the blend band.
+      rear_strip_mask: soft (0..1) with smooth ramp in the blend band, AND
+      further multiplied by the warped silhouette coverage when rear_mask is
+      provided (so transparent regions outside the head don't get weight).
     """
     import cv2
     h_src, w_src = rear_image.shape[:2]
     split_col = int(np.clip(round(rear_split_x * w_src), 1, w_src - 1))
 
-    left_half = rear_image[:, :split_col, :]
-    right_half = rear_image[:, split_col:, :]
+    left_img = rear_image[:, :split_col, :]
+    right_img = rear_image[:, split_col:, :]
+    if rear_mask is not None:
+        left_mask = rear_mask[:, :split_col]
+        right_mask = rear_mask[:, split_col:]
     if rear_flip_lr:
-        left_half, right_half = right_half, left_half
+        left_img, right_img = right_img, left_img
+        if rear_mask is not None:
+            left_mask, right_mask = right_mask, left_mask
 
-    # Total per-side slot width covers slot-core + half of blend band so
-    # the image content fills the entire region the soft mask is non-zero in.
+    # Slot boundaries in strip-space (full slot covers core + half of blend band)
     full_extent = rear_extent + max(0.0, rear_blend_band) * 0.5
     slot_w = max(1, int(round(full_extent * strip_w)))
 
-    left_resized = cv2.resize(left_half, (slot_w, strip_h), interpolation=cv2.INTER_AREA)
-    right_resized = cv2.resize(right_half, (slot_w, strip_h), interpolation=cv2.INTER_AREA)
-
     out_img = np.zeros((strip_h, strip_w, 3), dtype=np.float32)
+    coverage = np.ones((strip_h, strip_w), dtype=np.float32)  # default: full coverage
 
-    # Default mapping: left_half → strip-right, right_half → strip-left
-    out_img[:, :slot_w, :] = right_resized
-    out_img[:, strip_w - slot_w:, :] = left_resized
+    if rear_mask is not None:
+        # Silhouette-driven perspective warp per half.
+        # Default mapping (no flip): left_img → strip-right slot, right_img → strip-left.
+        # In the LEFT-IMAGE half the back-midline is the RIGHT edge (image col w_left-1).
+        # In the RIGHT-IMAGE half the back-midline is the LEFT edge (image col 0).
 
-    # Soft mask: full inside the slot core, ramps down across blend band
+        # ---- strip-LEFT slot (gets right_img by default) ----
+        # outer = strip_x=0, inner = strip_x=slot_w; right_img's back-midline is at
+        # img col 0, head silhouette extends rightward → outer = rightmost mask col
+        warped_left_slot, cov_left = _warp_rear_half_to_slot(
+            right_img, right_mask, strip_h,
+            slot_outer_x=0, slot_inner_x=slot_w - 1,
+            split_col_image=0, outer_is_left=False,
+        )
+        # Write into out_img — warped_left_slot has shape (strip_h, slot_w, 3)
+        out_img[:, :warped_left_slot.shape[1], :] = warped_left_slot[:, :slot_w, :]
+        cov_strip_left = np.zeros((strip_h, strip_w), dtype=np.float32)
+        cov_strip_left[:, :warped_left_slot.shape[1]] = cov_left[:, :slot_w]
+
+        # ---- strip-RIGHT slot (gets left_img by default) ----
+        # outer = strip_x=strip_w-1, inner = strip_x=strip_w-slot_w; left_img's
+        # back-midline is at img col w_left-1, silhouette extends leftward
+        warped_right_slot, cov_right = _warp_rear_half_to_slot(
+            left_img, left_mask, strip_h,
+            slot_outer_x=slot_w - 1, slot_inner_x=0,
+            split_col_image=left_img.shape[1] - 1, outer_is_left=True,
+        )
+        # Place into the strip-RIGHT slot (mirror onto the right edge)
+        right_slot_start = strip_w - slot_w
+        right_slot_end = strip_w
+        actual_w = min(slot_w, warped_right_slot.shape[1])
+        # The warp produced a (strip_h, slot_w, 3) canvas with content in [0, slot_w);
+        # we need to place it at [right_slot_start, right_slot_end). Mirror-place:
+        out_img[:, right_slot_start:right_slot_start + actual_w, :] = \
+            warped_right_slot[:, :actual_w, :]
+        cov_strip_right = np.zeros((strip_h, strip_w), dtype=np.float32)
+        cov_strip_right[:, right_slot_start:right_slot_start + actual_w] = \
+            cov_right[:, :actual_w]
+
+        coverage = np.maximum(cov_strip_left, cov_strip_right)
+    else:
+        # Legacy: plain resize to fill the slots — no silhouette awareness.
+        left_resized = cv2.resize(left_img, (slot_w, strip_h), interpolation=cv2.INTER_AREA)
+        right_resized = cv2.resize(right_img, (slot_w, strip_h), interpolation=cv2.INTER_AREA)
+        out_img[:, :slot_w, :] = right_resized
+        out_img[:, strip_w - slot_w:, :] = left_resized
+
+    # Soft 1D mask along x for the band blend
     mask_1d = _rear_mask_soft(strip_w, rear_extent, rear_blend_band)
-    out_mask = np.broadcast_to(mask_1d[None, :], (strip_h, strip_w)).copy()
+    soft_band = np.broadcast_to(mask_1d[None, :], (strip_h, strip_w)).copy()
+    # Final mask is band-soft × silhouette-coverage
+    out_mask = soft_band * coverage
 
     return out_img, out_mask
 
@@ -450,6 +595,17 @@ class BD_FaceStripCompose(io.ComfyNode):
                             "if your rear photo is mirrored or shot from the "
                             "front (e.g. with the subject turned around).",
                 ),
+                io.Mask.Input(
+                    "rear_mask",
+                    optional=True,
+                    tooltip="Head-silhouette MASK for the rear image — typically "
+                            "from BD_SAM3MultiPrompt('head') or any head/person "
+                            "segmentation. When provided, each rear half gets "
+                            "perspective-warped so its head silhouette fills the "
+                            "strip slot from edge to edge (matches the cylindrical "
+                            "warp geometry of the side views). Without it, the "
+                            "rear is plain cv2.resize-stretched (looks pasted on).",
+                ),
                 io.Float.Input(
                     "rear_seam_width",
                     default=0.04,
@@ -508,6 +664,7 @@ class BD_FaceStripCompose(io.ComfyNode):
         rear_confidence: float = 0.5,
         rear_blend_band: float = 0.04,
         rear_flip_lr: bool = False,
+        rear_mask: torch.Tensor = None,
         rear_seam_width: float = 0.04,
         bell_sigma: float = 0.30,
         canonical_mode: str = "cylindrical",
@@ -603,18 +760,40 @@ class BD_FaceStripCompose(io.ComfyNode):
         if rear_idx_used >= 0 and rear_idx_used < n_imgs:
             rear_img = images_np[rear_idx_used]
 
-        rear_mask = np.zeros((strip_height, strip_width), dtype=np.float32)
         if rear_img is not None and rear_extent > 0:
-            rear_strip, rear_mask = _slot_rear(
+            # Prepare optional silhouette mask matching rear_img dimensions.
+            rear_silhouette_np = None
+            if rear_mask is not None:
+                # Accept torch.Tensor or np.ndarray transparently
+                if hasattr(rear_mask, "detach"):
+                    m_np = rear_mask.detach().cpu().numpy()
+                else:
+                    m_np = np.asarray(rear_mask)
+                if m_np.size > 1:
+                    m_np = m_np.astype(np.float32)
+                    if m_np.ndim == 3:
+                        m_np = m_np[0]
+                    if m_np.shape != rear_img.shape[:2]:
+                        import cv2
+                        m_np = cv2.resize(
+                            m_np, (rear_img.shape[1], rear_img.shape[0]),
+                            interpolation=cv2.INTER_NEAREST,
+                        )
+                    rear_silhouette_np = (m_np > 0.5)
+
+            rear_strip, rear_mask_strip = _slot_rear(
                 rear_img, rear_split_x, strip_width, strip_height, rear_extent,
                 rear_blend_band=rear_blend_band, rear_flip_lr=rear_flip_lr,
+                rear_mask=rear_silhouette_np,
             )
-            rear_w = rear_mask * rear_confidence
+            rear_w = rear_mask_strip * rear_confidence
             accum_color += rear_strip * rear_w[..., None]
             accum_weight += rear_w
+            mask_tag = ",mask" if rear_silhouette_np is not None else ",no-mask"
             per_slot_report.append(
                 f"rear=img{rear_idx_used}(slot={rear_extent:.2f},"
-                f"blend={rear_blend_band:.2f}{',flip' if rear_flip_lr else ''})"
+                f"blend={rear_blend_band:.2f}"
+                f"{',flip' if rear_flip_lr else ''}{mask_tag})"
             )
         else:
             per_slot_report.append("rear=skip")
