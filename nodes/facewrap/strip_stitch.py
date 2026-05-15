@@ -74,12 +74,14 @@ def _canonical_strip_coords(mode: str = "cylindrical") -> np.ndarray:
     else:
         raise ValueError(f"unknown canonical_mode: {mode}")
 
-    # latitude: linear in y, normalized to data range with a small margin so
-    # the topmost / bottommost landmarks aren't pinned to the strip edges
+    # latitude: linear in y, INVERTED so the canonical mesh's anatomical
+    # Y-up convention (chin at low y, forehead at high y) maps to image
+    # Y-down (forehead at strip top, chin at strip bottom). Without this
+    # flip the warped face renders upside down in the strip.
     y_min, y_max = y.min(), y.max()
     y_span = y_max - y_min
     margin = 0.05 * y_span
-    strip_y = (y - (y_min - margin)) / (y_span + 2 * margin)
+    strip_y = ((y_max + margin) - y) / (y_span + 2 * margin)
     strip_y = np.clip(strip_y, 0.0, 1.0)
 
     out = np.stack([strip_x, strip_y], axis=-1).astype(np.float32)
