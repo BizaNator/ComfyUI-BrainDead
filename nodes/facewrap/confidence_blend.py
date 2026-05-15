@@ -6,8 +6,10 @@ mask emitted by BD_FaceTextureBake). Optional seam dilation prevents
 black-bleed at UV-island boundaries when the result is sampled by a 3D
 renderer with bilinear filtering.
 
-This is the input for the Qwen-inpaint finalize step — the `filled_mask`
-output tells Qwen what NOT to overwrite.
+This is the input for the Qwen-inpaint finalize step. Wire BD_FaceTextureBake's
+`uv_layout_mask` into `target_mask` here and feed `inpaint_mask` to Qwen as
+the paint region — it explicitly covers gaps no view managed to fill, so
+Qwen knows to redraw missing sections (not just blend covered ones).
 """
 
 import numpy as np
@@ -93,8 +95,11 @@ class BD_UVConfidenceBlend(io.ComfyNode):
                 "Outputs:\n"
                 "- uv_texture: the composite\n"
                 "- confidence: combined per-pixel confidence (max across views)\n"
-                "- filled_mask: binary — where the composite has data. Pass\n"
-                "  this (inverted) to Qwen Image Edit as the inpaint region."
+                "- filled_mask: binary — where the composite has data\n"
+                "- inpaint_mask: binary — where Qwen SHOULD paint. If\n"
+                "  target_mask is wired, this is target & ~filled (gaps inside\n"
+                "  the UV layout). Otherwise it falls back to ~filled (every\n"
+                "  unfilled pixel including background)."
             ),
             inputs=[
                 io.Image.Input(
@@ -127,6 +132,16 @@ class BD_UVConfidenceBlend(io.ComfyNode):
                     tooltip="Pixels with summed confidence below this are treated "
                             "as gaps in filled_mask.",
                 ),
+                io.Mask.Input(
+                    "target_mask",
+                    optional=True,
+                    tooltip="Full UV-layout silhouette — where the final texture "
+                            "SHOULD have data (typically BD_FaceTextureBake's "
+                            "uv_layout_mask). Used to compute inpaint_mask = "
+                            "target & ~filled, so Qwen explicitly paints gaps "
+                            "no view covered. If omitted, inpaint_mask is just "
+                            "~filled (background included).",
+                ),
                 io.Float.Input(
                     "confidence_gamma",
                     default=3.0,
@@ -146,6 +161,7 @@ class BD_UVConfidenceBlend(io.ComfyNode):
                 io.Image.Output(display_name="uv_texture"),
                 io.Mask.Output(display_name="confidence"),
                 io.Mask.Output(display_name="filled_mask"),
+                io.Mask.Output(display_name="inpaint_mask"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -156,28 +172,30 @@ class BD_UVConfidenceBlend(io.ComfyNode):
         uv_textures: torch.Tensor,
         confidences: torch.Tensor,
         seam_dilate: int = 4,
+        target_mask: torch.Tensor = None,
         fill_threshold: float = 0.05,
         confidence_gamma: float = 3.0,
     ) -> io.NodeOutput:
+        z = torch.zeros(1, 1, 1)
         if uv_textures is None or uv_textures.ndim != 4:
             return io.NodeOutput(
-                torch.zeros(1, 1, 1, 3), torch.zeros(1, 1, 1), torch.zeros(1, 1, 1),
+                torch.zeros(1, 1, 1, 3), z, z, z,
                 "ERROR: uv_textures must be (N,H,W,3)",
             )
         if confidences is None or confidences.ndim != 3:
             return io.NodeOutput(
-                torch.zeros(1, 1, 1, 3), torch.zeros(1, 1, 1), torch.zeros(1, 1, 1),
+                torch.zeros(1, 1, 1, 3), z, z, z,
                 "ERROR: confidences must be (N,H,W)",
             )
         if uv_textures.shape[0] != confidences.shape[0]:
             return io.NodeOutput(
-                torch.zeros(1, 1, 1, 3), torch.zeros(1, 1, 1), torch.zeros(1, 1, 1),
+                torch.zeros(1, 1, 1, 3), z, z, z,
                 f"ERROR: batch mismatch: {uv_textures.shape[0]} textures vs "
                 f"{confidences.shape[0]} confidence maps",
             )
         if uv_textures.shape[1:3] != confidences.shape[1:3]:
             return io.NodeOutput(
-                torch.zeros(1, 1, 1, 3), torch.zeros(1, 1, 1), torch.zeros(1, 1, 1),
+                torch.zeros(1, 1, 1, 3), z, z, z,
                 f"ERROR: spatial size mismatch: textures {tuple(uv_textures.shape[1:3])} "
                 f"vs confidences {tuple(confidences.shape[1:3])}",
             )
@@ -219,18 +237,40 @@ class BD_UVConfidenceBlend(io.ComfyNode):
         n_filled_after = int(dilated_mask.sum().item())
         total = H * W
 
+        # inpaint_mask: where Qwen SHOULD paint.
+        # With target_mask: target & ~filled (gaps inside the UV layout).
+        # Without: ~filled (every unfilled pixel, includes UV background).
+        if target_mask is not None and target_mask.numel() > 1:
+            tm = target_mask
+            if tm.ndim == 3:
+                tm = tm[0]
+            if tm.shape != (H, W):
+                return io.NodeOutput(
+                    torch.zeros(1, 1, 1, 3), z, z, z, z,
+                    f"ERROR: target_mask shape {tuple(tm.shape)} != texture shape {(H, W)}",
+                )
+            target_bool = (tm.to(device) > 0.5)
+            inpaint_bool = target_bool & ~dilated_mask
+            target_coverage = f", target={100.0*int(target_bool.sum().item())/total:.1f}%"
+        else:
+            inpaint_bool = ~dilated_mask
+            target_coverage = " (no target_mask: inpaint=~filled)"
+        n_inpaint = int(inpaint_bool.sum().item())
+
         out_image = composite.unsqueeze(0).cpu()                       # (1, H, W, 3)
         out_confidence = conf_max.unsqueeze(0).cpu()                   # (1, H, W)
         out_filled = dilated_mask.float().unsqueeze(0).cpu()           # (1, H, W)
+        out_inpaint = inpaint_bool.float().unsqueeze(0).cpu()          # (1, H, W)
 
         status = (
             f"blended {N} views | "
             f"texture {H}x{W} | "
             f"filled {100.0*n_filled_orig/total:.1f}% pre-dilate, "
             f"{100.0*n_filled_after/total:.1f}% post-dilate "
-            f"(seam_dilate={seam_dilate})"
+            f"(seam_dilate={seam_dilate}) | "
+            f"inpaint={100.0*n_inpaint/total:.1f}%{target_coverage}"
         )
-        return io.NodeOutput(out_image, out_confidence, out_filled, status)
+        return io.NodeOutput(out_image, out_confidence, out_filled, out_inpaint, status)
 
 
 FACEWRAP_BLEND_V3_NODES = [BD_UVConfidenceBlend]
