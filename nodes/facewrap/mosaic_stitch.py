@@ -41,6 +41,13 @@ _LEFT_EYE_OUTER = 263     # subject's left eye outer corner
 _CHIN_LM = 152
 _FOREHEAD_LM = 10
 
+# Anchor landmarks for shared-feature alignment between front and side views.
+# These canonical indices fall on the temple/tragion area that's visible in
+# BOTH the front view and the respective side view — exactly where a
+# Photoshop stitch would line up its two layers.
+_LEFT_ANCHOR_LM = 454     # subject's left tragion (canonical +x, strip-right)
+_RIGHT_ANCHOR_LM = 234    # subject's right tragion (canonical −x, strip-left)
+
 # Face-oval boundary (used to build a face-shape alpha mask). 36 indices that
 # trace the perimeter of the face mesh — covers forehead, sides, and chin.
 _FACE_OVAL = [
@@ -92,6 +99,48 @@ def _per_view_similarity(
     M[0, 2] += float(target_eye_xy[0]) - float(eye_center[0])
     M[1, 2] += float(target_eye_xy[1]) - float(eye_center[1])
     return M
+
+
+def _side_view_anchored_similarity(
+    landmarks_2d: np.ndarray,            # side view's landmarks_2d
+    anchor_lm_idx: int,                  # shared landmark index (e.g. 454 or 234)
+    anchor_target_xy: tuple[float, float], # where it should land in strip space
+    target_face_height_px: float,
+) -> np.ndarray:
+    """Like _per_view_similarity but uses an EYE-aligned rotation + scale,
+    then translates so a SHARED anchor landmark (not the eye-center) lands
+    at anchor_target_xy. This is the 'align via shared landmark' mode.
+    """
+    eye_pts = landmarks_2d[_EYE_LM_ALL]
+    eye_center = eye_pts.mean(axis=0)
+    re_corner = landmarks_2d[_RIGHT_EYE_OUTER]
+    le_corner = landmarks_2d[_LEFT_EYE_OUTER]
+    dx = float(le_corner[0] - re_corner[0])
+    dy = float(le_corner[1] - re_corner[1])
+    eye_line_angle_deg = np.degrees(np.arctan2(dy, dx))
+
+    chin = landmarks_2d[_CHIN_LM]
+    forehead = landmarks_2d[_FOREHEAD_LM]
+    face_height_src = max(float(np.linalg.norm(chin - forehead)), 1.0)
+    scale = float(target_face_height_px) / face_height_src
+
+    M = cv2.getRotationMatrix2D(
+        center=(float(eye_center[0]), float(eye_center[1])),
+        angle=-eye_line_angle_deg,
+        scale=scale,
+    )
+    # Apply M (without final translate) to the anchor landmark to see where
+    # it would land. Then translate so it lands at anchor_target_xy instead.
+    anchor_src = landmarks_2d[anchor_lm_idx].astype(np.float64)
+    anchor_after = M @ np.array([anchor_src[0], anchor_src[1], 1.0])
+    M[0, 2] += float(anchor_target_xy[0]) - float(anchor_after[0])
+    M[1, 2] += float(anchor_target_xy[1]) - float(anchor_after[1])
+    return M
+
+
+def _apply_affine_to_point(M: np.ndarray, xy: np.ndarray) -> np.ndarray:
+    """Apply a 2x3 affine matrix to a 2D point. Returns (2,) float."""
+    return (M[:, :2] @ xy + M[:, 2]).astype(np.float64)
 
 
 def _face_oval_mask(landmarks_2d: np.ndarray, h: int, w: int) -> np.ndarray:
@@ -187,15 +236,16 @@ class BD_FaceMosaicCompose(io.ComfyNode):
                             "(0.5 = strip center).",
                 ),
                 io.Float.Input(
-                    "left_center_x", default=0.80, min=0.0, max=1.0, step=0.01,
+                    "left_center_x", default=0.68, min=0.0, max=1.0, step=0.01,
                     tooltip="Strip-X column for the LEFT view (subject's left "
-                            "face). 0.80 puts it 80% across the strip — well "
-                            "clear of the front face's hull at default sizes.",
+                            "face). 0.68 lets the left view's hull overlap "
+                            "the front by ~⅓ — that's the overlap region "
+                            "Qwen smooths and where shared landmarks meet.",
                 ),
                 io.Float.Input(
-                    "right_center_x", default=0.20, min=0.0, max=1.0, step=0.01,
-                    tooltip="Strip-X column for the RIGHT view. 0.20 places it "
-                            "20% across the strip.",
+                    "right_center_x", default=0.32, min=0.0, max=1.0, step=0.01,
+                    tooltip="Strip-X column for the RIGHT view. 0.32 mirrors "
+                            "left_center_x — same overlap with front.",
                 ),
                 io.Float.Input(
                     "eye_target_y", default=0.40, min=0.0, max=1.0, step=0.01,
@@ -204,22 +254,38 @@ class BD_FaceMosaicCompose(io.ComfyNode):
                             "higher → more neck/chin below.",
                 ),
                 io.Float.Input(
-                    "face_height_ratio", default=0.45, min=0.10, max=1.0, step=0.05,
+                    "face_height_ratio", default=0.60, min=0.10, max=1.0, step=0.05,
                     tooltip="Target face height (chin↔forehead distance) as a "
-                            "fraction of strip height. 0.45 = face fills 45% "
-                            "of strip height — leaves room between views and "
-                            "above/below for hair/neck context. Higher = bigger "
-                            "faces (also means more overlap between views).",
+                            "fraction of strip height. 0.60 makes the face "
+                            "large enough that adjacent views overlap "
+                            "meaningfully at their face hulls (which is where "
+                            "shared landmark alignment happens).",
+                ),
+                io.Boolean.Input(
+                    "align_to_front",
+                    default=True,
+                    optional=True,
+                    tooltip="When ON: each side view's transform is anchored "
+                            "to a shared landmark (subject's-left tragion for "
+                            "the LEFT view, subject's-right tragion for the "
+                            "RIGHT view) so it lands at the SAME strip-space "
+                            "position as the front view placed it. This is "
+                            "literal 'align by face points' stitching — the "
+                            "left side of the front photo and the inner edge "
+                            "of the left-profile photo meet at the same "
+                            "subject feature. When OFF: each view independently "
+                            "targets its configured center_x (looser fit but "
+                            "easier to position manually).",
                 ),
                 io.Int.Input(
-                    "feather_radius", default=12, min=0, max=200, step=2,
+                    "feather_radius", default=30, min=0, max=200, step=2,
                     optional=True,
                     tooltip="Gaussian-blur radius for the per-view face-hull "
-                            "alpha. 12 = visible cut edges with a small soft "
-                            "transition (like a feathered Photoshop selection). "
-                            "Higher = wider crossfade (blends views into one "
-                            "another); lower = harder visible seams. 0 = "
-                            "binary hard cut.",
+                            "alpha. 30 = moderate feathered selection — soft "
+                            "enough that adjacent views crossfade smoothly "
+                            "in the overlap region, but each view's face is "
+                            "still visible as itself. Increase for more "
+                            "blending; decrease (e.g. 10) for visible seams.",
                 ),
                 io.Float.Input(
                     "rear_extent", default=0.15, min=0.0, max=0.30, step=0.01,
@@ -275,11 +341,12 @@ class BD_FaceMosaicCompose(io.ComfyNode):
         strip_width: int = 4096,
         strip_height: int = 1024,
         front_center_x: float = 0.50,
-        left_center_x: float = 0.80,
-        right_center_x: float = 0.20,
+        left_center_x: float = 0.68,
+        right_center_x: float = 0.32,
         eye_target_y: float = 0.40,
-        face_height_ratio: float = 0.45,
-        feather_radius: int = 12,
+        face_height_ratio: float = 0.60,
+        align_to_front: bool = True,
+        feather_radius: int = 30,
         rear_extent: float = 0.15,
         rear_split_x: float = 0.5,
         rear_flip_lr: bool = False,
@@ -339,30 +406,65 @@ class BD_FaceMosaicCompose(io.ComfyNode):
         accum_alpha = np.zeros((strip_height, strip_width), dtype=np.float32)
         per_slot_report = []
 
-        # --- Warp + alpha for the three landmark-driven slots ---
-        for slot_hint in ("front", "left", "right"):
+        # First pass: process FRONT view and stash its transform so side views
+        # can anchor to shared landmarks when align_to_front is enabled.
+        front_M = None
+        front_idx = slot_idx["front"]
+        anchor_lm_for_slot = {
+            "left":  _LEFT_ANCHOR_LM,   # subject's-left tragion
+            "right": _RIGHT_ANCHOR_LM,  # subject's-right tragion
+        }
+
+        def _process_slot(slot_hint: str) -> None:
+            nonlocal front_M, accum_color, accum_alpha
             idx = slot_idx[slot_hint]
             if idx < 0:
                 per_slot_report.append(f"{slot_hint}=skip(no source)")
-                continue
+                return
             view = views[idx]
             if not view["detected"]:
                 per_slot_report.append(f"{slot_hint}=skip(img {idx}: face not detected)")
-                continue
+                return
 
             src_img = images_np[idx]
             h_src, w_src = src_img.shape[:2]
             lm = view["landmarks_2d"]
             if lm.shape[0] < max(_FACE_OVAL) + 1:
                 per_slot_report.append(f"{slot_hint}=skip(landmarks too few)")
-                continue
+                return
 
+            anchored = False
             try:
-                M = _per_view_similarity(
-                    lm,
-                    target_eye_xy=(view_target_x[slot_hint], eye_y_px),
-                    target_face_height_px=target_face_height_px,
-                )
+                if slot_hint == "front":
+                    M = _per_view_similarity(
+                        lm,
+                        target_eye_xy=(view_target_x[slot_hint], eye_y_px),
+                        target_face_height_px=target_face_height_px,
+                    )
+                    front_M = M
+                elif (align_to_front and front_M is not None
+                      and slot_hint in anchor_lm_for_slot):
+                    # Compute where the front view placed this shared anchor,
+                    # then build a side-view transform that lands the side's
+                    # version of that same canonical landmark at the same xy.
+                    anchor_idx = anchor_lm_for_slot[slot_hint]
+                    front_view = views[front_idx]
+                    front_anchor_src_xy = front_view["landmarks_2d"][anchor_idx].astype(np.float64)
+                    front_anchor_strip_xy = _apply_affine_to_point(front_M, front_anchor_src_xy)
+                    M = _side_view_anchored_similarity(
+                        lm,
+                        anchor_lm_idx=anchor_idx,
+                        anchor_target_xy=(float(front_anchor_strip_xy[0]),
+                                          float(front_anchor_strip_xy[1])),
+                        target_face_height_px=target_face_height_px,
+                    )
+                    anchored = True
+                else:
+                    M = _per_view_similarity(
+                        lm,
+                        target_eye_xy=(view_target_x[slot_hint], eye_y_px),
+                        target_face_height_px=target_face_height_px,
+                    )
                 warped = cv2.warpAffine(
                     src_img, M, (strip_width, strip_height),
                     flags=cv2.INTER_LINEAR,
@@ -377,11 +479,19 @@ class BD_FaceMosaicCompose(io.ComfyNode):
                 alpha = _feather_mask_float(hull_dst, feather_radius)
             except Exception as e:
                 per_slot_report.append(f"{slot_hint}=ERR({e.__class__.__name__})")
-                continue
+                return
 
             accum_color += warped * alpha[..., None]
             accum_alpha += alpha
-            per_slot_report.append(f"{slot_hint}=img{idx}(was '{view['view_hint']}')")
+            tag = ",anchored" if anchored else ""
+            per_slot_report.append(
+                f"{slot_hint}=img{idx}(was '{view['view_hint']}'{tag})"
+            )
+
+        # Process front first, then the side views (which depend on front_M)
+        _process_slot("front")
+        _process_slot("left")
+        _process_slot("right")
 
         # --- Rear slot (reuse strip_stitch's _slot_rear) ---
         rear_img = None
