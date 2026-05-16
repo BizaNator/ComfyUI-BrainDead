@@ -187,14 +187,15 @@ class BD_FaceMosaicCompose(io.ComfyNode):
                             "(0.5 = strip center).",
                 ),
                 io.Float.Input(
-                    "left_center_x", default=0.75, min=0.0, max=1.0, step=0.01,
+                    "left_center_x", default=0.80, min=0.0, max=1.0, step=0.01,
                     tooltip="Strip-X column for the LEFT view (subject's left "
-                            "face). 0.75 puts it ¾ across the strip.",
+                            "face). 0.80 puts it 80% across the strip — well "
+                            "clear of the front face's hull at default sizes.",
                 ),
                 io.Float.Input(
-                    "right_center_x", default=0.25, min=0.0, max=1.0, step=0.01,
-                    tooltip="Strip-X column for the RIGHT view. 0.25 puts it "
-                            "¼ across the strip.",
+                    "right_center_x", default=0.20, min=0.0, max=1.0, step=0.01,
+                    tooltip="Strip-X column for the RIGHT view. 0.20 places it "
+                            "20% across the strip.",
                 ),
                 io.Float.Input(
                     "eye_target_y", default=0.40, min=0.0, max=1.0, step=0.01,
@@ -203,18 +204,22 @@ class BD_FaceMosaicCompose(io.ComfyNode):
                             "higher → more neck/chin below.",
                 ),
                 io.Float.Input(
-                    "face_height_ratio", default=0.55, min=0.10, max=1.0, step=0.05,
+                    "face_height_ratio", default=0.45, min=0.10, max=1.0, step=0.05,
                     tooltip="Target face height (chin↔forehead distance) as a "
-                            "fraction of strip height. 0.55 = face fills 55% "
-                            "of strip height. Higher = bigger faces.",
+                            "fraction of strip height. 0.45 = face fills 45% "
+                            "of strip height — leaves room between views and "
+                            "above/below for hair/neck context. Higher = bigger "
+                            "faces (also means more overlap between views).",
                 ),
                 io.Int.Input(
-                    "feather_radius", default=40, min=0, max=200, step=5,
+                    "feather_radius", default=12, min=0, max=200, step=2,
                     optional=True,
                     tooltip="Gaussian-blur radius for the per-view face-hull "
-                            "alpha. Larger = smoother crossfade at overlaps "
-                            "between adjacent views. 0 = hard mask (visible "
-                            "seams). 40 is a good starting point.",
+                            "alpha. 12 = visible cut edges with a small soft "
+                            "transition (like a feathered Photoshop selection). "
+                            "Higher = wider crossfade (blends views into one "
+                            "another); lower = harder visible seams. 0 = "
+                            "binary hard cut.",
                 ),
                 io.Float.Input(
                     "rear_extent", default=0.15, min=0.0, max=0.30, step=0.01,
@@ -270,11 +275,11 @@ class BD_FaceMosaicCompose(io.ComfyNode):
         strip_width: int = 4096,
         strip_height: int = 1024,
         front_center_x: float = 0.50,
-        left_center_x: float = 0.75,
-        right_center_x: float = 0.25,
+        left_center_x: float = 0.80,
+        right_center_x: float = 0.20,
         eye_target_y: float = 0.40,
-        face_height_ratio: float = 0.55,
-        feather_radius: int = 40,
+        face_height_ratio: float = 0.45,
+        feather_radius: int = 12,
         rear_extent: float = 0.15,
         rear_split_x: float = 0.5,
         rear_flip_lr: bool = False,
