@@ -396,7 +396,7 @@ class BD_PartsExport(io.ComfyNode):
         #                              the original occlusion to the rebuilt content)
         composite_tensor = None
         composite_masked_tensor = None
-        if save_composite or save_psd:
+        if (save_composite or save_psd) and tag2pinfo:
             from .parts_compose import BD_PartsCompose
             comp_out = BD_PartsCompose.execute(parts, output_size=composite_size, trigger=True)
             composite_tensor, alpha_tensor = comp_out.args
