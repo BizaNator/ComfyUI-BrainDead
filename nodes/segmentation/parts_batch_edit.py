@@ -692,7 +692,8 @@ class BD_PartsBatchEdit(io.ComfyNode):
         import time as _time
         if parts is None:
             print("[BD PartsBatchEdit] parts=None — no parts to edit, passing through empty bundle", flush=True)
-            return io.NodeOutput(empty_bundle(), "skipped — no parts input", None)
+            import torch
+            return io.NodeOutput(empty_bundle(), "skipped — no parts input", torch.zeros(1, 1, 1, 3))
         ensure_bundle(parts, source="BD_PartsBatchEdit.parts")
 
         skip_set = _parse_skip(skip_tags)
