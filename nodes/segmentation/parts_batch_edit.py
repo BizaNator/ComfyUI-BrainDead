@@ -34,7 +34,7 @@ from nodes import common_ksampler
 from comfy_api.latest import io
 import comfy.samplers as _samplers
 
-from .parts_types import PARTS_BUNDLE, ensure_bundle
+from .parts_types import PARTS_BUNDLE, ensure_bundle, empty_bundle
 
 
 _LLAMA_TEMPLATE = (
@@ -690,6 +690,9 @@ class BD_PartsBatchEdit(io.ComfyNode):
                 auto_crop_to_content=False,
                 mask_dilate_pixels=2) -> io.NodeOutput:
         import time as _time
+        if parts is None:
+            print("[BD PartsBatchEdit] parts=None — no parts to edit, passing through empty bundle", flush=True)
+            return io.NodeOutput(empty_bundle(), "skipped — no parts input", None)
         ensure_bundle(parts, source="BD_PartsBatchEdit.parts")
 
         skip_set = _parse_skip(skip_tags)
