@@ -104,5 +104,5 @@ class BD_ImageToGreyscale(io.ComfyNode):
 
 IMAGE_TO_GREYSCALE_V3_NODES = [BD_ImageToGreyscale]
 
-IMAGE_TO_GREYSCALE_NODES: dict = {}
-IMAGE_TO_GREYSCALE_DISPLAY_NAMES: dict = {}
+IMAGE_TO_GREYSCALE_NODES = {"BD_ImageToGreyscale": BD_ImageToGreyscale}
+IMAGE_TO_GREYSCALE_DISPLAY_NAMES = {"BD_ImageToGreyscale": "BD Image To Greyscale"}
