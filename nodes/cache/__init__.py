@@ -33,6 +33,11 @@ from .save_context import (
     SAVE_CONTEXT_DISPLAY_NAMES,
     SAVE_CONTEXT_V3_NODES,
 )
+from .save_batch import (
+    SAVE_BATCH_NODES,
+    SAVE_BATCH_DISPLAY_NAMES,
+    SAVE_BATCH_V3_NODES,
+)
 
 # Combine all cache nodes
 NODE_CLASS_MAPPINGS = {
@@ -40,6 +45,7 @@ NODE_CLASS_MAPPINGS = {
     **FILE_OPS_NODES,
     **WORKFLOW_NODES,
     **SAVE_CONTEXT_NODES,
+    **SAVE_BATCH_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -47,6 +53,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **FILE_OPS_DISPLAY_NAMES,
     **WORKFLOW_DISPLAY_NAMES,
     **SAVE_CONTEXT_DISPLAY_NAMES,
+    **SAVE_BATCH_DISPLAY_NAMES,
 }
 
 # Export lists for external use
@@ -58,6 +65,7 @@ CACHE_V3_NODES = [
     *FILE_OPS_V3_NODES,
     *WORKFLOW_V3_NODES,
     *SAVE_CONTEXT_V3_NODES,
+    *SAVE_BATCH_V3_NODES,
 ]
 
 __all__ = [
