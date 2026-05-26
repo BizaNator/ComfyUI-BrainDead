@@ -135,6 +135,29 @@ def _build_overlay(
     return torch.from_numpy(canvas.clip(0, 1)).unsqueeze(0)
 
 
+def _parse_slot_modes(slot_modes_str: str, label_list: list[str]) -> dict[int, str]:
+    """Parse 'label_or_1based_idx: mode' lines into {0based_idx: mode} dict."""
+    valid_modes = {"replace", "intersect", "union", "weighted_blend"}
+    result = {}
+    for line in (slot_modes_str or "").splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        left, right = line.split(":", 1)
+        tok = left.strip()
+        mode_val = right.strip().lower()
+        if mode_val not in valid_modes:
+            continue
+        # Resolve slot index
+        try:
+            idx = int(tok) - 1
+        except ValueError:
+            idx = label_list.index(tok) if tok in label_list else -1
+        if 0 <= idx < _N:
+            result[idx] = mode_val
+    return result
+
+
 def _parse_subtract_pairs(
     subtract_str: str,
     label_list: list[str],
@@ -265,13 +288,29 @@ class BD_MaskCorrelate(io.ComfyNode):
                     default="intersect",
                     optional=True,
                     tooltip=(
-                        "How to combine the accepted candidate with the original target:\n"
-                        "  intersect — candidate clipped to target region (safest; prevents "
-                        "candidate bleeding outside the coarse guide area).\n"
-                        "  replace   — use the raw candidate mask (full SAM3 segment, ignores "
-                        "target shape).\n"
-                        "  union     — expand target by candidate shape (most generous).\n"
-                        "  weighted_blend — smooth blend biased toward confident candidate areas."
+                        "Default combine mode for all slots:\n"
+                        "  intersect — candidate clipped to target region (safest; use for eyes/brows/lips "
+                        "so SAM3 segments stay within MediaPipe hull bounds).\n"
+                        "  replace   — raw SAM3 segment used directly (use for skin — lets SAM3 define "
+                        "the boundary, then subtract_slots removes features).\n"
+                        "  union     — expand target by candidate shape.\n"
+                        "  weighted_blend — smooth blend biased toward confident candidate areas.\n\n"
+                        "Override per slot with slot_modes."
+                    ),
+                ),
+                io.String.Input(
+                    "slot_modes", multiline=True, default="", optional=True,
+                    tooltip=(
+                        "Per-slot mode overrides — one line each: label_or_index: mode\n\n"
+                        "Overrides the global mode setting for specific slots. All others use mode.\n\n"
+                        "Example:\n"
+                        "  skin: replace\n"
+                        "  left_eye: intersect\n\n"
+                        "Typical skin pipeline:\n"
+                        "  skin: replace   ← SAM3 defines the skin boundary (pixel-accurate)\n"
+                        "  (all feature slots stay on intersect — clipped to MediaPipe hull)\n"
+                        "  subtract_slots: skin: eyes, brows, lips  ← then remove features\n\n"
+                        "Valid modes: intersect, replace, union, weighted_blend"
                     ),
                 ),
                 io.Combo.Input(
@@ -361,6 +400,7 @@ class BD_MaskCorrelate(io.ComfyNode):
         priorities: str = "",
         min_iou: float = 0.05,
         mode: str = "intersect",
+        slot_modes: str = "",
         fallback: str = "original",
         target_expand: int = 0,
         exclusive: bool = False,
@@ -377,9 +417,10 @@ class BD_MaskCorrelate(io.ComfyNode):
 
         wired = [(i, t) for i, t in enumerate(targets) if t is not None]
 
-        # Parse labels, priorities, and subtract pairs
+        # Parse labels, priorities, per-slot modes, and subtract pairs
         label_list = [l.strip() for l in (labels or "").strip().split("\n") if l.strip()]
         priority_vals = _parse_priorities(priorities, _N)
+        slot_mode_map = _parse_slot_modes(slot_modes, label_list)
         subtract_pairs = _parse_subtract_pairs(subtract_slots, label_list)
 
         # Normalise candidates to list of (H, W) float32 arrays
@@ -479,12 +520,14 @@ class BD_MaskCorrelate(io.ComfyNode):
                 if best_j >= 0 and best_iou >= min_iou:
                     if exclusive:
                         used_cands.add(best_j)
-                    refined = _combine(t_arr, cands_hw[best_j], mode)
+                    slot_mode = slot_mode_map.get(slot_i, mode)
+                    refined = _combine(t_arr, cands_hw[best_j], slot_mode)
                     out_masks[slot_i] = refined.clip(0, 1)
                     slot_matched[slot_i] = True
                     priority_note = f" priority={priority:.1f}" if priorities.strip() else ""
+                    mode_note = f" mode={slot_mode}" + (" (override)" if slot_i in slot_mode_map else "")
                     info_lines.append(
-                        f"  {label}: matched candidate {best_j} (IoU={best_iou:.3f}, mode={mode}{priority_note})"
+                        f"  {label}: matched candidate {best_j} (IoU={best_iou:.3f},{mode_note}{priority_note})"
                     )
                 else:
                     if fallback == "blank":
