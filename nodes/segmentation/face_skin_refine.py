@@ -274,17 +274,16 @@ class BD_FaceSkinRefine(io.ComfyNode):
                                  tooltip="Per-feature match summary: candidate index, IoU, fallback notes."),
                 io.Image.Output(
                     display_name="masked_image",
-                    tooltip="Original image composited with the skin mask as alpha — shows only the skin "
-                            "region (face_oval minus features). Requires image to be wired. "
-                            "Background controlled by masked_image_bg. "
-                            "silhouette_mask is applied if wired.",
+                    tooltip="Original image with the head/body silhouette applied as alpha — isolates the "
+                            "subject from the background. Uses silhouette_mask if wired, falls back to "
+                            "face_oval if not. Requires image to be wired. "
+                            "Background controlled by masked_image_bg.",
                 ),
                 io.Image.Output(
-                    display_name="masked_face",
-                    tooltip="Original image composited with face_oval as alpha — shows the full face "
-                            "plate (skin + all features, no background). Requires image to be wired. "
-                            "Wire this to see the whole face isolated. Background controlled by masked_image_bg. "
-                            "silhouette_mask is applied if wired.",
+                    display_name="masked_skin",
+                    tooltip="Original image composited with the skin mask as alpha — shows only the skin "
+                            "region (face_oval minus all refined feature holes). Requires image to be wired. "
+                            "Background controlled by masked_image_bg.",
                 ),
             ],
         )
@@ -442,13 +441,16 @@ class BD_FaceSkinRefine(io.ComfyNode):
 
         # Masked image outputs — require image to be wired
         if img_np is not None:
-            masked_image = _composite(img_np, skin_arr.clip(0, 1), masked_image_bg)
-            masked_face  = _composite(img_np, face_oval_arr.clip(0, 1), masked_image_bg)
+            # masked_image: whole head/subject isolated — silhouette if wired, else face oval
+            head_alpha = sil_arr if sil_arr is not None else face_oval_arr
+            masked_image = _composite(img_np, head_alpha.clip(0, 1), masked_image_bg)
+            # masked_skin: just the skin pixels (face_oval minus feature holes)
+            masked_skin = _composite(img_np, skin_arr.clip(0, 1), masked_image_bg)
         else:
             channels = 4 if masked_image_bg == "transparent" else 3
             placeholder = torch.zeros((1, H, W, channels), dtype=torch.float32)
             masked_image = placeholder
-            masked_face  = placeholder
+            masked_skin  = placeholder
 
         return io.NodeOutput(
             _to_mask_tensor(skin_arr),
@@ -461,7 +463,7 @@ class BD_FaceSkinRefine(io.ComfyNode):
             debug_overlay,
             match_info,
             masked_image,
-            masked_face,
+            masked_skin,
         )
 
 
