@@ -299,6 +299,16 @@ class BD_MaskCorrelate(io.ComfyNode):
                             "  white / black → RGB composite over solid colour\n"
                             "  checker → grey checkerboard (visually indicates transparency)"
                 ),
+                io.Boolean.Input(
+                    "invert_masked_image", default=False, optional=True,
+                    tooltip="When True, masked_image shows everything EXCEPT the matched regions — "
+                            "the inverse composite.\n\n"
+                            "If silhouette_mask is wired: image × (silhouette − union_of_matched) — "
+                            "shows the subject with matched areas cut out (e.g. remove eyes/lips from face).\n"
+                            "If silhouette_mask is not wired: image × (1 − union_of_matched).\n\n"
+                            "Useful for: baking a head mask that has feature holes, or showing the "
+                            "non-feature areas of the subject.",
+                ),
                 io.String.Input(
                     "labels", multiline=True,
                     default="left_brow\nright_brow\nleft_eye\nright_eye\nlips",
@@ -432,9 +442,15 @@ class BD_MaskCorrelate(io.ComfyNode):
                 io.Image.Output(
                     display_name="masked_image",
                     tooltip="reference_image composited with the union of all matched slot masks as alpha. "
-                            "Shows only the matched regions isolated from the background. "
-                            "Requires reference_image to be wired. "
-                            "silhouette_mask is applied if wired. Background controlled by masked_image_bg.",
+                            "With invert_masked_image=True: shows everything EXCEPT the matched regions "
+                            "(clamped to silhouette_mask if wired). "
+                            "Requires reference_image to be wired. Background controlled by masked_image_bg.",
+                ),
+                io.Mask.Output(
+                    display_name="combined_mask",
+                    tooltip="Union of all wired+matched refined slot masks as a single MASK. "
+                            "Clipped to silhouette_mask if wired. "
+                            "Use downstream to treat all matched regions as one shape.",
                 ),
             ],
         )
@@ -446,6 +462,7 @@ class BD_MaskCorrelate(io.ComfyNode):
         reference_image: torch.Tensor | None = None,
         silhouette_mask: torch.Tensor | None = None,
         masked_image_bg: str = "transparent",
+        invert_masked_image: bool = False,
         labels: str = "",
         priorities: str = "",
         min_iou: float = 0.05,
@@ -639,18 +656,27 @@ class BD_MaskCorrelate(io.ComfyNode):
         ]
         debug_overlay = _build_overlay(base_rgb, overlay_masks, overlay_matched, overlay_alpha, H, W)
 
-        # masked_image: reference_image × union of all wired+matched slot masks + bg
+        # combined_mask and masked_image: union of all wired+matched slot masks
+        union_mask = np.zeros((H, W), dtype=np.float32)
+        for i in wired_indices:
+            union_mask = np.maximum(union_mask, out_masks[i])
+        union_mask = union_mask.clip(0, 1)
+        combined_mask = _to_mask_tensor(union_mask)
+
         if img_np is not None:
-            union_mask = np.zeros((H, W), dtype=np.float32)
-            for i in wired_indices:
-                union_mask = np.maximum(union_mask, out_masks[i])
-            masked_image = _composite(img_np, union_mask.clip(0, 1), masked_image_bg)
+            if invert_masked_image:
+                # Invert: show everything EXCEPT matched regions, clamped to silhouette
+                base = sil_arr if sil_arr is not None else np.ones((H, W), dtype=np.float32)
+                alpha = np.maximum(0.0, base - union_mask)
+            else:
+                alpha = union_mask
+            masked_image = _composite(img_np, alpha.clip(0, 1), masked_image_bg)
         else:
             channels = 4 if masked_image_bg == "transparent" else 3
             masked_image = torch.zeros((1, H, W, channels), dtype=torch.float32)
 
         outputs = [_to_mask_tensor(out_masks[i]) for i in range(_N)]
-        return io.NodeOutput(*outputs, debug_overlay, match_info, masked_image)
+        return io.NodeOutput(*outputs, debug_overlay, match_info, masked_image, combined_mask)
 
 
 MASK_CORRELATE_V3_NODES = [BD_MaskCorrelate]
