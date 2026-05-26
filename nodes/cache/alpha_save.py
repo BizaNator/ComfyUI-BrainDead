@@ -114,15 +114,35 @@ def apply_alpha_to_frame(
 
 
 def save_alpha_file(alpha_tensor: torch.Tensor, filepath: str) -> str:
-    """Save a (H, W) float32 alpha tensor as a greyscale PNG at filepath.
+    """Save a (H, W) float32 alpha tensor as a transparent-background RGBA PNG.
 
-    Returns the path written, raises on error.
+    Output format: RGB=white, A=alpha value.
+    White areas are fully opaque; black areas are fully transparent.
+    Suitable for direct engine import as a cutout/sprite (no solid background).
     """
     from PIL import Image
     alpha_np = (alpha_tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-    pil = Image.fromarray(alpha_np, mode="L")
-    pil.save(filepath, "PNG")
+    H, W = alpha_np.shape
+    rgba = np.stack([
+        np.full((H, W), 255, dtype=np.uint8),  # R white
+        np.full((H, W), 255, dtype=np.uint8),  # G white
+        np.full((H, W), 255, dtype=np.uint8),  # B white
+        alpha_np,                               # A = mask
+    ], axis=-1)
+    Image.fromarray(rgba, mode="RGBA").save(filepath, "PNG")
     return filepath
+
+
+def alpha_to_rgba_tensor(alpha_tensor: torch.Tensor) -> torch.Tensor:
+    """Convert a (H, W) float32 alpha tensor to a (1, H, W, 4) white+transparent IMAGE tensor.
+
+    Matches the format written by save_alpha_file: white where opaque,
+    transparent where black. Wire to PreviewImage or BD_SaveBatch preview_alpha.
+    """
+    H, W = alpha_tensor.shape[-2], alpha_tensor.shape[-1]
+    a = alpha_tensor.cpu().float().reshape(H, W)
+    white = torch.ones((H, W, 3), dtype=torch.float32)
+    return torch.cat([white, a.unsqueeze(-1)], dim=-1).unsqueeze(0)  # (1, H, W, 4)
 
 
 def alpha_file_path(main_filepath: str) -> str:
