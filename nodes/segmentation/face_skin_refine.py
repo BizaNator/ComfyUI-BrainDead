@@ -288,9 +288,10 @@ class BD_FaceSkinRefine(io.ComfyNode):
                 ),
                 io.Mask.Output(
                     display_name="head_mask",
-                    tooltip="Combined head/face boundary as a MASK. Returns silhouette_mask if wired, "
-                            "otherwise face_oval. Use downstream to clip other operations to the head region "
-                            "without re-wiring the original silhouette source.",
+                    tooltip="Head/face boundary with feature holes cut out — same alpha as masked_image. "
+                            "Outer boundary is silhouette_mask if wired, else face_oval. "
+                            "Eye/brow/lip/nose regions are subtracted so this is a paintable 'skin shape' mask. "
+                            "Wire to SaveImage or BD_PackChannels to use as a standalone cutout.",
                 ),
             ],
         )
@@ -446,20 +447,21 @@ class BD_FaceSkinRefine(io.ComfyNode):
         match_info = header + "\n" + "\n".join(info_lines)
         print(f"[BD_FaceSkinRefine] {match_info}", flush=True)
 
-        # head_mask: silhouette if wired, else face_oval — the outer boundary as a reusable MASK
-        head_mask_arr = sil_arr if sil_arr is not None else face_oval_arr
-
         # Union of all refined features (eyes + brows + lips + nose)
         union_features = np.zeros((H, W), dtype=np.float32)
         for feat_name in ["left_eye", "right_eye", "left_brow", "right_brow", "lips", "nose"]:
             union_features = np.maximum(union_features, refined[feat_name])
 
+        # head_mask: outer boundary (silhouette or face_oval) WITH feature holes cut out.
+        # This is the useful downstream mask — not the raw silhouette (which the user already has).
+        outer_boundary = sil_arr if sil_arr is not None else face_oval_arr
+        head_mask_arr = np.maximum(0.0, outer_boundary - union_features)
+
         # Masked image outputs — require image to be wired
         if img_np is not None:
-            # masked_image: head boundary with feature holes cut out
-            head_minus_features = np.maximum(0.0, head_mask_arr - union_features)
-            masked_image = _composite(img_np, head_minus_features.clip(0, 1), masked_image_bg)
-            # masked_skin: face_oval minus features (the refined skin plate only)
+            # masked_image: same alpha as head_mask (head with feature holes)
+            masked_image = _composite(img_np, head_mask_arr.clip(0, 1), masked_image_bg)
+            # masked_skin: face_oval minus features (the refined skin plate only, tighter boundary)
             masked_skin = _composite(img_np, skin_arr.clip(0, 1), masked_image_bg)
         else:
             channels = 4 if masked_image_bg == "transparent" else 3

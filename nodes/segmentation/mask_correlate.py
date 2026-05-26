@@ -212,6 +212,23 @@ def _parse_priorities(priority_str: str, n: int) -> list[float]:
     return result
 
 
+def _parse_slot_filter(filter_str: str, label_list: list[str]) -> set[int]:
+    """Parse comma-separated label names or 1-based slot indices into a set of 0-based indices."""
+    result: set[int] = set()
+    for tok in (filter_str or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            idx = int(tok) - 1
+            if 0 <= idx < _N:
+                result.add(idx)
+        except ValueError:
+            if tok in label_list:
+                result.add(label_list.index(tok))
+    return result
+
+
 def _make_bg(bg_mode: str, H: int, W: int) -> np.ndarray:
     if bg_mode == "white":
         return np.ones((H, W, 3), dtype=np.float32)
@@ -308,6 +325,15 @@ class BD_MaskCorrelate(io.ComfyNode):
                             "If silhouette_mask is not wired: image × (1 − union_of_matched).\n\n"
                             "Useful for: baking a head mask that has feature holes, or showing the "
                             "non-feature areas of the subject.",
+                ),
+                io.String.Input(
+                    "combined_mask_exclude", default="", optional=True,
+                    tooltip="Comma-separated labels or 1-based slot indices to EXCLUDE from the "
+                            "combined_mask output (and from the union used in masked_image).\n\n"
+                            "Example: 'skin' or '1' — skin slot is excluded so combined_mask = "
+                            "union of eyes + eyebrows + lips only, not the skin region.\n\n"
+                            "Useful when one slot is a large 'base' mask (skin, clothing) and you want "
+                            "combined_mask to represent just the smaller feature masks.",
                 ),
                 io.String.Input(
                     "labels", multiline=True,
@@ -463,6 +489,7 @@ class BD_MaskCorrelate(io.ComfyNode):
         silhouette_mask: torch.Tensor | None = None,
         masked_image_bg: str = "transparent",
         invert_masked_image: bool = False,
+        combined_mask_exclude: str = "",
         labels: str = "",
         priorities: str = "",
         min_iou: float = 0.05,
@@ -656,16 +683,18 @@ class BD_MaskCorrelate(io.ComfyNode):
         ]
         debug_overlay = _build_overlay(base_rgb, overlay_masks, overlay_matched, overlay_alpha, H, W)
 
-        # combined_mask and masked_image: union of all wired+matched slot masks
+        # Build combined_mask: union of wired slots, minus any explicitly excluded
+        exclude_indices = _parse_slot_filter(combined_mask_exclude, label_list)
         union_mask = np.zeros((H, W), dtype=np.float32)
         for i in wired_indices:
-            union_mask = np.maximum(union_mask, out_masks[i])
+            if i not in exclude_indices:
+                union_mask = np.maximum(union_mask, out_masks[i])
         union_mask = union_mask.clip(0, 1)
         combined_mask = _to_mask_tensor(union_mask)
 
         if img_np is not None:
             if invert_masked_image:
-                # Invert: show everything EXCEPT matched regions, clamped to silhouette
+                # Invert: show everything EXCEPT the union, clamped to silhouette
                 base = sil_arr if sil_arr is not None else np.ones((H, W), dtype=np.float32)
                 alpha = np.maximum(0.0, base - union_mask)
             else:
