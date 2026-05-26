@@ -326,6 +326,12 @@ class BD_MaskCorrelate(io.ComfyNode):
                             "Useful for: baking a head mask that has feature holes, or showing the "
                             "non-feature areas of the subject.",
                 ),
+                io.Boolean.Input(
+                    "combined_mask_invert", default=False, optional=True,
+                    tooltip="When True: combined_mask = silhouette_mask − union (if wired) or 1 − union. "
+                            "Gives you the head-minus-features shape as a mask — same logic as "
+                            "invert_masked_image but as a MASK output for downstream use.",
+                ),
                 io.String.Input(
                     "combined_mask_exclude", default="", optional=True,
                     tooltip="Comma-separated labels or 1-based slot indices to EXCLUDE from the "
@@ -489,6 +495,7 @@ class BD_MaskCorrelate(io.ComfyNode):
         silhouette_mask: torch.Tensor | None = None,
         masked_image_bg: str = "transparent",
         invert_masked_image: bool = False,
+        combined_mask_invert: bool = False,
         combined_mask_exclude: str = "",
         labels: str = "",
         priorities: str = "",
@@ -690,7 +697,11 @@ class BD_MaskCorrelate(io.ComfyNode):
             if i not in exclude_indices:
                 union_mask = np.maximum(union_mask, out_masks[i])
         union_mask = union_mask.clip(0, 1)
-        combined_mask = _to_mask_tensor(union_mask)
+        if combined_mask_invert:
+            base = sil_arr if sil_arr is not None else np.ones((H, W), dtype=np.float32)
+            combined_mask = _to_mask_tensor(np.maximum(0.0, base - union_mask))
+        else:
+            combined_mask = _to_mask_tensor(union_mask)
 
         if img_np is not None:
             if invert_masked_image:
