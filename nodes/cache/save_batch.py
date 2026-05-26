@@ -27,64 +27,17 @@ alpha_mask (MASK, optional) + invert_alpha:
 
 import os
 import torch
-import numpy as np
 
 from comfy_api.latest import io
 from .save_context import resolve_context_path, get_context, auto_pick_context
 from .file_ops import BD_SaveFile  # for _detect_type_and_save
+from .alpha_save import (
+    ALPHA_SAVE_INPUTS,
+    get_frame_mask,
+    apply_alpha_to_frame,
+    save_alpha_alongside,
+)
 
-
-def _get_frame_mask(alpha_mask: torch.Tensor | None, frame_idx: int,
-                    H: int, W: int) -> torch.Tensor | None:
-    """Return a (H, W) float32 mask tensor for the given frame, or None."""
-    if alpha_mask is None:
-        return None
-    m = alpha_mask.float()
-    # Normalise to (B, H, W) first
-    if m.ndim == 2:
-        frame_m = m
-    elif m.ndim == 3:
-        frame_m = m[frame_idx] if frame_idx < m.shape[0] else m[0]
-    elif m.ndim == 4:
-        m = m.squeeze(-1) if m.shape[-1] == 1 else m[..., 0]
-        frame_m = m[frame_idx] if frame_idx < m.shape[0] else m[0]
-    else:
-        return None
-    # Resize if needed
-    if frame_m.shape[0] != H or frame_m.shape[1] != W:
-        frame_m = torch.nn.functional.interpolate(
-            frame_m.unsqueeze(0).unsqueeze(0).float(),
-            size=(H, W), mode="bilinear", align_corners=False,
-        ).squeeze(0).squeeze(0)
-    return frame_m.clamp(0.0, 1.0)
-
-
-def _apply_alpha_to_frame(single: torch.Tensor,
-                          frame_mask: torch.Tensor | None,
-                          invert_alpha: bool) -> torch.Tensor:
-    """Bake frame_mask into the alpha channel of single (1,H,W,C) and return (1,H,W,4)."""
-    if frame_mask is None:
-        return single
-    if invert_alpha:
-        frame_mask = 1.0 - frame_mask
-    alpha_ch = frame_mask.unsqueeze(-1)          # (H, W, 1)
-    if single.shape[-1] == 4:
-        result = single.clone()
-        result[0, ..., 3:4] = alpha_ch
-        return result
-    # RGB → RGBA
-    return torch.cat([single, alpha_ch.unsqueeze(0)], dim=-1)  # (1,H,W,4)
-
-
-def _save_alpha_separately(alpha_tensor: torch.Tensor, filepath: str) -> str:
-    """Save a (H, W) alpha tensor as a greyscale PNG next to filepath.
-       Returns the path used, or raises on error.
-    """
-    from PIL import Image
-    alpha_np = (alpha_tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-    pil = Image.fromarray(alpha_np, mode="L")
-    pil.save(filepath, "PNG")
-    return filepath
 
 
 class BD_SaveBatch(io.ComfyNode):
@@ -140,24 +93,7 @@ class BD_SaveBatch(io.ComfyNode):
                 io.String.Input("custom_vars", multiline=True, default="", optional=True,
                                 tooltip="Extra context variables layered over the saved batch. "
                                         "One per line as key=value. Example:\n  subfolder=SR\n  pass=4k"),
-                io.Boolean.Input("save_alpha_separately", default=False, optional=True,
-                                 tooltip="When ON and the image has an alpha channel (RGBA), also saves the alpha "
-                                         "as a standalone greyscale PNG alongside each main file, named with the "
-                                         "same suffix + '_alpha'. Useful for importing the alpha mask separately "
-                                         "in Unreal/Unity/Blender or for manual inspection.\n\n"
-                                         "If alpha_mask is wired, the mask is what gets saved (after invert). "
-                                         "If no mask is wired, the image's own alpha channel is extracted."),
-                io.Mask.Input("alpha_mask", optional=True,
-                              tooltip="Optional mask to bake into the saved file as its alpha (transparency) channel.\n\n"
-                                      "White (1.0) = opaque, Black (0.0) = transparent. Use invert_alpha to flip.\n\n"
-                                      "The mask replaces (or adds) the alpha channel in the PNG written to disk — "
-                                      "the image tensor flowing through the node is NOT modified.\n\n"
-                                      "Accepts batched masks (B, H, W) — each frame uses its own slice. "
-                                      "Single (H, W) or (1, H, W) masks apply to all frames."),
-                io.Boolean.Input("invert_alpha", default=False, optional=True,
-                                 tooltip="Invert the alpha_mask before baking it into the saved file. "
-                                         "Swaps black↔white: transparent areas become opaque and vice versa. "
-                                         "Has no effect when alpha_mask is not wired."),
+                *ALPHA_SAVE_INPUTS,
             ],
             outputs=[
                 io.Int.Output(display_name="saved_count",
@@ -279,38 +215,21 @@ class BD_SaveBatch(io.ComfyNode):
                 # Slice this frame as its own (1, H, W, C) tensor
                 single = images[i:i+1]
 
-                # Resolve per-frame alpha mask (may be None if alpha_mask not wired)
-                frame_mask = _get_frame_mask(alpha_mask, i, H, W)
-
-                # Bake alpha_mask into the saved tensor (does not modify the upstream batch)
-                single_to_save = _apply_alpha_to_frame(single, frame_mask, invert_alpha)
+                frame_mask = get_frame_mask(alpha_mask, i, H, W)
+                single_to_save = apply_alpha_to_frame(single, frame_mask, invert_alpha)
 
                 final_path, data_type = BD_SaveFile._detect_type_and_save(single_to_save, filepath)
                 saved_paths.append(final_path)
                 rel_final = os.path.relpath(final_path).replace("\\", "/")
                 alpha_note = ""
 
-                # Save alpha channel separately if requested
                 if save_alpha_separately:
-                    if single_to_save.shape[-1] == 4:
-                        # Determine which alpha to save
-                        if frame_mask is not None:
-                            alpha_src = frame_mask if not invert_alpha else (1.0 - frame_mask)
-                        else:
-                            alpha_src = single_to_save[0, ..., 3]  # (H, W)
-                        alpha_suffix = suffix + "_alpha"
-                        try:
-                            alpha_filepath, _ = resolve_context_path(
-                                effective_ctx_id, alpha_suffix, "png",
-                                node_custom_vars=custom_vars,
-                            )
-                            _save_alpha_separately(alpha_src, alpha_filepath)
-                            saved_paths.append(alpha_filepath)
-                            alpha_note = f" + alpha→{os.path.basename(alpha_filepath)}"
-                        except Exception as ae:
-                            alpha_note = f" [alpha save FAILED: {ae}]"
-                    else:
-                        alpha_note = " [save_alpha_separately: no alpha channel in image]"
+                    alpha_path, alpha_note = save_alpha_alongside(
+                        single_to_save, frame_mask, invert_alpha,
+                        final_path, effective_ctx_id, suffix, custom_vars,
+                    )
+                    if alpha_path:
+                        saved_paths.append(alpha_path)
 
                 status_lines.append(
                     f"  frame={i} suffix='{suffix}' {data_type} → {rel_final}{alpha_note}"
