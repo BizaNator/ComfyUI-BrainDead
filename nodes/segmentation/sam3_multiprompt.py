@@ -401,12 +401,35 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                             "real per-class mask. Symptom: only one full-image leftover part survives. "
                             "Keep this OFF for Parts pipeline workflows.",
                 ),
+                io.Float.Input(
+                    "mask_threshold", default=0.0, min=0.0, max=1.0, step=0.05, optional=True,
+                    tooltip="Binarize the combined mask at this value. 0.0 = off (continuous, current "
+                            "behaviour). Any value > 0 snaps every pixel to 0 or 1 at that cutoff — "
+                            "removes the grey semi-transparency that causes color bleed when the mask "
+                            "is used in color transfer or GLSL. Try 0.5 as a starting point.",
+                ),
+                io.Boolean.Input(
+                    "silhouette_composite_enable", default=False, optional=True,
+                    tooltip="Enable silhouette_composite output. When True: computes "
+                            "silhouette_mask − combined_mask (clamped 0-1) so the detected "
+                            "regions are punched out of the outline. Example: head silhouette "
+                            "minus eyes/mouth/brows = clean skin-only mask for color transfer. "
+                            "Requires silhouette_mask to be wired. Off = output zeros.",
+                ),
             ],
             outputs=[
                 io.Mask.Output(display_name="combined_mask"),
                 io.Image.Output(display_name="masked_image"),
                 io.Mask.Output(display_name="per_prompt_masks"),
                 io.String.Output(display_name="status"),
+                io.Mask.Output(display_name="silhouette_composite",
+                               tooltip="silhouette_mask − combined_mask, clamped to [0,1]. "
+                                       "When silhouette_composite_enable=True: gives you the "
+                                       "outline region with the detected parts punched out — "
+                                       "e.g. head silhouette minus eyes/mouth/brows = skin-only "
+                                       "mask, ready for color transfer. "
+                                       "When silhouette_composite_enable=False or no silhouette "
+                                       "provided: outputs zeros."),
             ],
         )
 
@@ -422,7 +445,8 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                 invert_negatives_in_per_prompt=True,
                 confidence_threshold=0.5, device="Auto",
                 mask_blur=0, mask_offset=0, unload_model=False,
-                invert_combined=False) -> io.NodeOutput:
+                invert_combined=False, mask_threshold=0.0,
+                silhouette_composite_enable=False) -> io.NodeOutput:
         positive_list = [p.strip() for p in prompts.strip().split("\n") if p.strip()]
         negative_list = [p.strip() for p in (negative_prompts or "").strip().split("\n") if p.strip()]
         if not positive_list:
@@ -607,6 +631,9 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
         if invert_combined:
             combined = 1.0 - combined
 
+        if mask_threshold > 0.0:
+            combined = (combined >= mask_threshold).to(combined.dtype)
+
         all_preview = per_prompt + negative_masks_for_preview
         per_prompt_batch = torch.cat(all_preview, dim=0) if len(all_preview) > 1 else all_preview[0]
 
@@ -641,15 +668,32 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
             masked_image = img * alpha + bg * (1.0 - alpha)
 
         cov_combined = 100.0 * combined.float().mean().item()
+        thresh_str = f" threshold={mask_threshold:.2f}" if mask_threshold > 0.0 else ""
         status = (
             f"SAM3 calls: {len(positive_list)} positive + {len(negative_list)} negative; "
             f"combine={combine_mode} color_filter={color_filter} "
-            f"(invert={invert_combined}) → final coverage={cov_combined:.2f}%\n"
+            f"(invert={invert_combined}{thresh_str}) → final coverage={cov_combined:.2f}%\n"
             + "\n".join(coverage_lines)
         )
         print(f"[BD SAM3 Multi-Prompt] {status}", flush=True)
 
-        return io.NodeOutput(combined, masked_image, per_prompt_batch, status)
+        # silhouette_composite: silhouette − combined, clamped 0-1.
+        # Punches the detected regions out of the outline mask.
+        # Example: head silhouette minus eyes/mouth/brows = skin-only mask.
+        h2, w2 = combined.shape[-2], combined.shape[-1]
+        if silhouette_composite_enable and silhouette_mask is not None:
+            sil = silhouette_mask.float()
+            if sil.ndim == 2:
+                sil = sil.unsqueeze(0)
+            if sil.shape[-2:] != (h2, w2):
+                sil = torch.nn.functional.interpolate(
+                    sil.unsqueeze(0), size=(h2, w2), mode="nearest"
+                ).squeeze(0)
+            sil_composite = torch.clamp(sil - combined.float(), 0.0, 1.0)
+        else:
+            sil_composite = torch.zeros((1, h2, w2), dtype=torch.float32)
+
+        return io.NodeOutput(combined, masked_image, per_prompt_batch, status, sil_composite)
 
 
 SAM3_MULTIPROMPT_V3_NODES = [BD_SAM3MultiPrompt]

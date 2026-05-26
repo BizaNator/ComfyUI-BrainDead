@@ -1,0 +1,179 @@
+"""
+Shared alpha-channel helpers for BD save nodes.
+
+Three save nodes (BD_SaveFile, BD_BulkSave, BD_SaveBatch) all support the same
+alpha options:
+  save_alpha_separately  — also write alpha as a standalone greyscale PNG
+  alpha_mask             — bake a B&W mask as the saved file's transparency
+  invert_alpha           — flip the mask polarity before baking
+
+Import the helpers + the three standard io.Input definitions from this module
+so all save nodes stay in sync without duplicating logic.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import torch
+from comfy_api.latest import io
+
+# ─── shared io.Input objects ─────────────────────────────────────────────────
+# Import into a node's define_schema inputs list with:
+#   inputs=[..., *ALPHA_SAVE_INPUTS]
+
+ALPHA_SAVE_INPUTS: list = [
+    io.Boolean.Input(
+        "save_alpha_separately", default=False, optional=True,
+        tooltip=(
+            "When ON and the saved image has an alpha channel (RGBA), also writes the alpha "
+            "as a standalone greyscale PNG alongside the main file, named with the same "
+            "suffix + '_alpha'.\n\n"
+            "If alpha_mask is wired, the mask value (after invert_alpha) is what gets saved. "
+            "If no mask is wired, the image's own A channel is extracted.\n\n"
+            "Has no effect on RGB images (no alpha to extract)."
+        ),
+    ),
+    io.Mask.Input(
+        "alpha_mask", optional=True,
+        tooltip=(
+            "Bake this mask into the saved file's alpha channel (transparency) before writing.\n\n"
+            "White (1.0) = opaque, Black (0.0) = transparent. Use invert_alpha to flip.\n\n"
+            "The upstream image tensor is NOT modified — the alpha is applied only in the "
+            "bytes written to disk. Accepts batched masks (B, H, W) — each frame gets its "
+            "own slice. A single (H, W) or (1, H, W) mask applies to all frames."
+        ),
+    ),
+    io.Boolean.Input(
+        "invert_alpha", default=False, optional=True,
+        tooltip=(
+            "Invert the alpha_mask before baking: transparent areas become opaque and "
+            "vice versa. Has no effect when alpha_mask is not wired."
+        ),
+    ),
+]
+
+
+# ─── helpers ─────────────────────────────────────────────────────────────────
+
+def get_frame_mask(
+    alpha_mask: torch.Tensor | None,
+    frame_idx: int,
+    H: int,
+    W: int,
+) -> torch.Tensor | None:
+    """Return a (H, W) float32 mask tensor for the requested frame, or None."""
+    if alpha_mask is None:
+        return None
+    m = alpha_mask.float()
+    # Normalise to (B, H, W)
+    if m.ndim == 2:
+        frame_m = m
+    elif m.ndim == 3:
+        frame_m = m[frame_idx] if frame_idx < m.shape[0] else m[0]
+    elif m.ndim == 4:
+        m = m.squeeze(-1) if m.shape[-1] == 1 else m[..., 0]
+        frame_m = m[frame_idx] if frame_idx < m.shape[0] else m[0]
+    else:
+        return None
+    # Resize if needed
+    if frame_m.shape[0] != H or frame_m.shape[1] != W:
+        frame_m = torch.nn.functional.interpolate(
+            frame_m.unsqueeze(0).unsqueeze(0).float(),
+            size=(H, W), mode="bilinear", align_corners=False,
+        ).squeeze(0).squeeze(0)
+    return frame_m.clamp(0.0, 1.0)
+
+
+def apply_alpha_to_frame(
+    single: torch.Tensor,
+    frame_mask: torch.Tensor | None,
+    invert_alpha: bool,
+) -> torch.Tensor:
+    """Bake frame_mask into the alpha channel of a (1, H, W, C) tensor.
+
+    Returns (1, H, W, 4) regardless of whether the input was RGB or RGBA.
+    If frame_mask is None the input is returned unchanged.
+    """
+    if frame_mask is None:
+        return single
+    if invert_alpha:
+        frame_mask = 1.0 - frame_mask
+    alpha_ch = frame_mask.unsqueeze(-1)          # (H, W, 1)
+    if single.shape[-1] == 4:
+        result = single.clone()
+        result[0, ..., 3:4] = alpha_ch
+        return result
+    # RGB → RGBA
+    return torch.cat([single, alpha_ch.unsqueeze(0)], dim=-1)  # (1, H, W, 4)
+
+
+def save_alpha_file(alpha_tensor: torch.Tensor, filepath: str) -> str:
+    """Save a (H, W) float32 alpha tensor as a greyscale PNG at filepath.
+
+    Returns the path written, raises on error.
+    """
+    from PIL import Image
+    alpha_np = (alpha_tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+    pil = Image.fromarray(alpha_np, mode="L")
+    pil.save(filepath, "PNG")
+    return filepath
+
+
+def alpha_file_path(main_filepath: str) -> str:
+    """Derive the _alpha.png path from a main file path.
+
+    Examples:
+      /out/char_sr_light.png  →  /out/char_sr_light_alpha.png
+      /out/char_sr_light      →  /out/char_sr_light_alpha.png
+    """
+    if "." in main_filepath:
+        base, _ext = main_filepath.rsplit(".", 1)
+    else:
+        base = main_filepath
+    return base + "_alpha.png"
+
+
+def save_alpha_alongside(
+    single_to_save: torch.Tensor,
+    frame_mask: torch.Tensor | None,
+    invert_alpha: bool,
+    main_filepath: str,
+    context_id: str,
+    suffix: str,
+    custom_vars: str,
+) -> tuple[str | None, str]:
+    """Save the alpha channel as a greyscale PNG next to the main file.
+
+    Tries to resolve via context (suffix + '_alpha') first; falls back to
+    deriving the path from main_filepath.
+
+    Returns (alpha_filepath_or_None, status_note).
+    """
+    # Determine the alpha pixel data
+    if frame_mask is not None:
+        alpha_src = frame_mask if not invert_alpha else (1.0 - frame_mask)
+    elif single_to_save.shape[-1] == 4:
+        alpha_src = single_to_save[0, ..., 3]   # (H, W)
+    else:
+        return None, " [save_alpha_separately: no alpha channel]"
+
+    # Try context-aware path first
+    alpha_filepath = None
+    try:
+        from .save_context import resolve_context_path, get_context
+        if context_id and get_context(context_id) is not None:
+            alpha_filepath, _ = resolve_context_path(
+                context_id, suffix + "_alpha", "png",
+                node_custom_vars=custom_vars,
+            )
+    except Exception:
+        pass
+
+    if not alpha_filepath:
+        alpha_filepath = alpha_file_path(main_filepath)
+
+    try:
+        save_alpha_file(alpha_src, alpha_filepath)
+        return alpha_filepath, f" + alpha→{alpha_filepath}"
+    except Exception as ae:
+        return None, f" [alpha save FAILED: {ae}]"

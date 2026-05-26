@@ -258,6 +258,15 @@ class BD_PartsExport(io.ComfyNode):
                                          "Black = was occluded.\n\n"
                                          "If the bundle was never edited (no PartsBatchEdit step), "
                                          "falls back to the part's current alpha channel."),
+                io.Boolean.Input("save_masked_pngs", default=False, optional=True,
+                                 tooltip="Also write {tag}_masked.png — RGBA PNG where RGB = the "
+                                         "Qwen-rebuilt content and alpha = the ORIGINAL SAM3 "
+                                         "visibility mask. Ready to composite back onto the body "
+                                         "without opening Photoshop — the crop is already baked in. "
+                                         "Example: hair rebuilt by Qwen, cut to original strand "
+                                         "silhouette, ready to paste onto body.\n\n"
+                                         "Falls back to the part's current alpha if no original "
+                                         "mask exists (un-edited bundle)."),
                 io.Boolean.Input("save_composite", default=True, optional=True,
                                  tooltip="Also write {filename}_composite.png (RGBA) and "
                                          "{filename}_composite_alpha.png (mask)."),
@@ -303,6 +312,7 @@ class BD_PartsExport(io.ComfyNode):
     def execute(cls, parts, filename="parts", name_prefix="",
                 auto_increment=True, context_id="",
                 save_pngs=True, save_depth=False, save_masks=False,
+                save_masked_pngs=False,
                 save_composite=True, composite_size=0,
                 save_psd=False, base_image=None, background_image=None) -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
@@ -318,12 +328,23 @@ class BD_PartsExport(io.ComfyNode):
         ctx = get_context(effective_ctx_id) if effective_ctx_id else None
         use_context = ctx is not None
 
+        # Initialize folder + base so the out_dir calc has SOMETHING to fall back
+        # to when use_context=True (in which case _resolve_legacy_folder is skipped).
+        folder = ""
+        base = ""
         if not use_context:
             folder, base = _resolve_legacy_folder(filename, name_prefix, auto_increment)
 
         tag2pinfo = parts["tag2pinfo"]
         summary_lines: list[str] = []
         written = 0
+
+        # Path variables — initialized to None so the out_dir calculation at the
+        # bottom doesn't UnboundLocalError when their parent block doesn't run
+        # (e.g. tag2pinfo={} skips the composite/psd blocks entirely).
+        png_path: str | None = None
+        comp_path: str | None = None
+        psd_path: str | None = None
 
         # Per-tag PNGs (and optional depth)
         if save_pngs:
@@ -388,6 +409,34 @@ class BD_PartsExport(io.ComfyNode):
                             mask_path = os.path.join(folder, f"{tag_safe}_mask.png")
                         Image.fromarray(mask_arr, mode="L").save(mask_path, optimize=True)
 
+                if save_masked_pngs:
+                    # Bake original mask as alpha into the rebuilt RGB — ready to
+                    # composite directly without Photoshop.
+                    orig = info.get("original_alpha")
+                    rgb = arr[..., :3]
+                    if orig is not None:
+                        a = np.asarray(orig).astype(np.uint8)
+                        if a.shape != rgb.shape[:2]:
+                            a = np.asarray(
+                                Image.fromarray(a, mode="L").resize(
+                                    (rgb.shape[1], rgb.shape[0]), Image.BILINEAR,
+                                )
+                            )
+                    elif arr.shape[-1] == 4:
+                        a = arr[..., 3].astype(np.uint8)
+                    else:
+                        a = np.full(rgb.shape[:2], 255, dtype=np.uint8)
+                    masked_rgba = np.concatenate([rgb, a[..., None]], axis=-1).astype(np.uint8)
+                    if use_context:
+                        masked_path, _ = resolve_context_path(
+                            effective_ctx_id, f"_{tag_safe}_masked", "png",
+                            node_filename=filename, node_name_prefix=name_prefix,
+                        )
+                        os.makedirs(os.path.dirname(masked_path), exist_ok=True)
+                    else:
+                        masked_path = os.path.join(folder, f"{tag_safe}_masked.png")
+                    Image.fromarray(masked_rgba, mode="RGBA").save(masked_path, optimize=True)
+
         # Composite + alpha — TWO variants:
         #   composite_tensor         = parts using their CURRENT alpha (post-edit
         #                              auto_from_white_bg / fill_holes / etc.)
@@ -396,7 +445,7 @@ class BD_PartsExport(io.ComfyNode):
         #                              the original occlusion to the rebuilt content)
         composite_tensor = None
         composite_masked_tensor = None
-        if save_composite or save_psd:
+        if (save_composite or save_psd) and tag2pinfo:
             from .parts_compose import BD_PartsCompose
             comp_out = BD_PartsCompose.execute(parts, output_size=composite_size, trigger=True)
             composite_tensor, alpha_tensor = comp_out.args
@@ -495,9 +544,21 @@ class BD_PartsExport(io.ComfyNode):
             except Exception as e:
                 summary_lines.append(f"  PSD save FAILED: {e}")
 
-        out_dir = (os.path.dirname(psd_path) if save_psd
-                   else (folder if not use_context else os.path.dirname(comp_path) if save_composite
-                         else os.path.dirname(png_path) if save_pngs else "."))
+        # out_dir: prefer the path that actually got written. The path vars are
+        # None when their parent block didn't execute (e.g. empty parts dict),
+        # so we check both the toggle AND that the variable was assigned.
+        # `folder` is "" in context mode (set at top); fall back to a meaningful
+        # context-derived path or just "(no files written)" if literally nothing happened.
+        if save_psd and psd_path is not None:
+            out_dir = os.path.dirname(psd_path)
+        elif not use_context and folder:
+            out_dir = folder
+        elif save_composite and comp_path is not None:
+            out_dir = os.path.dirname(comp_path)
+        elif save_pngs and png_path is not None:
+            out_dir = os.path.dirname(png_path)
+        else:
+            out_dir = folder or "(no files written)"
 
         if composite_tensor is None:
             h, w = _frame_size(parts) or (64, 64)

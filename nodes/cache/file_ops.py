@@ -10,10 +10,17 @@ BD_LoadText - Load text from file path
 """
 
 import os
+import torch
 from glob import glob
 
 from comfy_api.latest import io
 
+from .alpha_save import (
+    ALPHA_SAVE_INPUTS,
+    get_frame_mask,
+    apply_alpha_to_frame,
+    save_alpha_alongside,
+)
 from ...utils.shared import (
     CACHE_DIR,
     OUTPUT_DIR,
@@ -132,6 +139,7 @@ class BD_SaveFile(io.ComfyNode):
                                         "names). Examples:\n  subfolder=textures\n  materials=metal\n  pass=normal\n"
                                         "These become %subfolder%, %materials%, %pass% in the template. Empty values "
                                         "resolve cleanly (// → /). Undefined vars stay as %var% literals so you spot typos."),
+                *ALPHA_SAVE_INPUTS,
             ],
             outputs=[
                 io.AnyType.Output(display_name="data"),
@@ -206,7 +214,10 @@ class BD_SaveFile(io.ComfyNode):
     @classmethod
     def execute(cls, data, filename: str, skip_if_exists: bool = True,
                 name_prefix: str = "", extension: str = "",
-                context_id: str = "", suffix: str = "", custom_vars: str = "") -> io.NodeOutput:
+                context_id: str = "", suffix: str = "", custom_vars: str = "",
+                save_alpha_separately: bool = False,
+                alpha_mask: torch.Tensor | None = None,
+                invert_alpha: bool = False) -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
 
         effective_ctx_id = context_id
@@ -214,6 +225,14 @@ class BD_SaveFile(io.ComfyNode):
             picked = auto_pick_context()
             if picked is not None:
                 effective_ctx_id = picked
+
+        # Alpha preprocessing — baked only into the saved file; original data flows downstream unchanged
+        data_to_save = data
+        frame_mask = None
+        if isinstance(data, torch.Tensor) and data.ndim == 4 and data.shape[-1] in [3, 4]:
+            H, W = data.shape[1], data.shape[2]
+            frame_mask = get_frame_mask(alpha_mask, 0, H, W)
+            data_to_save = apply_alpha_to_frame(data, frame_mask, invert_alpha)
 
         if effective_ctx_id and get_context(effective_ctx_id) is not None:
             try:
@@ -226,11 +245,17 @@ class BD_SaveFile(io.ComfyNode):
                 if '/' in filepath or '\\' in filepath:
                     os.makedirs(os.path.dirname(filepath), exist_ok=True)
                 try:
-                    final_path, data_type = cls._detect_type_and_save(data, filepath)
+                    final_path, data_type = cls._detect_type_and_save(data_to_save, filepath)
                     auto_str = " (auto-picked)" if not context_id else ""
                     if skip_if_exists and os.path.exists(final_path):
                         return io.NodeOutput(data, final_path, f"EXISTS via context='{effective_ctx_id}'{auto_str}: {os.path.basename(final_path)}")
-                    return io.NodeOutput(data, final_path, f"Saved {data_type} via context='{effective_ctx_id}'{auto_str} suffix='{suffix}': {os.path.basename(final_path)}")
+                    alpha_note = ""
+                    if save_alpha_separately:
+                        _, alpha_note = save_alpha_alongside(
+                            data_to_save, frame_mask, invert_alpha,
+                            final_path, effective_ctx_id, suffix, custom_vars,
+                        )
+                    return io.NodeOutput(data, final_path, f"Saved {data_type} via context='{effective_ctx_id}'{auto_str} suffix='{suffix}': {os.path.basename(final_path)}{alpha_note}")
                 except Exception as e:
                     return io.NodeOutput(data, "", f"Save (context) failed: {e}")
             except ValueError as ve:
@@ -259,12 +284,18 @@ class BD_SaveFile(io.ComfyNode):
             os.makedirs(subdir, exist_ok=True)
 
         try:
-            final_path, data_type = cls._detect_type_and_save(data, filepath)
+            final_path, data_type = cls._detect_type_and_save(data_to_save, filepath)
 
             if skip_if_exists and os.path.exists(final_path):
                 return io.NodeOutput(data, final_path, f"EXISTS: {os.path.basename(final_path)}")
 
-            status = f"Saved {data_type}: {os.path.basename(final_path)}"
+            alpha_note = ""
+            if save_alpha_separately:
+                _, alpha_note = save_alpha_alongside(
+                    data_to_save, frame_mask, invert_alpha,
+                    final_path, effective_ctx_id, suffix, custom_vars,
+                )
+            status = f"Saved {data_type}: {os.path.basename(final_path)}{alpha_note}"
             return io.NodeOutput(data, final_path, status)
         except Exception as e:
             return io.NodeOutput(data, "", f"Save failed: {e}")
@@ -302,6 +333,7 @@ class BD_BulkSave(io.ComfyNode):
                                     "One per line as key=value. Layered ON TOP of the context's custom_vars. "
                                     "Examples:\n  subfolder=PBR\n  materials=metal\n  pass=4k\n"
                                     "Become %subfolder%, %materials%, %pass% in the template. Empty values OK."),
+            *ALPHA_SAVE_INPUTS,
         ]
         for i in range(1, 17):
             inputs.append(io.AnyType.Input(f"input_{i}", optional=True,
@@ -335,7 +367,9 @@ class BD_BulkSave(io.ComfyNode):
     @classmethod
     def execute(cls, labels="", label_prefix="_", context_id="",
                 format="png", jpg_quality=95, skip_if_exists=False,
-                custom_vars="", **inputs) -> io.NodeOutput:
+                custom_vars="",
+                save_alpha_separately=False, alpha_mask=None, invert_alpha=False,
+                **inputs) -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
 
         wired = []
@@ -401,10 +435,24 @@ class BD_BulkSave(io.ComfyNode):
                     skipped += 1
                     continue
 
-                final_path, data_type = BD_SaveFile._detect_type_and_save(data, filepath)
+                # Alpha preprocessing for IMAGE tensors; original data not modified
+                data_to_save = data
+                slot_mask = None
+                if isinstance(data, torch.Tensor) and data.ndim == 4 and data.shape[-1] in [3, 4]:
+                    H, W = data.shape[1], data.shape[2]
+                    slot_mask = get_frame_mask(alpha_mask, i, H, W)
+                    data_to_save = apply_alpha_to_frame(data, slot_mask, invert_alpha)
+
+                final_path, data_type = BD_SaveFile._detect_type_and_save(data_to_save, filepath)
                 saved_paths.append(final_path)
                 rel_final = os.path.relpath(final_path, OUTPUT_DIR).replace("\\", "/")
-                status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} suffix='{suffix}' {data_type} → {rel_final}")
+                alpha_note = ""
+                if save_alpha_separately:
+                    _, alpha_note = save_alpha_alongside(
+                        data_to_save, slot_mask, invert_alpha,
+                        final_path, effective_ctx_id, suffix, custom_vars,
+                    )
+                status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} suffix='{suffix}' {data_type} → {rel_final}{alpha_note}")
             except Exception as e:
                 errors += 1
                 status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} ERROR: {e}")
