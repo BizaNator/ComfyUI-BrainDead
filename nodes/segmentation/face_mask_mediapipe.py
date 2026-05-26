@@ -432,7 +432,7 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
             running_mode=_mpv.RunningMode.IMAGE,
             num_faces=1,
             min_face_detection_confidence=detection_confidence,
-            min_face_presence_score=detection_confidence,
+            min_face_presence_confidence=detection_confidence,
             min_tracking_confidence=detection_confidence,
         )
 
