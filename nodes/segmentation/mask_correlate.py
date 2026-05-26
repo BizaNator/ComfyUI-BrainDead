@@ -135,6 +135,46 @@ def _build_overlay(
     return torch.from_numpy(canvas.clip(0, 1)).unsqueeze(0)
 
 
+def _parse_subtract_pairs(
+    subtract_str: str,
+    label_list: list[str],
+) -> list[tuple[int, list[int]]]:
+    """Parse subtract_slots text into (target_0idx, [source_0idxes]) pairs.
+
+    Each line: "target: src1, src2, ..."
+    Tokens accepted as label names OR 1-based slot numbers.
+    Returns pairs in the order they appear (top line processed first).
+    """
+    def _resolve(tok: str) -> int | None:
+        tok = tok.strip()
+        if not tok:
+            return None
+        # Try 1-based int
+        try:
+            idx = int(tok) - 1
+            return idx if 0 <= idx < _N else None
+        except ValueError:
+            pass
+        # Try label match
+        if tok in label_list:
+            return label_list.index(tok)
+        return None
+
+    pairs = []
+    for line in (subtract_str or "").splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        left, right = line.split(":", 1)
+        target = _resolve(left)
+        if target is None:
+            continue
+        sources = [s for s in (_resolve(t) for t in right.split(",")) if s is not None and s != target]
+        if sources:
+            pairs.append((target, sources))
+    return pairs
+
+
 def _parse_priorities(priority_str: str, n: int) -> list[float]:
     """Parse comma-separated priority string into a list of length n, default 1.0."""
     if not (priority_str or "").strip():
@@ -274,6 +314,20 @@ class BD_MaskCorrelate(io.ComfyNode):
                         "SAM3 returns an overly broad segment for a missed prompt."
                     ),
                 ),
+                io.String.Input(
+                    "subtract_slots", multiline=True, default="", optional=True,
+                    tooltip=(
+                        "Post-matching subtraction rules. Each line: target: source1, source2, ...\n\n"
+                        "Tokens can be label names (from the labels field) or 1-based slot numbers.\n"
+                        "After all slots are matched, the listed source refined masks are subtracted "
+                        "from the target refined mask — useful for cutting precise eye/brow/lip regions "
+                        "out of the skin mask.\n\n"
+                        "Example:\n"
+                        "  skin: eyes, brows, lips\n"
+                        "  1: 3, 4, 5\n\n"
+                        "Subtraction clamps to 0 (no negative values). Applied in line order."
+                    ),
+                ),
                 io.Float.Input(
                     "overlay_alpha", default=0.55, min=0.0, max=1.0, step=0.05,
                     optional=True,
@@ -311,6 +365,7 @@ class BD_MaskCorrelate(io.ComfyNode):
         target_expand: int = 0,
         exclusive: bool = False,
         max_target_fill: float = 0.95,
+        subtract_slots: str = "",
         overlay_alpha: float = 0.55,
         **kwargs,
     ) -> io.NodeOutput:
@@ -322,9 +377,10 @@ class BD_MaskCorrelate(io.ComfyNode):
 
         wired = [(i, t) for i, t in enumerate(targets) if t is not None]
 
-        # Parse labels and priorities
+        # Parse labels, priorities, and subtract pairs
         label_list = [l.strip() for l in (labels or "").strip().split("\n") if l.strip()]
         priority_vals = _parse_priorities(priorities, _N)
+        subtract_pairs = _parse_subtract_pairs(subtract_slots, label_list)
 
         # Normalise candidates to list of (H, W) float32 arrays
         cands_t = candidates
@@ -449,6 +505,20 @@ class BD_MaskCorrelate(io.ComfyNode):
                 f"from {len(cands_hw)} candidates (min_iou={min_iou}, mode={mode})"
             )
             match_info = header + "\n" + "\n".join(info_lines)
+
+        # Apply subtract_slots: for each rule, subtract source refined masks from target
+        subtract_notes = []
+        for target_idx, source_idxes in subtract_pairs:
+            t_label = label_list[target_idx] if target_idx < len(label_list) else f"slot_{target_idx+1}"
+            s_labels = [label_list[s] if s < len(label_list) else f"slot_{s+1}" for s in source_idxes]
+            subtracted = out_masks[target_idx].copy()
+            for src in source_idxes:
+                subtracted = np.maximum(0.0, subtracted - out_masks[src])
+            out_masks[target_idx] = subtracted
+            subtract_notes.append(f"  subtract: {t_label} − ({', '.join(s_labels)})")
+
+        if subtract_notes:
+            match_info += "\n" + "\n".join(subtract_notes)
 
         print(f"[BD_MaskCorrelate] {match_info}", flush=True)
 
