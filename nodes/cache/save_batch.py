@@ -94,6 +94,18 @@ class BD_SaveBatch(io.ComfyNode):
                                 tooltip="Extra context variables layered over the saved batch. "
                                         "One per line as key=value. Example:\n  subfolder=SR\n  pass=4k"),
                 *ALPHA_SAVE_INPUTS,
+                io.String.Input(
+                    "alpha_slots", default="", optional=True,
+                    tooltip=(
+                        "Comma-separated labels or indices of slots to apply alpha to. "
+                        "Same syntax as save_only — label names, 0-based indices, or mixed.\n\n"
+                        "Empty (default) = apply alpha to ALL saved frames.\n"
+                        "Example: 'skin,eyes' applies alpha only to those two slots; the rest "
+                        "are saved as plain RGB even if alpha_mask is wired.\n\n"
+                        "RGBA images (C=4) always save with their embedded alpha regardless of "
+                        "this setting — only the alpha_mask baking is filtered."
+                    ),
+                ),
             ],
             outputs=[
                 io.Int.Output(display_name="saved_count",
@@ -150,7 +162,8 @@ class BD_SaveBatch(io.ComfyNode):
                 custom_vars: str = "",
                 save_alpha_separately: bool = False,
                 alpha_mask: torch.Tensor | None = None,
-                invert_alpha: bool = False) -> io.NodeOutput:
+                invert_alpha: bool = False,
+                alpha_slots: str = "") -> io.NodeOutput:
 
         # Coerce input to (B, H, W, C)
         if images.ndim == 3:
@@ -171,6 +184,11 @@ class BD_SaveBatch(io.ComfyNode):
         # Resolve both filters independently
         indices_to_save = cls._resolve_indices(save_only, label_list, n_frames)
         indices_to_pass = cls._resolve_indices(pass_only, label_list, n_frames)
+        # alpha_slots: None means all; otherwise only the listed indices get alpha baked
+        alpha_indices: set[int] | None = (
+            None if not (alpha_slots or "").strip()
+            else set(cls._resolve_indices(alpha_slots, label_list, n_frames))
+        )
 
         # Resolve context
         effective_ctx_id = context_id
@@ -215,7 +233,9 @@ class BD_SaveBatch(io.ComfyNode):
                 # Slice this frame as its own (1, H, W, C) tensor
                 single = images[i:i+1]
 
-                frame_mask = get_frame_mask(alpha_mask, i, H, W)
+                # Apply alpha only to slots in alpha_slots (or all if not specified)
+                apply_alpha_this_slot = alpha_indices is None or i in alpha_indices
+                frame_mask = get_frame_mask(alpha_mask, i, H, W) if apply_alpha_this_slot else None
                 single_to_save = apply_alpha_to_frame(single, frame_mask, invert_alpha)
 
                 final_path, data_type = BD_SaveFile._detect_type_and_save(single_to_save, filepath)

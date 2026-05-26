@@ -25,29 +25,35 @@ ALPHA_SAVE_INPUTS: list = [
     io.Boolean.Input(
         "save_alpha_separately", default=False, optional=True,
         tooltip=(
-            "When ON and the saved image has an alpha channel (RGBA), also writes the alpha "
-            "as a standalone greyscale PNG alongside the main file, named with the same "
-            "suffix + '_alpha'.\n\n"
-            "If alpha_mask is wired, the mask value (after invert_alpha) is what gets saved. "
-            "If no mask is wired, the image's own A channel is extracted.\n\n"
-            "Has no effect on RGB images (no alpha to extract)."
+            "Also write the alpha channel as a standalone greyscale PNG alongside the main "
+            "file, named with the same suffix + '_alpha'.\n\n"
+            "Source of the alpha pixels:\n"
+            "  • alpha_mask wired → uses the mask (after invert_alpha)\n"
+            "  • no mask wired, image has 4 channels (RGBA) → extracts the embedded A channel\n"
+            "  • no mask wired, image is RGB (3ch) → no alpha to extract; this output is skipped\n\n"
+            "NOTE: the _alpha.png is a RAW greyscale representation — white pixel = opaque area, "
+            "black pixel = transparent area. It is NOT a composited preview; open the main RGBA PNG "
+            "in a viewer that supports transparency to see the actual cut-out."
         ),
     ),
     io.Mask.Input(
         "alpha_mask", optional=True,
         tooltip=(
-            "Bake this mask into the saved file's alpha channel (transparency) before writing.\n\n"
-            "White (1.0) = opaque, Black (0.0) = transparent. Use invert_alpha to flip.\n\n"
-            "The upstream image tensor is NOT modified — the alpha is applied only in the "
-            "bytes written to disk. Accepts batched masks (B, H, W) — each frame gets its "
-            "own slice. A single (H, W) or (1, H, W) mask applies to all frames."
+            "Bake this mask into the saved file's alpha channel before writing.\n\n"
+            "Convention: WHITE (1.0) = OPAQUE, BLACK (0.0) = TRANSPARENT.\n"
+            "  Face mask (white face, black background) → face is opaque, background is cut out.\n"
+            "  Background mask (white background, black face) → use invert_alpha=True.\n\n"
+            "If you already have an RGBA image (4-channel), you do NOT need to wire alpha_mask — "
+            "the embedded alpha is preserved automatically when saving.\n\n"
+            "The upstream image tensor is NOT modified — transparency is baked only in the saved file. "
+            "Accepts batched masks (B, H, W); single (H,W) or (1,H,W) applies to all frames."
         ),
     ),
     io.Boolean.Input(
         "invert_alpha", default=False, optional=True,
         tooltip=(
-            "Invert the alpha_mask before baking: transparent areas become opaque and "
-            "vice versa. Has no effect when alpha_mask is not wired."
+            "Flip the mask polarity before baking as alpha.\n"
+            "Use when your mask has white=background / black=subject and you want the subject opaque."
         ),
     ),
 ]
