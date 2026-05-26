@@ -97,13 +97,16 @@ class BD_SaveBatch(io.ComfyNode):
                 io.String.Input(
                     "alpha_slots", default="", optional=True,
                     tooltip=(
-                        "Comma-separated labels or indices of slots to apply alpha to. "
+                        "Comma-separated labels or indices of slots that receive alpha treatment. "
                         "Same syntax as save_only — label names, 0-based indices, or mixed.\n\n"
-                        "Empty (default) = apply alpha to ALL saved frames.\n"
-                        "Example: 'skin,eyes' applies alpha only to those two slots; the rest "
-                        "are saved as plain RGB even if alpha_mask is wired.\n\n"
-                        "RGBA images (C=4) always save with their embedded alpha regardless of "
-                        "this setting — only the alpha_mask baking is filtered."
+                        "Controls TWO things for each slot:\n"
+                        "  1. alpha_mask baking — only matching slots have the mask baked in.\n"
+                        "  2. save_alpha_separately — only matching slots write a sidecar _alpha.png.\n\n"
+                        "Empty (default) = all saved frames get alpha treatment.\n"
+                        "Example: 'light,image1' — only those two slots save with alpha; "
+                        "the rest save as plain RGB even if alpha_mask is wired.\n\n"
+                        "RGBA images (C=4) always preserve their embedded alpha in the main file "
+                        "regardless — this setting only controls the baking and sidecar steps."
                     ),
                 ),
             ],
@@ -199,11 +202,11 @@ class BD_SaveBatch(io.ComfyNode):
 
         ctx_resolved = bool(effective_ctx_id and get_context(effective_ctx_id) is not None)
         if not ctx_resolved:
-            return io.NodeOutput(
-                0, "",
-                f"BD_SaveBatch: no usable BD_SaveContext (context_id='{context_id}', auto-pick=None). "
-                f"Add a BD_SaveContext upstream first."
-            )
+            empty_img = torch.zeros((1, images.shape[1], images.shape[2], images.shape[3]),
+                                    dtype=images.dtype, device=images.device)
+            err = (f"BD_SaveBatch: no usable BD_SaveContext (context_id='{context_id}', "
+                   f"auto-pick=None). Add a BD_SaveContext upstream first.")
+            return io.NodeOutput(0, "", empty_img, "", empty_img, err)
 
         ext = format if format != "jpg" else "jpg"
 
@@ -243,7 +246,7 @@ class BD_SaveBatch(io.ComfyNode):
                 rel_final = os.path.relpath(final_path).replace("\\", "/")
                 alpha_note = ""
 
-                if save_alpha_separately:
+                if save_alpha_separately and apply_alpha_this_slot:
                     alpha_path, alpha_note = save_alpha_alongside(
                         single_to_save, frame_mask, invert_alpha,
                         final_path, effective_ctx_id, suffix, custom_vars,

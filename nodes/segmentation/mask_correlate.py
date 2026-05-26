@@ -261,6 +261,20 @@ class BD_MaskCorrelate(io.ComfyNode):
                             "(safe for non-overlapping features like left/right brow).",
                 ),
                 io.Float.Input(
+                    "max_target_fill", default=0.95, min=0.0, max=1.0, step=0.01,
+                    optional=True,
+                    tooltip=(
+                        "If a target mask covers MORE than this fraction of the image, treat it as "
+                        "invalid and apply the fallback instead of attempting to match.\n\n"
+                        "Why: BD_SAM3MultiPrompt with invert_negative=True returns a FULL WHITE mask "
+                        "when a prompted item is not found. A full-white target has high IoU with "
+                        "every candidate, causing false matches across the whole image.\n\n"
+                        "0.95 (default) rejects masks covering >95% of pixels. Set to 1.0 to disable. "
+                        "Lower values (e.g. 0.7) also reject partial-failure masks — useful when "
+                        "SAM3 returns an overly broad segment for a missed prompt."
+                    ),
+                ),
+                io.Float.Input(
                     "overlay_alpha", default=0.55, min=0.0, max=1.0, step=0.05,
                     optional=True,
                     tooltip="Opacity of the colour overlay on the debug image. "
@@ -296,6 +310,7 @@ class BD_MaskCorrelate(io.ComfyNode):
         fallback: str = "original",
         target_expand: int = 0,
         exclusive: bool = False,
+        max_target_fill: float = 0.95,
         overlay_alpha: float = 0.55,
         **kwargs,
     ) -> io.NodeOutput:
@@ -375,6 +390,23 @@ class BD_MaskCorrelate(io.ComfyNode):
                 label = label_list[slot_i] if slot_i < len(label_list) else f"target_{slot_i+1}"
                 priority = priority_vals[slot_i]
                 t_arr = _resize_to(_to_hw(t_tensor), H, W)
+
+                # Reject near-full-coverage targets (SAM3 "not found" = full white)
+                if max_target_fill < 1.0:
+                    fill = float((t_arr > 0.5).mean())
+                    if fill > max_target_fill:
+                        if fallback == "blank":
+                            out_masks[slot_i] = blank.copy()
+                            info_lines.append(
+                                f"  {label}: SKIPPED (fill={fill:.2%} > max_target_fill={max_target_fill:.2%}) → blank"
+                            )
+                        else:
+                            out_masks[slot_i] = t_arr
+                            info_lines.append(
+                                f"  {label}: SKIPPED (fill={fill:.2%} > max_target_fill={max_target_fill:.2%}) → original"
+                            )
+                        continue
+
                 t_query = _dilate(t_arr, target_expand)
 
                 # Find best candidate
