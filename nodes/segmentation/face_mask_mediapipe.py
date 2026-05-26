@@ -240,6 +240,7 @@ def _process_frame(
     subtract_nose: bool,
     ear_expand: int,
     hair_expand: int,
+    head_mask_np: np.ndarray | None = None,
 ) -> tuple[dict[str, np.ndarray], str]:
     H, W = frame_rgb.shape[:2]
     empty = {k: _blank(H, W) for k in _KEYS}
@@ -278,11 +279,12 @@ def _process_frame(
     right_ear = _ear_mask(_pts(_RIGHT_EAR_OVAL, lm, H, W), face_cx, H, W, 'right', ear_expand)
     ears = _union(left_ear, right_ear)
 
-    # Skin
+    # Skin — use external head_mask as base if provided, else MediaPipe face_oval
+    skin_base = head_mask_np if head_mask_np is not None else face_oval
     skin_subtracts = [eyes, brows, lips]
     if subtract_nose:
         skin_subtracts.append(nose)
-    skin = _subtract(face_oval, *skin_subtracts)
+    skin = _subtract(skin_base, *skin_subtracts)
 
     # Hair + forehead
     hair     = _hair_mask(oval_pts, H, W, expand=hair_expand)
@@ -320,6 +322,14 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                     "image",
                     tooltip="Input image or batch. Each frame processed independently.",
                 ),
+                io.Mask.Input(
+                    "head_mask", optional=True,
+                    tooltip="Optional external head silhouette (e.g. from SAM3). When wired, this mask "
+                            "is used as the base for computing 'skin' instead of MediaPipe's face_oval. "
+                            "MediaPipe still runs for landmark detection (eyes/brows/lips/etc.) — it "
+                            "just doesn't determine the head boundary. Use this when MediaPipe's oval "
+                            "misses bald heads, full chin edges, or unusual head shapes.",
+                ),
                 io.Float.Input(
                     "detection_confidence", default=0.5, min=0.1, max=1.0, step=0.05,
                     optional=True,
@@ -352,8 +362,8 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                 io.Mask.Output(display_name="face_oval",
                                tooltip="Complete face silhouette (jaw to hairline). No neck, no background."),
                 io.Mask.Output(display_name="skin",
-                               tooltip="face_oval minus eyes, brows, lips (and nose if subtract_nose). "
-                                       "Primary skin-painting region."),
+                               tooltip="head_mask (if wired) or face_oval, minus eyes + brows + lips "
+                                       "(and nose if subtract_nose). Primary skin-painting region."),
                 io.Mask.Output(display_name="left_eye",
                                tooltip="Left eye (subject's left = image right for front-facing)."),
                 io.Mask.Output(display_name="right_eye",
@@ -389,6 +399,7 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
     def execute(
         cls,
         image: torch.Tensor,
+        head_mask: torch.Tensor | None = None,
         detection_confidence: float = 0.5,
         face_expand: int = 0,
         feature_expand: int = 4,
@@ -423,6 +434,22 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
 
+        # Normalise head_mask to (B, H, W) uint8 numpy if provided
+        hm_batch: list[np.ndarray | None] = [None] * B
+        if head_mask is not None:
+            hm = head_mask
+            if hm.ndim == 2:
+                hm = hm.unsqueeze(0)           # (H,W) → (1,H,W)
+            if hm.ndim == 3 and hm.shape[0] == 1 and B > 1:
+                hm = hm.expand(B, -1, -1)     # broadcast single mask to all frames
+            hm_np = (hm.cpu().float().numpy() * 255).clip(0, 255).astype(np.uint8)
+            for b in range(min(B, hm_np.shape[0])):
+                # Resize to match image frame if needed
+                frame_hm = hm_np[b]
+                if frame_hm.shape[0] != H or frame_hm.shape[1] != W:
+                    frame_hm = cv2.resize(frame_hm, (W, H), interpolation=cv2.INTER_LINEAR)
+                hm_batch[b] = frame_hm
+
         region_batches: dict[str, list[torch.Tensor]] = {k: [] for k in _KEYS}
         statuses: list[str] = []
 
@@ -452,6 +479,7 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                     subtract_nose=subtract_nose,
                     ear_expand=ear_expand,
                     hair_expand=hair_expand,
+                    head_mask_np=hm_batch[b],
                 )
                 for k in _KEYS:
                     region_batches[k].append(_to_tensor(masks[k]))
@@ -461,8 +489,9 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
 
         detected = sum(1 for s in statuses if s == "ok")
         failed = [i for i, s in enumerate(statuses) if s != "ok"]
+        base_note = " [skin base: external head_mask]" if head_mask is not None else ""
         status_str = (
-            f"BD_MediaPipeFaceMask: {detected}/{B} faces detected"
+            f"BD_MediaPipeFaceMask: {detected}/{B} faces detected{base_note}"
             + (f" — failed frames: {failed}" if failed else "")
         )
         print(f"[BD_MediaPipeFaceMask] {status_str}", flush=True)
