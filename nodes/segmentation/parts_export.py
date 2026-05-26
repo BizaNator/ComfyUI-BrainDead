@@ -328,12 +328,23 @@ class BD_PartsExport(io.ComfyNode):
         ctx = get_context(effective_ctx_id) if effective_ctx_id else None
         use_context = ctx is not None
 
+        # Initialize folder + base so the out_dir calc has SOMETHING to fall back
+        # to when use_context=True (in which case _resolve_legacy_folder is skipped).
+        folder = ""
+        base = ""
         if not use_context:
             folder, base = _resolve_legacy_folder(filename, name_prefix, auto_increment)
 
         tag2pinfo = parts["tag2pinfo"]
         summary_lines: list[str] = []
         written = 0
+
+        # Path variables — initialized to None so the out_dir calculation at the
+        # bottom doesn't UnboundLocalError when their parent block doesn't run
+        # (e.g. tag2pinfo={} skips the composite/psd blocks entirely).
+        png_path: str | None = None
+        comp_path: str | None = None
+        psd_path: str | None = None
 
         # Per-tag PNGs (and optional depth)
         if save_pngs:
@@ -533,9 +544,21 @@ class BD_PartsExport(io.ComfyNode):
             except Exception as e:
                 summary_lines.append(f"  PSD save FAILED: {e}")
 
-        out_dir = (os.path.dirname(psd_path) if save_psd
-                   else (folder if not use_context else os.path.dirname(comp_path) if save_composite
-                         else os.path.dirname(png_path) if save_pngs else "."))
+        # out_dir: prefer the path that actually got written. The path vars are
+        # None when their parent block didn't execute (e.g. empty parts dict),
+        # so we check both the toggle AND that the variable was assigned.
+        # `folder` is "" in context mode (set at top); fall back to a meaningful
+        # context-derived path or just "(no files written)" if literally nothing happened.
+        if save_psd and psd_path is not None:
+            out_dir = os.path.dirname(psd_path)
+        elif not use_context and folder:
+            out_dir = folder
+        elif save_composite and comp_path is not None:
+            out_dir = os.path.dirname(comp_path)
+        elif save_pngs and png_path is not None:
+            out_dir = os.path.dirname(png_path)
+        else:
+            out_dir = folder or "(no files written)"
 
         if composite_tensor is None:
             h, w = _frame_size(parts) or (64, 64)

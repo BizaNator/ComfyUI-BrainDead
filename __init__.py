@@ -32,6 +32,7 @@ from .nodes.prompt import PROMPT_V3_NODES
 from .nodes.segmentation import SEGMENTATION_V3_NODES
 from .nodes.depth import DEPTH_V3_NODES
 from .nodes.facewrap import FACEWRAP_V3_NODES
+from .nodes.glsl import GLSL_V3_NODES
 
 # =============================================================================
 # V3 Extension Entry Point
@@ -52,6 +53,7 @@ class BrainDeadExtension(ComfyExtension):
             *SEGMENTATION_V3_NODES,
             *DEPTH_V3_NODES,
             *FACEWRAP_V3_NODES,
+            *GLSL_V3_NODES,
         ]
 
 
@@ -74,6 +76,7 @@ from .nodes.prompt import NODE_CLASS_MAPPINGS as PROMPT_NODES, NODE_DISPLAY_NAME
 from .nodes.segmentation import NODE_CLASS_MAPPINGS as SEGMENTATION_NODES, NODE_DISPLAY_NAME_MAPPINGS as SEGMENTATION_DISPLAY
 from .nodes.depth import NODE_CLASS_MAPPINGS as DEPTH_NODES, NODE_DISPLAY_NAME_MAPPINGS as DEPTH_DISPLAY
 from .nodes.facewrap import NODE_CLASS_MAPPINGS as FACEWRAP_NODES, NODE_DISPLAY_NAME_MAPPINGS as FACEWRAP_DISPLAY
+from .nodes.glsl import NODE_CLASS_MAPPINGS as GLSL_NODES, NODE_DISPLAY_NAME_MAPPINGS as GLSL_DISPLAY
 
 # Aggregate all node mappings for V1 registration
 NODE_CLASS_MAPPINGS = {
@@ -86,6 +89,7 @@ NODE_CLASS_MAPPINGS = {
     **SEGMENTATION_NODES,
     **DEPTH_NODES,
     **FACEWRAP_NODES,
+    **GLSL_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -98,6 +102,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **SEGMENTATION_DISPLAY,
     **DEPTH_DISPLAY,
     **FACEWRAP_DISPLAY,
+    **GLSL_DISPLAY,
 }
 
 # Web directory for JavaScript extensions (toast notifications, etc.)

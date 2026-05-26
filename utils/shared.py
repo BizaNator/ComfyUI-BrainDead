@@ -166,7 +166,7 @@ class ImageSerializer:
 
     @staticmethod
     def save(filepath, image_tensor):
-        """Save IMAGE tensor (B, H, W, C) as PNG."""
+        """Save IMAGE tensor (B, H, W, C) as PNG, preserving alpha when present."""
         from PIL import Image
         import torch
 
@@ -184,18 +184,23 @@ class ImageSerializer:
 
         img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
 
-        # Save as PNG
+        # Save as PNG — fromarray auto-detects RGBA (H,W,4) vs RGB (H,W,3)
         pil_img = Image.fromarray(img_np)
         pil_img.save(filepath, 'PNG')
         return True
 
     @staticmethod
     def load(filepath):
-        """Load PNG as IMAGE tensor."""
+        """Load PNG as IMAGE tensor, preserving alpha channel when present."""
         from PIL import Image
         import torch
 
-        pil_img = Image.open(filepath).convert('RGB')
+        pil_img = Image.open(filepath)
+        # Preserve alpha if the source has it; otherwise normalise to RGB
+        if pil_img.mode in ('RGBA', 'LA'):
+            pil_img = pil_img.convert('RGBA')
+        else:
+            pil_img = pil_img.convert('RGB')
         img_np = np.array(pil_img).astype(np.float32) / 255.0
         # Return as (1, H, W, C) tensor
         return torch.from_numpy(img_np).unsqueeze(0)

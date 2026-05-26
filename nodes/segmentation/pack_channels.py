@@ -8,7 +8,7 @@ Inverse of channel splitting. Common use cases:
 
 Each channel slot accepts EITHER an IMAGE or a MASK input (or both — MASK wins
 since it's already single-channel and unambiguous). When IMAGE is provided,
-its luminance is computed (0.299 R + 0.587 G + 0.114 B). When neither is
+its luminance is computed (BT.709: 0.2126 R + 0.7152 G + 0.0722 B). When neither is
 provided, the channel is filled with default_value.
 
 Output is RGB by default; toggle output_alpha to get RGBA (4-channel image).
@@ -18,8 +18,7 @@ import torch
 
 from comfy_api.latest import io
 
-
-_LUMA_WEIGHTS = torch.tensor([0.299, 0.587, 0.114])
+from ...utils.luma import LUMA_STANDARDS, LUMA_TOOLTIP, get_luma_weights
 
 
 def _resize_to(t: torch.Tensor, h: int, w: int, mode: str = "bilinear") -> torch.Tensor:
@@ -48,11 +47,12 @@ def _resolve_channel(image: torch.Tensor | None, mask: torch.Tensor | None,
                      h: int, w: int, b: int,
                      default_value: float, invert: bool,
                      dtype: torch.dtype, device: torch.device,
-                     image_source: str = "luminance") -> torch.Tensor:
+                     image_source: str = "luminance",
+                     luma_standard: str = "bt709") -> torch.Tensor:
     """Resolve one channel from IMAGE/MASK/default. Returns (B, H, W) float.
 
     image_source controls how a multi-channel IMAGE input is reduced:
-      luminance — 0.299R + 0.587G + 0.114B (default for R/G/B output slots)
+      luminance — weighted average using luma_standard (bt709 default)
       red, green, blue — pick that channel directly
       alpha — use the alpha channel if image is RGBA, else fall back to luminance
               (default for ALPHA output slot)
@@ -78,10 +78,10 @@ def _resolve_channel(image: torch.Tensor | None, mask: torch.Tensor | None,
             if nchan >= 4:
                 ch = img[..., 3]
             else:
-                weights = _LUMA_WEIGHTS.to(img.device).to(img.dtype)
+                weights = get_luma_weights(luma_standard).to(img.device).to(img.dtype)
                 ch = (img[..., :3] * weights).sum(dim=-1)
         else:
-            weights = _LUMA_WEIGHTS.to(img.device).to(img.dtype)
+            weights = get_luma_weights(luma_standard).to(img.device).to(img.dtype)
             ch = (img[..., :3] * weights).sum(dim=-1)
     else:
         ch = torch.full((b, h, w), float(default_value), dtype=dtype, device=device)
@@ -91,6 +91,37 @@ def _resolve_channel(image: torch.Tensor | None, mask: torch.Tensor | None,
     if invert:
         ch = 1.0 - ch
     return ch.clamp(0.0, 1.0).to(dtype).to(device)
+
+
+def _build_debug_preview(r: torch.Tensor, g: torch.Tensor, b: torch.Tensor,
+                         a: torch.Tensor) -> torch.Tensor:
+    """Build a 2x2 grid preview showing each channel TINTED IN ITS OWN COLOR.
+
+    Layout:
+      ┌───────┬───────┐
+      │  R    │  G    │   ← R intensity → red, G intensity → green
+      ├───────┼───────┤
+      │  B    │  A    │   ← B intensity → blue, A intensity → white
+      └───────┴───────┘
+    R/G/B channels render as pure color on black so you can see at a glance
+    which channel has data where (and how much). Alpha renders as white.
+    """
+    zeros = torch.zeros_like(r)
+
+    # R tinted red: (R, 0, 0)
+    rg = torch.stack([r, zeros, zeros], dim=-1)
+    # G tinted green: (0, G, 0)
+    gg = torch.stack([zeros, g, zeros], dim=-1)
+    # B tinted blue: (0, 0, B)
+    bg = torch.stack([zeros, zeros, b], dim=-1)
+    # A as white: (A, A, A)
+    ag = torch.stack([a, a, a], dim=-1)
+
+    # Concatenate: top row = R | G, bottom row = B | A
+    top = torch.cat([rg, gg], dim=2)
+    bot = torch.cat([bg, ag], dim=2)
+    grid = torch.cat([top, bot], dim=1)
+    return grid.clamp(0.0, 1.0)
 
 
 def _infer_size(sources: list, override_w: int, override_h: int) -> tuple[int, int, int]:
@@ -170,10 +201,17 @@ class BD_PackChannels(io.ComfyNode):
                 io.Int.Input("height_override", default=0, min=0, max=8192, step=64, optional=True,
                              tooltip="Override output height. 0 = use first non-None source's height. "
                                      "All channels are resized to this dimension."),
+                io.Combo.Input("luma_standard", options=LUMA_STANDARDS, default="bt709", optional=True,
+                               tooltip="When an IMAGE input is provided (not MASK), luminance is computed "
+                                       "using this weighting. " + LUMA_TOOLTIP),
             ],
             outputs=[
                 io.Image.Output(display_name="image"),
                 io.Mask.Output(display_name="alpha"),
+                io.Image.Output(display_name="debug_preview",
+                                tooltip="2x2 grid showing each channel as greyscale. Top-left=R, top-right=G, "
+                                        "bottom-left=B, bottom-right=A. Each quadrant has a small colored corner "
+                                        "tag (red/green/blue/white) to identify the channel."),
             ],
         )
 
@@ -183,7 +221,8 @@ class BD_PackChannels(io.ComfyNode):
                 blue_image=None, blue_mask=None, blue_default=0.0, blue_invert=False,
                 output_alpha=False,
                 alpha_image=None, alpha_mask=None, alpha_default=1.0, alpha_invert=False,
-                width_override=0, height_override=0) -> io.NodeOutput:
+                width_override=0, height_override=0,
+                luma_standard="bt709") -> io.NodeOutput:
 
         sources = [red_image, red_mask, green_image, green_mask, blue_image, blue_mask,
                    alpha_image, alpha_mask]
@@ -198,13 +237,13 @@ class BD_PackChannels(io.ComfyNode):
                 break
 
         r = _resolve_channel(red_image, red_mask, h, w, b, red_default, red_invert,
-                             dtype, device, image_source="luminance")
+                             dtype, device, image_source="luminance", luma_standard=luma_standard)
         g = _resolve_channel(green_image, green_mask, h, w, b, green_default, green_invert,
-                             dtype, device, image_source="luminance")
+                             dtype, device, image_source="luminance", luma_standard=luma_standard)
         bl = _resolve_channel(blue_image, blue_mask, h, w, b, blue_default, blue_invert,
-                              dtype, device, image_source="luminance")
+                              dtype, device, image_source="luminance", luma_standard=luma_standard)
         a = _resolve_channel(alpha_image, alpha_mask, h, w, b, alpha_default, alpha_invert,
-                             dtype, device, image_source="alpha")
+                             dtype, device, image_source="alpha", luma_standard=luma_standard)
 
         alpha_was_wired = (alpha_image is not None) or (alpha_mask is not None)
         effective_output_alpha = bool(output_alpha) or alpha_was_wired
@@ -214,7 +253,18 @@ class BD_PackChannels(io.ComfyNode):
         else:
             stacked = torch.stack([r, g, bl], dim=-1)
 
-        return io.NodeOutput(stacked, a)
+        # ── Debug preview: 2x2 grid of channels tinted in their own colors ──
+        debug_preview = _build_debug_preview(r, g, bl, a)
+
+        # Diagnostic — print mean values for each channel so you can verify the data
+        # flowing through is what you expect. If a channel mean is 0 you have nothing
+        # there; if it's ~1 the channel is saturated.
+        print(f"[BD_PackChannels] mean values: "
+              f"R={float(r.mean()):.3f}, G={float(g.mean()):.3f}, "
+              f"B={float(bl.mean()):.3f}, A={float(a.mean()):.3f}, "
+              f"output_alpha={'YES' if effective_output_alpha else 'no'}")
+
+        return io.NodeOutput(stacked, a, debug_preview)
 
 
 PACK_CHANNELS_V3_NODES = [BD_PackChannels]
