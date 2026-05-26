@@ -8,8 +8,11 @@ Algorithm:
   2. The matched SAM3 segment is intersected with the MediaPipe feature hull →
      SAM3 gives pixel accuracy, MediaPipe prevents bleed outside the region.
   3. Refined skin = face_oval − all refined feature masks.
-     face_oval is the outer boundary — no SAM3 matching needed for it.
+     face_oval is the inner face plate boundary (no hair) — no SAM3 matching needed for it.
      feature_expand dilates each refined feature before subtracting (edge buffer).
+  4. If silhouette_mask is wired, all output masks are clipped to it (hard head boundary).
+  5. If image is wired, masked_image (skin only) and masked_face (full face plate) are
+     composited and emitted — same pattern as BD_SAM3MultiPrompt masked_image output.
 
 Why a dedicated node instead of BD_MaskCorrelate:
   BD_MaskCorrelate is generic — getting the skin case right required chaining
@@ -69,6 +72,30 @@ def _resize_to(arr: np.ndarray, H: int, W: int) -> np.ndarray:
         from PIL import Image
         pil = Image.fromarray((arr * 255).clip(0, 255).astype(np.uint8), mode="L")
         return np.asarray(pil.resize((W, H), Image.BILINEAR)).astype(np.float32) / 255.0
+
+
+def _make_bg(bg_mode: str, H: int, W: int) -> np.ndarray:
+    if bg_mode == "white":
+        return np.ones((H, W, 3), dtype=np.float32)
+    if bg_mode == "checker":
+        sz = 16
+        rows = (np.arange(H) // sz)[:, None]
+        cols = (np.arange(W) // sz)[None, :]
+        light = np.where((rows + cols) % 2 == 0, 0.7, 0.4).astype(np.float32)
+        return np.stack([light, light, light], axis=-1)
+    return np.zeros((H, W, 3), dtype=np.float32)
+
+
+def _composite(img_np: np.ndarray, alpha: np.ndarray, bg_mode: str) -> torch.Tensor:
+    """Alpha-composite img_np with mask. Returns (1, H, W, 3 or 4) float32 tensor."""
+    H, W = alpha.shape
+    a = alpha[..., None]
+    if bg_mode == "transparent":
+        rgba = np.concatenate([img_np[..., :3] * a, a], axis=-1)
+        return torch.from_numpy(rgba.clip(0, 1).astype(np.float32)).unsqueeze(0)
+    bg = _make_bg(bg_mode, H, W)
+    composited = img_np[..., :3] * a + bg * (1.0 - a)
+    return torch.from_numpy(composited.clip(0, 1).astype(np.float32)).unsqueeze(0)
 
 
 # Feature registry: (slot_name, debug_color_rgb, exclusive_priority)
@@ -143,7 +170,9 @@ class BD_FaceSkinRefine(io.ComfyNode):
                 "Each feature (eye, brow, lips, nose) is matched to the best-overlapping SAM3 "
                 "segment by IoU. The matched segment is intersected with the MediaPipe hull — "
                 "SAM3 adds pixel-accuracy, MediaPipe prevents bleed. "
-                "face_oval defines the outer skin boundary; no SAM3 matching is attempted for it."
+                "face_oval is the inner face-plate boundary (no hair); no SAM3 matching is attempted for it.\n\n"
+                "Wire silhouette_mask (head outline) to clip all outputs to the head boundary. "
+                "Wire image to get masked_image (skin only) and masked_face (full face plate) composited outputs."
             ),
             inputs=[
                 io.Mask.Input(
@@ -152,13 +181,33 @@ class BD_FaceSkinRefine(io.ComfyNode):
                 ),
                 io.Mask.Input(
                     "face_oval",
-                    tooltip="Head silhouette from BD_MediaPipeFaceMask. Outer boundary for skin — "
+                    tooltip="MediaPipe face oval — the INNER face plate (covers the face surface, "
+                            "not hair or the full head silhouette). Outer boundary for skin: "
                             "refined skin = face_oval minus all refined feature masks.",
                 ),
                 io.Image.Input(
-                    "reference_image", optional=True,
-                    tooltip="Base image for the debug overlay (wire the character render here). "
-                            "Leave unwired to composite on black.",
+                    "image", optional=True,
+                    tooltip="Original character image. When wired:\n"
+                            "  • Used as the debug overlay base (shows mask colours over the render)\n"
+                            "  • Produces masked_image (skin region) and masked_face (full face plate)\n"
+                            "Leave unwired to composite the debug overlay on black.",
+                ),
+                io.Mask.Input(
+                    "silhouette_mask", optional=True,
+                    tooltip="Head silhouette (white=head, black=background). When wired, all output "
+                            "masks are clipped to this boundary after refinement.\n\n"
+                            "Note: face_oval is the INNER face plate (no hair); silhouette_mask is the "
+                            "OUTER head boundary (full head shape including hair). They are different. "
+                            "Use head mask from BD_SAM3MultiPrompt here.",
+                ),
+                io.Combo.Input(
+                    "masked_image_bg",
+                    options=["transparent", "white", "black", "checker"],
+                    default="transparent", optional=True,
+                    tooltip="Background for masked_image and masked_face outputs when image is wired.\n"
+                            "  transparent → RGBA PNG, background is fully transparent (alpha=0)\n"
+                            "  white / black → RGB composite over solid colour\n"
+                            "  checker → grey checkerboard (visually indicates transparency)"
                 ),
                 io.Mask.Input("left_eye",   optional=True,
                               tooltip="Left eye mask from BD_MediaPipeFaceMask (subject's left = image right)."),
@@ -209,7 +258,7 @@ class BD_FaceSkinRefine(io.ComfyNode):
             outputs=[
                 io.Mask.Output(display_name="skin",
                                tooltip="Refined skin: face_oval minus all refined feature masks "
-                                       "(with feature_expand buffer if set)."),
+                                       "(with feature_expand buffer if set). Clipped to silhouette_mask if wired."),
                 io.Mask.Output(display_name="left_eye",
                                tooltip="SAM3-refined left eye, clipped to MediaPipe hull. "
                                        "Falls back to original MediaPipe mask if no match."),
@@ -223,6 +272,20 @@ class BD_FaceSkinRefine(io.ComfyNode):
                                         "own colour. Wire to PreviewImage to inspect the segmentation."),
                 io.String.Output(display_name="match_info",
                                  tooltip="Per-feature match summary: candidate index, IoU, fallback notes."),
+                io.Image.Output(
+                    display_name="masked_image",
+                    tooltip="Original image composited with the skin mask as alpha — shows only the skin "
+                            "region (face_oval minus features). Requires image to be wired. "
+                            "Background controlled by masked_image_bg. "
+                            "silhouette_mask is applied if wired.",
+                ),
+                io.Image.Output(
+                    display_name="masked_face",
+                    tooltip="Original image composited with face_oval as alpha — shows the full face "
+                            "plate (skin + all features, no background). Requires image to be wired. "
+                            "Wire this to see the whole face isolated. Background controlled by masked_image_bg. "
+                            "silhouette_mask is applied if wired.",
+                ),
             ],
         )
 
@@ -231,7 +294,9 @@ class BD_FaceSkinRefine(io.ComfyNode):
         cls,
         candidates: torch.Tensor,
         face_oval: torch.Tensor,
-        reference_image: torch.Tensor | None = None,
+        image: torch.Tensor | None = None,
+        silhouette_mask: torch.Tensor | None = None,
+        masked_image_bg: str = "transparent",
         left_eye:   torch.Tensor | None = None,
         right_eye:  torch.Tensor | None = None,
         left_brow:  torch.Tensor | None = None,
@@ -259,19 +324,25 @@ class BD_FaceSkinRefine(io.ComfyNode):
             if cands_t.ndim == 3 else []
         )
 
-        # Prepare reference image for overlay
-        base_rgb: np.ndarray | None = None
-        if reference_image is not None:
-            ref = reference_image.detach().cpu().float()
-            if ref.ndim == 4:
-                ref = ref[0]
-            if ref.shape[-1] == 4:
-                ref = ref[..., :3]
-            ref_np = ref.numpy().astype(np.float32)
-            if ref_np.shape[:2] != (H, W):
-                ref_np = _resize_to(ref_np.mean(axis=-1), H, W)
-                ref_np = np.stack([ref_np] * 3, axis=-1)
-            base_rgb = ref_np
+        # Normalise silhouette_mask → (H, W) or None
+        sil_arr: np.ndarray | None = None
+        if silhouette_mask is not None:
+            sil_arr = _resize_to(_to_hw(silhouette_mask), H, W)
+
+        # Prepare image for overlay and compositing — (H, W, 3) float32
+        img_np: np.ndarray | None = None
+        if image is not None:
+            img_t = image.detach().cpu().float()
+            if img_t.ndim == 4:
+                img_t = img_t[0]
+            if img_t.shape[-1] == 4:
+                img_t = img_t[..., :3]
+            img_np_raw = img_t.numpy().astype(np.float32)
+            if img_np_raw.shape[:2] != (H, W):
+                luma = _resize_to(img_np_raw.mean(axis=-1), H, W)
+                img_np = np.stack([luma] * 3, axis=-1)
+            else:
+                img_np = img_np_raw
 
         feature_inputs: dict[str, torch.Tensor | None] = {
             "left_eye":   left_eye,
@@ -331,7 +402,16 @@ class BD_FaceSkinRefine(io.ComfyNode):
         if subtracted_names:
             info_lines.append(f"  skin: face_oval − ({', '.join(subtracted_names)})")
 
+        # Apply silhouette clip to all masks
+        if sil_arr is not None:
+            skin_arr = np.minimum(skin_arr, sil_arr)
+            face_oval_arr = np.minimum(face_oval_arr, sil_arr)
+            for feat_name in refined:
+                refined[feat_name] = np.minimum(refined[feat_name], sil_arr)
+            info_lines.append("  silhouette_mask: applied to all outputs")
+
         # Build debug overlay
+        base_rgb = img_np if img_np is not None else None
         canvas = base_rgb.copy() if base_rgb is not None else np.zeros((H, W, 3), dtype=np.float32)
 
         # Skin layer (behind features)
@@ -360,6 +440,16 @@ class BD_FaceSkinRefine(io.ComfyNode):
         match_info = header + "\n" + "\n".join(info_lines)
         print(f"[BD_FaceSkinRefine] {match_info}", flush=True)
 
+        # Masked image outputs — require image to be wired
+        if img_np is not None:
+            masked_image = _composite(img_np, skin_arr.clip(0, 1), masked_image_bg)
+            masked_face  = _composite(img_np, face_oval_arr.clip(0, 1), masked_image_bg)
+        else:
+            channels = 4 if masked_image_bg == "transparent" else 3
+            placeholder = torch.zeros((1, H, W, channels), dtype=torch.float32)
+            masked_image = placeholder
+            masked_face  = placeholder
+
         return io.NodeOutput(
             _to_mask_tensor(skin_arr),
             _to_mask_tensor(refined["left_eye"]),
@@ -370,6 +460,8 @@ class BD_FaceSkinRefine(io.ComfyNode):
             _to_mask_tensor(refined["nose"]),
             debug_overlay,
             match_info,
+            masked_image,
+            masked_face,
         )
 
 

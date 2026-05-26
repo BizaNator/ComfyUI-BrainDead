@@ -212,6 +212,30 @@ def _parse_priorities(priority_str: str, n: int) -> list[float]:
     return result
 
 
+def _make_bg(bg_mode: str, H: int, W: int) -> np.ndarray:
+    if bg_mode == "white":
+        return np.ones((H, W, 3), dtype=np.float32)
+    if bg_mode == "checker":
+        sz = 16
+        rows = (np.arange(H) // sz)[:, None]
+        cols = (np.arange(W) // sz)[None, :]
+        light = np.where((rows + cols) % 2 == 0, 0.7, 0.4).astype(np.float32)
+        return np.stack([light, light, light], axis=-1)
+    return np.zeros((H, W, 3), dtype=np.float32)
+
+
+def _composite(img_np: np.ndarray, alpha: np.ndarray, bg_mode: str) -> torch.Tensor:
+    """Alpha-composite img_np with mask. Returns (1, H, W, 3 or 4) float32 tensor."""
+    H, W = alpha.shape
+    a = alpha[..., None]
+    if bg_mode == "transparent":
+        rgba = np.concatenate([img_np[..., :3] * a, a], axis=-1)
+        return torch.from_numpy(rgba.clip(0, 1).astype(np.float32)).unsqueeze(0)
+    bg = _make_bg(bg_mode, H, W)
+    composited = img_np[..., :3] * a + bg * (1.0 - a)
+    return torch.from_numpy(composited.clip(0, 1).astype(np.float32)).unsqueeze(0)
+
+
 # ── Node ─────────────────────────────────────────────────────────────────────
 
 _N = 8   # max target slots
@@ -255,8 +279,25 @@ class BD_MaskCorrelate(io.ComfyNode):
                 ),
                 io.Image.Input(
                     "reference_image", optional=True,
-                    tooltip="Optional base image for the debug overlay. If not wired the overlay "
-                            "composites over black. Wire the character render here.",
+                    tooltip="Original character image. When wired:\n"
+                            "  • Used as the base for the debug overlay\n"
+                            "  • Produces masked_image (union of all matched slots applied as alpha)\n"
+                            "Leave unwired to composite the debug overlay on black.",
+                ),
+                io.Mask.Input(
+                    "silhouette_mask", optional=True,
+                    tooltip="Head or body silhouette (white=subject, black=background). "
+                            "When wired, all output masks are clipped to this boundary after matching. "
+                            "Useful for ensuring matched segments don't bleed outside the head/body shape.",
+                ),
+                io.Combo.Input(
+                    "masked_image_bg",
+                    options=["transparent", "white", "black", "checker"],
+                    default="transparent", optional=True,
+                    tooltip="Background for the masked_image output when reference_image is wired.\n"
+                            "  transparent → RGBA output, background is fully transparent\n"
+                            "  white / black → RGB composite over solid colour\n"
+                            "  checker → grey checkerboard (visually indicates transparency)"
                 ),
                 io.String.Input(
                     "labels", multiline=True,
@@ -388,6 +429,13 @@ class BD_MaskCorrelate(io.ComfyNode):
                 ),
                 io.String.Output(display_name="match_info",
                                  tooltip="Per-slot match summary: label, best candidate index, IoU, mode used."),
+                io.Image.Output(
+                    display_name="masked_image",
+                    tooltip="reference_image composited with the union of all matched slot masks as alpha. "
+                            "Shows only the matched regions isolated from the background. "
+                            "Requires reference_image to be wired. "
+                            "silhouette_mask is applied if wired. Background controlled by masked_image_bg.",
+                ),
             ],
         )
 
@@ -396,6 +444,8 @@ class BD_MaskCorrelate(io.ComfyNode):
         cls,
         candidates: torch.Tensor,
         reference_image: torch.Tensor | None = None,
+        silhouette_mask: torch.Tensor | None = None,
+        masked_image_bg: str = "transparent",
         labels: str = "",
         priorities: str = "",
         min_iou: float = 0.05,
@@ -449,8 +499,14 @@ class BD_MaskCorrelate(io.ComfyNode):
         # Resize candidates to target resolution
         cands_hw = [_resize_to(c, H, W) for c in cands_hw]
 
-        # Prepare reference image for overlay (H, W, 3) float32
+        # Normalise silhouette_mask → (H, W) float32 or None
+        sil_arr: np.ndarray | None = None
+        if silhouette_mask is not None:
+            sil_arr = _resize_to(_to_hw(silhouette_mask), H, W)
+
+        # Prepare reference image for overlay and masked_image (H, W, 3) float32
         base_rgb = None
+        img_np: np.ndarray | None = None
         if reference_image is not None:
             ref = reference_image.detach().cpu().float()
             if ref.ndim == 4:
@@ -463,6 +519,7 @@ class BD_MaskCorrelate(io.ComfyNode):
                 base_rgb = np.stack([ref_np] * 3, axis=-1)
             else:
                 base_rgb = ref_np.astype(np.float32)
+            img_np = base_rgb
 
         blank = np.zeros((H, W), dtype=np.float32)
         out_masks: list[np.ndarray] = [blank.copy() for _ in range(_N)]
@@ -565,6 +622,11 @@ class BD_MaskCorrelate(io.ComfyNode):
 
         print(f"[BD_MaskCorrelate] {match_info}", flush=True)
 
+        # Apply silhouette clip to all wired output masks
+        if sil_arr is not None:
+            for i in range(_N):
+                out_masks[i] = np.minimum(out_masks[i], sil_arr)
+
         # Build debug overlay — show all wired slots (matched + unmatched)
         wired_indices = {slot_i for slot_i, _ in wired}
         overlay_masks = [
@@ -577,8 +639,18 @@ class BD_MaskCorrelate(io.ComfyNode):
         ]
         debug_overlay = _build_overlay(base_rgb, overlay_masks, overlay_matched, overlay_alpha, H, W)
 
+        # masked_image: reference_image × union of all wired+matched slot masks + bg
+        if img_np is not None:
+            union_mask = np.zeros((H, W), dtype=np.float32)
+            for i in wired_indices:
+                union_mask = np.maximum(union_mask, out_masks[i])
+            masked_image = _composite(img_np, union_mask.clip(0, 1), masked_image_bg)
+        else:
+            channels = 4 if masked_image_bg == "transparent" else 3
+            masked_image = torch.zeros((1, H, W, channels), dtype=torch.float32)
+
         outputs = [_to_mask_tensor(out_masks[i]) for i in range(_N)]
-        return io.NodeOutput(*outputs, debug_overlay, match_info)
+        return io.NodeOutput(*outputs, debug_overlay, match_info, masked_image)
 
 
 MASK_CORRELATE_V3_NODES = [BD_MaskCorrelate]
