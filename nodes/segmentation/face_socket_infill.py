@@ -1,7 +1,10 @@
 """
 BD_FaceSocketInfill — one-shot face socket creator for 2D animation flipbook textures.
 
-All expand values are 512px-normalised and auto-scale with image resolution.
+All expand values are 1536px-normalised: a value of 6 means 6 native pixels at
+1536px, 3 pixels at 768px, 12 pixels at 3072px.  Set values as if working at
+1536px — they scale automatically with image resolution.
+
 expand_x / expand_y control horizontal and vertical dilation independently via
 an elliptical structuring element — letting lips expand wide (laugh lines) while
 brows stay tight vertically so they don't bleed into the eye sockets below.
@@ -397,14 +400,14 @@ class BD_FaceSocketInfill(io.ComfyNode):
                                        "sits just inside the lid edge, feather provides outside "
                                        "sample zone. eyelid: raw eyelid hull (may clip lashes)."),
                 io.Int.Input("eye_inset", default=2, min=0, max=15, step=1, optional=True,
-                             tooltip="Pixels (512px-norm) to erode the eyelid hull inward in "
-                                     "iris mode. 2 = socket sits 2px inside the lid edge. "
+                             tooltip="Pixels to erode the eyelid hull inward (at 1536px native). "
+                                     "2 = socket sits 2px inside the lid edge at 1536px. "
                                      "0 = exact eyelid boundary."),
 
-                # ── Master expand (512px-normalised) ──────────────────────────
+                # ── Master expand (1536px-normalised) ──────────────────────────
                 io.Int.Input("expand_x", default=6, min=0, max=60, step=1, optional=True,
-                             tooltip="Master horizontal expansion, 512px-normalised. "
-                                     "6 at 512px → 12 at 1024px → 18 at 1536px."),
+                             tooltip="Master horizontal expansion in pixels at 1536px. "
+                                     "Scales proportionally at other resolutions."),
                 io.Int.Input("expand_y", default=6, min=0, max=60, step=1, optional=True,
                              tooltip="Master vertical expansion. Reduce to stop zones "
                                      "bleeding into adjacent areas (e.g. brows → eyes)."),
@@ -419,7 +422,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 io.Int.Input("brows_expand_y", default=-1, min=-1, max=60, step=1, optional=True,
                              tooltip="Brow vertical override. Keep low to avoid eye socket bleed."),
                 io.Int.Input("brow_band", default=12, min=2, max=60, step=1, optional=True,
-                             tooltip="Base half-height of the brow arch band in 512px-normalised "
+                             tooltip="Base half-height of the brow arch band in 1536px-normalised "
                                      "pixels. This sets the minimum band thickness independently "
                                      "of expand_y. Increase if brows look too thin."),
                 io.Int.Input("lips_expand_x",  default=-1, min=-1, max=60, step=1, optional=True,
@@ -519,7 +522,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         if image.ndim == 3:
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
-        scale = max(H, W) / 512.0
+        scale = max(H, W) / 1536.0
 
         # ── Resolve per-zone (expand_x, expand_y) at native resolution ────────
         def _eff(override: int, master: int) -> int:
