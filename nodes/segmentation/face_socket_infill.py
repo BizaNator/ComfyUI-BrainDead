@@ -2,29 +2,26 @@
 BD_FaceSocketInfill — one-shot face socket creator for 2D animation flipbook textures.
 
 Detects eye / brow / lip / nose regions via MediaPipe and fills the selected
-regions with a flat colour, producing a base texture with empty "sockets" that
-separate flipbook animation layers can be composited into.
+regions with a flat colour or the surrounding skin tone, producing a base
+texture with empty "sockets" that separate flipbook animation layers can be
+composited into.
+
+feature_expand is normalised to 512 px and auto-scales with image resolution:
+  6 px at  512 × 512  →  6 px effective
+  6 px at 1024 × 1024 → 12 px effective
+  6 px at 2048 × 2048 → 24 px effective
+
+fill_mode:
+  flat      — fill_r / fill_g / fill_b (default white, useful for UV textures)
+  surround  — Gaussian-blur the frame and composite through the socket mask,
+              so the fill colour matches the surrounding skin tone
+  inpaint   — OpenCV Telea inpaint (good quality, slower)
 
 Wire pattern:
-  LoadImage → BD_FaceSocketInfill → socket_image  (UV/texture export)
+  LoadImage → BD_FaceSocketInfill → socket_image  (UV / texture export)
                                   → alpha_image   (RGBA, sockets transparent)
-                                  → socket_mask   (for inpaint / composite)
-                                  → left_eye / right_eye / … (per-feature)
-
-Outputs
--------
-socket_image  IMAGE (RGB)   original image, socket regions filled with fill_r/g/b
-alpha_image   IMAGE (RGBA)  same as socket_image but socket regions have alpha = 0
-socket_mask   MASK          union of all enabled feature masks
-left_eye      MASK
-right_eye     MASK
-eyes          MASK          union of left + right eye
-left_brow     MASK
-right_brow    MASK
-brows         MASK          union of left + right brow
-lips          MASK
-nose          MASK
-status        STRING
+                                  → socket_mask   (for further compositing)
+                                  → left_eye / right_eye / … (animation align)
 """
 
 from __future__ import annotations
@@ -94,6 +91,7 @@ def _pts(indices: list[int], lm, H: int, W: int) -> np.ndarray:
 
 
 def _ellipse_k(r: int) -> np.ndarray:
+    r = max(1, r)
     return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
 
 
@@ -120,40 +118,41 @@ def _blank(H: int, W: int) -> np.ndarray:
     return np.zeros((H, W), dtype=np.uint8)
 
 
-def _to_tensor(m: np.ndarray) -> torch.Tensor:
-    return torch.from_numpy(m.astype(np.float32) / 255.0)
+# ── Per-frame mask extraction ─────────────────────────────────────────────────
 
-
-# ── Per-frame processing ──────────────────────────────────────────────────────
-
-_MASK_KEYS = ['left_eye', 'right_eye', 'eyes', 'left_brow', 'right_brow', 'brows', 'lips', 'nose']
+_MASK_KEYS = [
+    'left_eye', 'right_eye', 'eyes',
+    'left_brow', 'right_brow', 'brows',
+    'lips', 'nose',
+]
 
 
 def _process_frame(
     frame_rgb: np.ndarray,
     landmarker,
-    feature_expand: int,
+    effective_expand: int,
 ) -> tuple[dict[str, np.ndarray], str]:
+    """Return raw binary uint8 masks at the frame's native resolution."""
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
 
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-    result = landmarker.detect(mp_image)
+    result   = landmarker.detect(mp_image)
 
     if not result.face_landmarks:
         return {k: blank for k in _MASK_KEYS}, "no face detected"
 
     lm = result.face_landmarks[0]
 
-    left_eye  = _fill_convex(_pts(_MP_IDX['left_eye'],  lm, H, W), H, W, expand=feature_expand)
-    right_eye = _fill_convex(_pts(_MP_IDX['right_eye'], lm, H, W), H, W, expand=feature_expand)
+    left_eye  = _fill_convex(_pts(_MP_IDX['left_eye'],  lm, H, W), H, W, expand=effective_expand)
+    right_eye = _fill_convex(_pts(_MP_IDX['right_eye'], lm, H, W), H, W, expand=effective_expand)
     eyes      = _union(left_eye, right_eye)
 
-    left_brow  = _fill_convex(_pts(_MP_IDX['left_brow'],  lm, H, W), H, W, expand=feature_expand)
-    right_brow = _fill_convex(_pts(_MP_IDX['right_brow'], lm, H, W), H, W, expand=feature_expand)
+    left_brow  = _fill_convex(_pts(_MP_IDX['left_brow'],  lm, H, W), H, W, expand=effective_expand)
+    right_brow = _fill_convex(_pts(_MP_IDX['right_brow'], lm, H, W), H, W, expand=effective_expand)
     brows      = _union(left_brow, right_brow)
 
-    lips = _fill_convex(_pts(_MP_IDX['lips'], lm, H, W), H, W, expand=feature_expand)
+    lips = _fill_convex(_pts(_MP_IDX['lips'], lm, H, W), H, W, expand=effective_expand)
     nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W)
 
     return {
@@ -163,16 +162,52 @@ def _process_frame(
     }, "ok"
 
 
+# ── Fill helpers ──────────────────────────────────────────────────────────────
+
+def _feather_mask(mask_u8: np.ndarray, feather: int) -> np.ndarray:
+    """Gaussian-blur a binary uint8 mask → float32 [0,1] with soft edges."""
+    if feather <= 0:
+        return mask_u8.astype(np.float32) / 255.0
+    ksize = feather * 2 + 1
+    blurred = cv2.GaussianBlur(mask_u8.astype(np.float32), (ksize, ksize), feather * 0.5)
+    return (blurred / 255.0).clip(0.0, 1.0)
+
+
+def _surround_fill(frame_u8: np.ndarray, socket_u8: np.ndarray, radius: int) -> np.ndarray:
+    """
+    Return a (H,W,3) float32 fill image by blurring the frame with a large
+    Gaussian so socket colours become the weighted average of surrounding skin.
+    Radius ≈ 2-3× the feature_expand value gives good results.
+    """
+    ksize = max(3, radius * 2 + 1)
+    if ksize % 2 == 0:
+        ksize += 1
+    blurred = cv2.GaussianBlur(frame_u8.astype(np.float32), (ksize, ksize), radius * 0.5)
+    return blurred / 255.0
+
+
+def _inpaint_fill(frame_u8: np.ndarray, socket_u8: np.ndarray) -> np.ndarray:
+    """OpenCV Telea inpaint — fills socket region using surrounding pixels."""
+    inpainted = cv2.inpaint(frame_u8, socket_u8, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    return inpainted.astype(np.float32) / 255.0
+
+
 # ── Node ─────────────────────────────────────────────────────────────────────
+
+_FILL_MODES = ["flat", "surround", "inpaint"]
+
 
 class BD_FaceSocketInfill(io.ComfyNode):
     """
     One-shot face socket creator for 2D animation flipbook textures.
 
-    Detects face features via MediaPipe and fills selected regions with a flat
-    colour.  Outputs the socket image (RGB), an RGBA version with transparent
-    sockets, the combined socket mask, and individual feature masks for
-    animation overlay alignment.
+    Detects face features via MediaPipe, fills selected regions with a flat
+    colour or surrounding skin tone, and outputs the socket image, RGBA
+    version with transparent sockets, combined socket mask, and individual
+    feature masks for animation overlay alignment.
+
+    feature_expand is normalised to 512 px — it auto-scales with image
+    resolution, so the same value looks consistent across resolutions.
     """
 
     @classmethod
@@ -182,18 +217,20 @@ class BD_FaceSocketInfill(io.ComfyNode):
             display_name="BD Face Socket Infill",
             category="🧠BrainDead/Segmentation",
             description=(
-                "Detects eye / brow / lip / nose regions via MediaPipe and fills the "
-                "selected regions with a flat colour, producing a base texture with "
-                "empty sockets for 2D animation flipbook compositing.\n\n"
-                "socket_image — RGB, sockets filled with fill_r/g/b\n"
-                "alpha_image  — RGBA, sockets alpha=0 (transparent)\n"
-                "socket_mask  — union of all enabled regions\n"
-                "Per-feature masks for animation layer alignment."
+                "Detects eye / brow / lip / nose regions via MediaPipe and fills "
+                "selected regions to produce a base texture with empty sockets for "
+                "2D animation flipbook compositing.\n\n"
+                "feature_expand is 512px-normalised and auto-scales with resolution.\n\n"
+                "fill_mode:\n"
+                "  flat     — fill_r/g/b (white by default, good for UV textures)\n"
+                "  surround — Gaussian-blur surrounding skin into the socket\n"
+                "  inpaint  — OpenCV Telea inpaint (best quality, slower)\n\n"
+                "feather blurs the socket mask edges for smooth compositing."
             ),
             inputs=[
                 io.Image.Input(
                     "image",
-                    tooltip="Input image or batch. Each frame processed independently.",
+                    tooltip="Input image or batch. Each frame is processed independently.",
                 ),
                 io.Float.Input(
                     "detection_confidence", default=0.5, min=0.1, max=1.0, step=0.05,
@@ -202,60 +239,77 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 ),
                 io.Boolean.Input(
                     "eyes", default=True, optional=True,
-                    tooltip="Include eye regions (left + right) in socket mask and infill.",
+                    tooltip="Include left + right eye regions in the socket.",
                 ),
                 io.Boolean.Input(
                     "brows", default=True, optional=True,
-                    tooltip="Include eyebrow regions in socket mask and infill.",
+                    tooltip="Include left + right eyebrow regions in the socket.",
                 ),
                 io.Boolean.Input(
                     "lips", default=True, optional=True,
-                    tooltip="Include lip region in socket mask and infill.",
+                    tooltip="Include lip region in the socket.",
                 ),
                 io.Boolean.Input(
                     "nose", default=False, optional=True,
-                    tooltip="Include nose region in socket mask and infill.",
+                    tooltip="Include nose region in the socket.",
                 ),
                 io.Int.Input(
-                    "feature_expand", default=4, min=0, max=30, step=1, optional=True,
-                    tooltip="Pixels to expand each feature mask outward before filling. "
-                            "3–6 px covers lashes and lip border cleanly.",
+                    "feature_expand", default=6, min=0, max=60, step=1, optional=True,
+                    tooltip="Socket region expansion in 512px-normalised pixels. "
+                            "Auto-scales with image resolution — 6 at 512px becomes "
+                            "12 at 1024px, 24 at 2048px. Covers lashes and lip border.",
+                ),
+                io.Int.Input(
+                    "feather", default=3, min=0, max=30, step=1, optional=True,
+                    tooltip="Gaussian blur radius applied to socket mask edges. "
+                            "0 = hard binary edge. 3-8 gives natural blending.",
+                ),
+                io.Combo.Input(
+                    "fill_mode",
+                    options=_FILL_MODES,
+                    default="flat", optional=True,
+                    tooltip="flat: fill_r/g/b colour (UV textures). "
+                            "surround: Gaussian-blurred surrounding skin. "
+                            "inpaint: OpenCV Telea inpaint (slow, best quality).",
                 ),
                 io.Int.Input(
                     "fill_r", default=255, min=0, max=255, step=1, optional=True,
-                    tooltip="Fill colour red channel (0–255). Default 255 = white.",
+                    tooltip="Fill colour red channel (0-255). Used when fill_mode=flat.",
                 ),
                 io.Int.Input(
                     "fill_g", default=255, min=0, max=255, step=1, optional=True,
-                    tooltip="Fill colour green channel (0–255).",
+                    tooltip="Fill colour green channel.",
                 ),
                 io.Int.Input(
                     "fill_b", default=255, min=0, max=255, step=1, optional=True,
-                    tooltip="Fill colour blue channel (0–255).",
+                    tooltip="Fill colour blue channel.",
                 ),
             ],
             outputs=[
                 io.Image.Output(
                     display_name="socket_image",
-                    tooltip="Original image with socket regions replaced by the fill colour (RGB).",
+                    tooltip="RGB image with socket regions replaced by the fill (flat colour, "
+                            "surrounding skin, or inpainted). Good for UV texture export.",
                 ),
                 io.Image.Output(
                     display_name="alpha_image",
-                    tooltip="RGBA image — socket regions are fully transparent (alpha=0). "
-                            "Non-socket pixels keep full opacity.",
+                    tooltip="RGBA image — socket regions fully transparent (alpha=0). "
+                            "Non-socket pixels keep full opacity. Drop directly into a "
+                            "game engine or compositing tool.",
                 ),
                 io.Mask.Output(
                     display_name="socket_mask",
-                    tooltip="Union of all enabled feature masks. White = socket region.",
+                    tooltip="Feathered union of all enabled feature masks. "
+                            "White = socket region. Soft edges when feather > 0.",
                 ),
-                io.Mask.Output(display_name="left_eye",   tooltip="Left eye convex hull mask."),
-                io.Mask.Output(display_name="right_eye",  tooltip="Right eye convex hull mask."),
-                io.Mask.Output(display_name="eyes",       tooltip="Both eyes combined."),
-                io.Mask.Output(display_name="left_brow",  tooltip="Left eyebrow mask."),
-                io.Mask.Output(display_name="right_brow", tooltip="Right eyebrow mask."),
-                io.Mask.Output(display_name="brows",      tooltip="Both brows combined."),
-                io.Mask.Output(display_name="lips",       tooltip="Full lip area mask."),
-                io.Mask.Output(display_name="nose",       tooltip="Nose region mask."),
+                io.Mask.Output(display_name="left_eye",   tooltip="Left eye convex hull (binary)."),
+                io.Mask.Output(display_name="right_eye",  tooltip="Right eye convex hull (binary)."),
+                io.Mask.Output(display_name="eyes",       tooltip="Both eyes combined (binary)."),
+                io.Mask.Output(display_name="left_brow",  tooltip="Left eyebrow mask (binary)."),
+                io.Mask.Output(display_name="right_brow", tooltip="Right eyebrow mask (binary)."),
+                io.Mask.Output(display_name="brows",      tooltip="Both brows combined (binary)."),
+                io.Mask.Output(display_name="lips",       tooltip="Full lip area mask (binary)."),
+                io.Mask.Output(display_name="nose",       tooltip="Nose region mask (binary)."),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -269,17 +323,18 @@ class BD_FaceSocketInfill(io.ComfyNode):
         brows: bool = True,
         lips: bool = True,
         nose: bool = False,
-        feature_expand: int = 4,
+        feature_expand: int = 6,
+        feather: int = 3,
+        fill_mode: str = "flat",
         fill_r: int = 255,
         fill_g: int = 255,
         fill_b: int = 255,
     ) -> io.NodeOutput:
 
-        _blank1 = torch.zeros((1, 1, 1), dtype=torch.float32)
+        _blank1     = torch.zeros((1, 1, 1),    dtype=torch.float32)
         _blank_img  = torch.zeros((1, 1, 1, 3), dtype=torch.float32)
         _blank_rgba = torch.zeros((1, 1, 1, 4), dtype=torch.float32)
-        # socket_image, alpha_image, socket_mask, 8 feature masks, status
-        _n_mask = len(_MASK_KEYS)
+        _n_mask     = len(_MASK_KEYS)  # 8
 
         def _fail(msg: str) -> io.NodeOutput:
             return io.NodeOutput(
@@ -301,9 +356,12 @@ class BD_FaceSocketInfill(io.ComfyNode):
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
 
-        fill_rgb = torch.tensor([fill_r / 255.0, fill_g / 255.0, fill_b / 255.0], dtype=torch.float32)
+        # Scale expand relative to 512px baseline
+        effective_expand = max(1, round(feature_expand * max(H, W) / 512))
 
-        batches: dict[str, list[torch.Tensor]] = {k: [] for k in _MASK_KEYS + ['socket']}
+        flat_rgb = np.array([fill_r / 255.0, fill_g / 255.0, fill_b / 255.0], dtype=np.float32)
+
+        batches: dict[str, list[torch.Tensor]] = {k: [] for k in _MASK_KEYS + ['socket_soft']}
         socket_images: list[torch.Tensor] = []
         alpha_images:  list[torch.Tensor] = []
         statuses:      list[str] = []
@@ -320,15 +378,16 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
         with _mpv.FaceLandmarker.create_from_options(opts) as landmarker:
             for b in range(B):
-                frame = image[b].cpu().numpy()
+                frame = image[b].cpu().numpy()            # (H, W, C) float32
                 frame_u8 = (frame * 255.0).clip(0, 255).astype(np.uint8)
                 if C == 4:
                     frame_u8 = frame_u8[..., :3]
+                frame_rgb_u8 = frame_u8.copy()
 
-                masks, status = _process_frame(frame_u8, landmarker, feature_expand)
+                masks, status = _process_frame(frame_rgb_u8, landmarker, effective_expand)
                 statuses.append(status)
 
-                # Socket mask = union of enabled features
+                # ── Socket mask (binary uint8) from enabled features ─────────
                 active_np = []
                 if eyes:
                     active_np.append(masks['eyes'])
@@ -338,36 +397,54 @@ class BD_FaceSocketInfill(io.ComfyNode):
                     active_np.append(masks['lips'])
                 if nose:
                     active_np.append(masks['nose'])
-                socket_np = _union(*active_np) if active_np else _blank(H, W)
-                masks['socket'] = socket_np
+                socket_u8 = _union(*active_np) if active_np else _blank(H, W)
 
-                for k in _MASK_KEYS + ['socket']:
-                    batches[k].append(_to_tensor(masks[k]))
+                # ── Individual binary mask tensors ───────────────────────────
+                for k in _MASK_KEYS:
+                    batches[k].append(
+                        torch.from_numpy(masks[k].astype(np.float32) / 255.0)
+                    )
 
-                # Colour infill
-                frame_rgb = image[b, :, :, :3]             # (H, W, 3)
-                socket_t  = _to_tensor(socket_np)           # (H, W)
-                mask3     = socket_t.unsqueeze(-1)           # (H, W, 1)
-                filled    = frame_rgb * (1.0 - mask3) + fill_rgb * mask3   # (H, W, 3)
-                socket_images.append(filled)
+                # ── Feathered socket mask (float32, used for blending) ───────
+                socket_soft = _feather_mask(socket_u8, feather)   # (H, W) float [0,1]
+                batches['socket_soft'].append(torch.from_numpy(socket_soft))
 
-                # RGBA — socket alpha = 0
-                alpha_ch = (1.0 - socket_t).unsqueeze(-1)   # (H, W, 1)
-                alpha_images.append(torch.cat([filled, alpha_ch], dim=-1))  # (H, W, 4)
+                # ── Fill image (H, W, 3) float32 ────────────────────────────
+                if fill_mode == "surround":
+                    # Radius = 4× effective expand so blur reaches past the socket
+                    radius = max(15, effective_expand * 4)
+                    fill_np = _surround_fill(frame_rgb_u8, socket_u8, radius)  # (H,W,3) float
+                elif fill_mode == "inpaint":
+                    fill_np = _inpaint_fill(frame_rgb_u8, socket_u8)           # (H,W,3) float
+                else:  # flat
+                    fill_np = np.full((H, W, 3), flat_rgb, dtype=np.float32)
+
+                # ── Blend: filled = frame * (1-alpha) + fill * alpha ─────────
+                frame_f   = frame[..., :3].astype(np.float32)         # (H,W,3)
+                alpha_2d  = socket_soft[:, :, np.newaxis]              # (H,W,1)
+                blended   = frame_f * (1.0 - alpha_2d) + fill_np * alpha_2d
+                blended   = blended.clip(0.0, 1.0)
+
+                socket_images.append(torch.from_numpy(blended))        # (H,W,3)
+
+                # ── RGBA: blended RGB + (1-socket_soft) as alpha ─────────────
+                alpha_ch = (1.0 - socket_soft)[:, :, np.newaxis]
+                rgba     = np.concatenate([blended, alpha_ch], axis=-1)
+                alpha_images.append(torch.from_numpy(rgba.astype(np.float32)))  # (H,W,4)
 
         socket_image = torch.stack(socket_images, dim=0)   # (B, H, W, 3)
         alpha_image  = torch.stack(alpha_images,  dim=0)   # (B, H, W, 4)
-        out = {k: torch.stack(batches[k], dim=0) for k in _MASK_KEYS + ['socket']}
+        out = {k: torch.stack(batches[k], dim=0) for k in _MASK_KEYS + ['socket_soft']}
 
-        detected = sum(1 for s in statuses if s == "ok")
-        status_str = f"BD_FaceSocketInfill: {detected}/{B} detected"
+        detected  = sum(1 for s in statuses if s == "ok")
+        status_str = f"BD_FaceSocketInfill: {detected}/{B} detected | expand={effective_expand}px feather={feather} fill={fill_mode}"
         if detected < B:
             failed = [i for i, s in enumerate(statuses) if s != "ok"]
-            status_str += f" — missed frames: {failed}"
+            status_str += f" | missed frames: {failed}"
         print(f"[BD_FaceSocketInfill] {status_str}", flush=True)
 
         return io.NodeOutput(
-            socket_image, alpha_image, out['socket'],
+            socket_image, alpha_image, out['socket_soft'],
             out['left_eye'], out['right_eye'], out['eyes'],
             out['left_brow'], out['right_brow'], out['brows'],
             out['lips'], out['nose'],
@@ -375,6 +452,6 @@ class BD_FaceSocketInfill(io.ComfyNode):
         )
 
 
-FACE_SOCKET_INFILL_V3_NODES = [BD_FaceSocketInfill]
-FACE_SOCKET_INFILL_NODES = {"BD_FaceSocketInfill": BD_FaceSocketInfill}
+FACE_SOCKET_INFILL_V3_NODES    = [BD_FaceSocketInfill]
+FACE_SOCKET_INFILL_NODES       = {"BD_FaceSocketInfill": BD_FaceSocketInfill}
 FACE_SOCKET_INFILL_DISPLAY_NAMES = {"BD_FaceSocketInfill": "BD Face Socket Infill"}
