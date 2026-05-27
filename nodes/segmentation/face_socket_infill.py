@@ -175,25 +175,54 @@ def _fill_iris_ellipse(pts: np.ndarray, H: int, W: int,
     return out
 
 
-def _fill_polygon_angle(pts: np.ndarray, H: int, W: int,
-                         expand_x: int = 0, expand_y: int = 0) -> np.ndarray:
+def _fill_lip_shape(pts: np.ndarray, H: int, W: int,
+                    expand_x: int = 0, expand_y: int = 0) -> np.ndarray:
     """
-    Fill a polygon whose points are sorted by angle from their centroid.
+    Fill the lip polygon following the actual lip contour.
 
-    Unlike convexHull, this preserves concavities such as the cupid's bow on
-    the upper lip.  Works for any roughly-star-shaped landmark cloud.
+    MediaPipe lip landmarks include both the outer and inner lip contours.
+    Angle-sorting all of them together interleaves inner/outer points and
+    produces a figure-8 polygon that creates a double cupid's bow.
+
+    Fix: split by centroid Y into upper (outer upper lip / cupid's bow) and
+    lower (outer lower lip) groups, sort each by X, then expand the polygon
+    points directly before filling:
+      expand_x — extends the leftmost and rightmost endpoints only, so the
+                 corners taper naturally along the existing lip-corner angle
+                 instead of squaring off from a post-fill dilation.
+      expand_y — shifts the upper curve up and lower curve down uniformly.
+
+    No dilation is applied after filling.
     """
     out = np.zeros((H, W), dtype=np.uint8)
-    if len(pts) < 3:
+    if len(pts) < 6:
         return out
-    cx = float(pts[:, 0].mean())
+
     cy = float(pts[:, 1].mean())
-    angles = np.arctan2(pts[:, 1].astype(float) - cy,
-                        pts[:, 0].astype(float) - cx)
-    sorted_pts = pts[np.argsort(angles)]
-    cv2.fillPoly(out, [sorted_pts.reshape(-1, 1, 2)], 255)
-    if expand_x > 0 or expand_y > 0:
-        out = cv2.dilate(out, _ellipse_k_xy(max(1, expand_x), max(1, expand_y)))
+    upper = pts[pts[:, 1] <= cy].astype(np.float32)
+    lower = pts[pts[:, 1] >= cy].astype(np.float32)
+
+    if len(upper) < 2 or len(lower) < 2:
+        # Degenerate: fall back to convex hull
+        return _fill_convex(pts, H, W, expand_x, expand_y)
+
+    upper = upper[np.argsort(upper[:, 0])]          # left → right (cupid's bow)
+    lower = lower[np.argsort(lower[:, 0])[::-1]]    # right → left (lower lip)
+
+    # Expand X: move endpoints only — taper follows the natural corner angle
+    if expand_x > 0:
+        upper[0,  0] = max(0.0,        upper[0,  0] - expand_x)   # upper-left
+        upper[-1, 0] = min(float(W-1), upper[-1, 0] + expand_x)   # upper-right
+        lower[0,  0] = min(float(W-1), lower[0,  0] + expand_x)   # lower-right (reversed)
+        lower[-1, 0] = max(0.0,        lower[-1, 0] - expand_x)   # lower-left  (reversed)
+
+    # Expand Y: push curves away from centre
+    if expand_y > 0:
+        upper[:, 1] = np.clip(upper[:, 1] - expand_y, 0, H - 1)
+        lower[:, 1] = np.clip(lower[:, 1] + expand_y, 0, H - 1)
+
+    poly = np.vstack([upper, lower]).astype(np.int32).reshape(-1, 1, 2)
+    cv2.fillPoly(out, [poly], 255)
     return out
 
 
@@ -233,6 +262,7 @@ def _process_frame(
     zone_expand: dict[str, tuple[int, int]],   # zone → (expand_x, expand_y)
     eye_mode: str = "iris",
     brow_band: int = 12,                        # native-px half-height of arch band
+    eye_inset: int = 3,                         # native-px erosion inside eyelid (iris mode)
 ) -> tuple[dict[str, np.ndarray], str]:
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
@@ -260,12 +290,13 @@ def _process_frame(
         ex, ey = zone_expand['eyes']
         eyelid_mask = _fill_convex(_pts(_MP_IDX[eyelid_key], lm, H, W), H, W,
                                    expand_x=ex, expand_y=ey)
-        if eye_mode == "iris" and has_iris:
-            # Iris ellipse centres the socket; eyelid convex hull clips it so
-            # the mask can't bleed outside the actual eye opening.
-            iris_mask = _fill_iris_ellipse(_pts(_MP_IDX[iris_key], lm, H, W), H, W,
-                                           expand_x=ex, expand_y=ey)
-            return np.minimum(iris_mask, eyelid_mask)
+        if eye_mode == "iris" and eye_inset > 0:
+            # Eyelid hull is the outer shape reference; erode it inward so
+            # the socket sits just inside the lid edge.  Feathering then
+            # provides the outside sample zone beyond the lid.
+            k = _ellipse_k_xy(eye_inset, eye_inset)
+            eroded = cv2.erode(eyelid_mask, k)
+            return eroded if eroded.any() else eyelid_mask
         return eyelid_mask
 
     left_eye  = _eye_zone('left_iris',  'left_eye')
@@ -276,8 +307,8 @@ def _process_frame(
     right_brow = _brow_zone('right_brow')
     brows      = _union(left_brow, right_brow)
 
-    lips = _fill_polygon_angle(_pts(_MP_IDX['lips'], lm, H, W), H, W,
-                               expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1])
+    lips = _fill_lip_shape(_pts(_MP_IDX['lips'], lm, H, W), H, W,
+                           expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1])
     nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W,
                         expand_x=zone_expand['nose'][0], expand_y=zone_expand['nose'][1])
 
@@ -362,9 +393,13 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 # ── Eye fill strategy ─────────────────────────────────────────
                 io.Combo.Input("eye_mode", options=["iris", "eyelid"], default="iris",
                                optional=True,
-                               tooltip="iris: ellipse fitted to iris ring (blink-independent, "
-                                       "accurate centre). eyelid: convex hull of eyelid landmarks "
-                                       "(follows actual opening shape)."),
+                               tooltip="iris: eyelid hull eroded inward by eye_inset — socket "
+                                       "sits just inside the lid edge, feather provides outside "
+                                       "sample zone. eyelid: raw eyelid hull (may clip lashes)."),
+                io.Int.Input("eye_inset", default=2, min=0, max=15, step=1, optional=True,
+                             tooltip="Pixels (512px-norm) to erode the eyelid hull inward in "
+                                     "iris mode. 2 = socket sits 2px inside the lid edge. "
+                                     "0 = exact eyelid boundary."),
 
                 # ── Master expand (512px-normalised) ──────────────────────────
                 io.Int.Input("expand_x", default=6, min=0, max=60, step=1, optional=True,
@@ -458,6 +493,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         lips_feather: int = -1,
         nose_feather: int = -1,
         eye_mode: str = "iris",
+        eye_inset: int = 2,
         fill_mode: str = "flat",
         fill_r: int = 255,
         fill_g: int = 255,
@@ -528,8 +564,9 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 frame_rgb_u8 = frame_u8.copy()
 
                 brow_band_px = max(2, round(brow_band * scale))
+                eye_inset_px = max(0, round(eye_inset * scale))
                 masks, status = _process_frame(
-                    frame_rgb_u8, landmarker, zone_expand, eye_mode, brow_band_px
+                    frame_rgb_u8, landmarker, zone_expand, eye_mode, brow_band_px, eye_inset_px
                 )
                 statuses.append(status)
 
