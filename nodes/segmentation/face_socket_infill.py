@@ -74,6 +74,11 @@ def _init_mp_idx() -> None:
         'right_brow': _verts(_FLC.FACE_LANDMARKS_RIGHT_EYEBROW),
         'lips':       _verts(_FLC.FACE_LANDMARKS_LIPS),
     }
+    # Iris ring landmarks (indices 468-477, only present when FaceLandmarker
+    # returns 478-point mesh).  Hardcoded — FLC has no FACE_LANDMARKS_*_IRIS.
+    # 468=right center, 469-472=right ring, 473=left center, 474-477=left ring.
+    _MP_IDX['left_iris']  = [474, 475, 476, 477]   # ring only — centre at 473
+    _MP_IDX['right_iris'] = [469, 470, 471, 472]   # ring only — centre at 468
 
 
 # ── Mask helpers ──────────────────────────────────────────────────────────────
@@ -132,6 +137,50 @@ def _fill_arch_band(pts: np.ndarray, H: int, W: int,
     return out
 
 
+def _fill_iris_ellipse(pts: np.ndarray, H: int, W: int,
+                       expand_x: int = 0, expand_y: int = 0) -> np.ndarray:
+    """
+    Fit an ellipse to iris ring landmarks and draw it.
+
+    The 4-point iris ring gives a stable, blink-independent centre and radius.
+    expand_x / expand_y grow the fitted radius independently so the socket can
+    be made wider than tall (or vice versa) to match the character style.
+    """
+    out = np.zeros((H, W), dtype=np.uint8)
+    if len(pts) < 2:
+        return out
+    cx = int(round(float(pts[:, 0].mean())))
+    cy = int(round(float(pts[:, 1].mean())))
+    dists = np.sqrt(((pts.astype(np.float64) - [cx, cy]) ** 2).sum(axis=1))
+    r = int(round(float(dists.mean())))
+    rx = max(2, r + expand_x)
+    ry = max(2, r + expand_y)
+    cv2.ellipse(out, (cx, cy), (rx, ry), 0, 0, 360, 255, -1)
+    return out
+
+
+def _fill_polygon_angle(pts: np.ndarray, H: int, W: int,
+                         expand_x: int = 0, expand_y: int = 0) -> np.ndarray:
+    """
+    Fill a polygon whose points are sorted by angle from their centroid.
+
+    Unlike convexHull, this preserves concavities such as the cupid's bow on
+    the upper lip.  Works for any roughly-star-shaped landmark cloud.
+    """
+    out = np.zeros((H, W), dtype=np.uint8)
+    if len(pts) < 3:
+        return out
+    cx = float(pts[:, 0].mean())
+    cy = float(pts[:, 1].mean())
+    angles = np.arctan2(pts[:, 1].astype(float) - cy,
+                        pts[:, 0].astype(float) - cx)
+    sorted_pts = pts[np.argsort(angles)]
+    cv2.fillPoly(out, [sorted_pts.reshape(-1, 1, 2)], 255)
+    if expand_x > 0 or expand_y > 0:
+        out = cv2.dilate(out, _ellipse_k_xy(max(1, expand_x), max(1, expand_y)))
+    return out
+
+
 def _union(*masks: np.ndarray) -> np.ndarray:
     out = masks[0].copy()
     for m in masks[1:]:
@@ -166,6 +215,7 @@ def _process_frame(
     frame_rgb: np.ndarray,
     landmarker,
     zone_expand: dict[str, tuple[int, int]],   # zone → (expand_x, expand_y)
+    eye_mode: str = "iris",
 ) -> tuple[dict[str, np.ndarray], str]:
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
@@ -177,6 +227,7 @@ def _process_frame(
         return {k: blank for k in _MASK_KEYS}, "no face detected"
 
     lm = result.face_landmarks[0]
+    has_iris = len(lm) > 477  # 478-point mesh includes iris ring landmarks
 
     def _zone(key: str, feat_key: str) -> np.ndarray:
         ex, ey = zone_expand[key]
@@ -188,16 +239,24 @@ def _process_frame(
         return _fill_arch_band(_pts(_MP_IDX[feat_key], lm, H, W), H, W,
                                expand_x=ex, expand_y=ey)
 
-    left_eye  = _zone('eyes', 'left_eye')
-    right_eye = _zone('eyes', 'right_eye')
+    def _eye_zone(iris_key: str, eyelid_key: str) -> np.ndarray:
+        ex, ey = zone_expand['eyes']
+        if eye_mode == "iris" and has_iris:
+            return _fill_iris_ellipse(_pts(_MP_IDX[iris_key], lm, H, W), H, W,
+                                      expand_x=ex, expand_y=ey)
+        return _fill_convex(_pts(_MP_IDX[eyelid_key], lm, H, W), H, W,
+                            expand_x=ex, expand_y=ey)
+
+    left_eye  = _eye_zone('left_iris',  'left_eye')
+    right_eye = _eye_zone('right_iris', 'right_eye')
     eyes      = _union(left_eye, right_eye)
 
     left_brow  = _brow_zone('left_brow')
     right_brow = _brow_zone('right_brow')
     brows      = _union(left_brow, right_brow)
 
-    lips = _fill_convex(_pts(_MP_IDX['lips'], lm, H, W), H, W,
-                        expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1])
+    lips = _fill_polygon_angle(_pts(_MP_IDX['lips'], lm, H, W), H, W,
+                               expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1])
     nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W,
                         expand_x=zone_expand['nose'][0], expand_y=zone_expand['nose'][1])
 
@@ -278,6 +337,13 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 io.Boolean.Input("brows", default=True,  optional=True),
                 io.Boolean.Input("lips",  default=True,  optional=True),
                 io.Boolean.Input("nose",  default=False, optional=True),
+
+                # ── Eye fill strategy ─────────────────────────────────────────
+                io.Combo.Input("eye_mode", options=["iris", "eyelid"], default="iris",
+                               optional=True,
+                               tooltip="iris: ellipse fitted to iris ring (blink-independent, "
+                                       "accurate centre). eyelid: convex hull of eyelid landmarks "
+                                       "(follows actual opening shape)."),
 
                 # ── Master expand (512px-normalised) ──────────────────────────
                 io.Int.Input("expand_x", default=6, min=0, max=60, step=1, optional=True,
@@ -365,6 +431,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         brows_feather: int = -1,
         lips_feather: int = -1,
         nose_feather: int = -1,
+        eye_mode: str = "iris",
         fill_mode: str = "flat",
         fill_r: int = 255,
         fill_g: int = 255,
@@ -434,7 +501,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
                     frame_u8 = frame_u8[..., :3]
                 frame_rgb_u8 = frame_u8.copy()
 
-                masks, status = _process_frame(frame_rgb_u8, landmarker, zone_expand)
+                masks, status = _process_frame(frame_rgb_u8, landmarker, zone_expand, eye_mode)
                 statuses.append(status)
 
                 for k in _MASK_KEYS:
