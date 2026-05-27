@@ -1,26 +1,19 @@
 """
-BD_FaceFeatureCoords — extract pixel coords for selected face feature(s) from LANDMARKS_BATCH.
+BD_FaceFeatureCoords — extract pixel coords for selected face features from LANDMARKS_BATCH.
 
-Converts MediaPipe landmark positions into SAM3_Detect-ready outputs:
-  - positive_coords: JSON [{x,y},...] — wire to SAM3_Detect positive_coords
-  - bbox: BOUNDING_BOX {x,y,width,height} — wire to SAM3_Detect bboxes
+Toggle individual features on/off. The combined point cloud of all enabled
+features is emitted as SAM3_Detect-ready JSON.
 
-Supported feature names (single or comma-separated):
-  Individual:  left_eye  right_eye  left_brow  right_brow
-               left_iris  right_iris  lips  nose  face_oval  contours
-  Groups:      eyes (= left_eye + right_eye)
-               brows / eyebrows (= left_brow + right_brow)
-               irises (= left_iris + right_iris)
-               all_features (= eyes + brows + irises + lips + nose)
-               all (= all_features + face_oval + contours)
+Outputs:
+  positive_coords  STRING  JSON [{x,y},...] — wire to SAM3_Detect positive_coords
+  bbox_json        STRING  JSON {x,y,width,height} — informational tight bbox
+  status           STRING
 
-Wire pattern per feature:
-  BD_FaceLandmarks → BD_FaceFeatureCoords (features="left_eye")
-                   → positive_coords → SAM3_Detect → precise eye mask
-                   → bbox           → SAM3_Detect bboxes (optional box constraint)
+Wire pattern:
+  BD_FaceLandmarks → BD_FaceFeatureCoords → positive_coords → SAM3_Detect → mask
 
-  Use two BD_FaceFeatureCoords nodes with "left_eye" / "right_eye" to get
-  independent masks from two SAM3_Detect nodes when you need them separated.
+  For independent left/right masks: use two nodes with only the relevant
+  eye/iris toggle enabled on each.
 """
 
 from __future__ import annotations
@@ -36,7 +29,6 @@ from .types import LandmarksBatchInput
 
 _MP_IDX: dict[str, list[int]] = {}
 
-# Nose: custom set (no named MediaPipe connection group)
 _NOSE_INDICES: list[int] = sorted({
     168, 6, 197, 195, 5, 4, 1, 2,
     19, 94, 141, 370,
@@ -45,52 +37,38 @@ _NOSE_INDICES: list[int] = sorted({
     98, 327,
 })
 
-# Hardcoded fallbacks — matches MediaPipe 0.10 478-point model
 _FALLBACK_IDX: dict[str, list[int]] = {
-    "left_eye":   [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246],
-    "right_eye":  [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398],
-    "left_brow":  [46, 53, 52, 65, 55, 70, 63, 105, 66, 107],
-    "right_brow": [276, 283, 282, 295, 285, 300, 293, 334, 296, 336],
-    "left_iris":  [474, 475, 476, 477],
-    "right_iris": [469, 470, 471, 472],
+    "left_eye":   [33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246],
+    "right_eye":  [362,382,381,380,374,373,390,249,263,466,388,387,386,385,384,398],
+    "left_brow":  [46,53,52,65,55,70,63,105,66,107],
+    "right_brow": [276,283,282,295,285,300,293,334,296,336],
+    "left_iris":  [474,475,476,477],
+    "right_iris": [469,470,471,472],
     "lips": [
-        0, 13, 14, 17, 37, 39, 40, 61, 78, 80, 81, 82, 84, 87, 88, 91, 95,
-        146, 178, 181, 185, 191, 267, 269, 270, 291, 308, 310, 311, 312, 314,
-        317, 318, 321, 324, 375, 402, 405, 409, 415,
+        0,13,14,17,37,39,40,61,78,80,81,82,84,87,88,91,95,
+        146,178,181,185,191,267,269,270,291,308,310,311,312,314,
+        317,318,321,324,375,402,405,409,415,
     ],
     "face_oval": [
-        10, 21, 54, 58, 67, 93, 103, 109, 127, 132, 136, 148, 149, 150, 152,
-        162, 172, 176, 234, 251, 284, 288, 297, 323, 332, 338, 356, 361, 365,
-        377, 378, 379, 389, 397, 400, 454,
+        10,21,54,58,67,93,103,109,127,132,136,148,149,150,152,
+        162,172,176,234,251,284,288,297,323,332,338,356,361,365,
+        377,378,379,389,397,400,454,
     ],
     "contours": [
-        0, 7, 10, 13, 14, 17, 21, 33, 37, 39, 40, 46, 52, 53, 54, 55, 58, 61,
-        63, 65, 66, 67, 70, 78, 80, 81, 82, 84, 87, 88, 91, 93, 95, 103, 105,
-        107, 109, 127, 132, 133, 136, 144, 145, 146, 148, 149, 150, 152, 153,
-        154, 155, 157, 158, 159, 160, 161, 162, 163, 172, 173, 176, 178, 181,
-        185, 191, 234, 246, 249, 251, 263, 267, 269, 270, 276, 282, 283, 284,
-        285, 288, 291, 293, 295, 296, 297, 300, 308, 310, 311, 312, 314, 317,
-        318, 321, 323, 324, 332, 334, 336, 338, 356, 361, 362, 365, 373, 374,
-        375, 377, 378, 379, 380, 381, 382, 384, 385, 386, 387, 388, 389, 390,
-        397, 398, 400, 402, 405, 409, 415, 454, 466,
+        0,7,10,13,14,17,21,33,37,39,40,46,52,53,54,55,58,61,
+        63,65,66,67,70,78,80,81,82,84,87,88,91,93,95,103,105,
+        107,109,127,132,133,136,144,145,146,148,149,150,152,153,
+        154,155,157,158,159,160,161,162,163,172,173,176,178,181,
+        185,191,234,246,249,251,263,267,269,270,276,282,283,284,
+        285,288,291,293,295,296,297,300,308,310,311,312,314,317,
+        318,321,323,324,332,334,336,338,356,361,362,365,373,374,
+        375,377,378,379,380,381,382,384,385,386,387,388,389,390,
+        397,398,400,402,405,409,415,454,466,
     ],
     "nose": _NOSE_INDICES,
 }
 
-# Group aliases expand to one or more base feature names
-_ALIASES: dict[str, list[str]] = {
-    "eyes":        ["left_eye", "right_eye"],
-    "brows":       ["left_brow", "right_brow"],
-    "eyebrows":    ["left_brow", "right_brow"],
-    "irises":      ["left_iris", "right_iris"],
-    "all_features": ["left_eye", "right_eye", "left_brow", "right_brow",
-                     "left_iris", "right_iris", "lips", "nose"],
-    "all":         ["left_eye", "right_eye", "left_brow", "right_brow",
-                    "left_iris", "right_iris", "lips", "nose",
-                    "face_oval", "contours"],
-}
-
-_BASE_FEATURES = [
+_ALL_FEATURES = [
     "left_eye", "right_eye", "left_brow", "right_brow",
     "left_iris", "right_iris", "lips", "nose", "face_oval", "contours",
 ]
@@ -105,9 +83,9 @@ def _init_mp_idx() -> None:
             FaceLandmarksConnections as FLC,
         )
 
-        def _verts(connections) -> list[int]:
+        def _verts(conns) -> list[int]:
             s = set()
-            for c in connections:
+            for c in conns:
                 s.add(c.start)
                 s.add(c.end)
             return sorted(s)
@@ -128,41 +106,17 @@ def _init_mp_idx() -> None:
         _MP_IDX = dict(_FALLBACK_IDX)
 
 
-def _resolve_features(features_str: str) -> tuple[list[int], list[str]]:
-    """Parse a comma-separated feature string, expand aliases, return (indices, resolved_names)."""
-    _init_mp_idx()
-    tokens = [t.strip().lower() for t in features_str.split(",") if t.strip()]
-    seen: set[str] = set()
-    resolved: list[str] = []
-    for tok in tokens:
-        if tok in _ALIASES:
-            for base in _ALIASES[tok]:
-                if base not in seen:
-                    seen.add(base)
-                    resolved.append(base)
-        elif tok in _MP_IDX:
-            if tok not in seen:
-                seen.add(tok)
-                resolved.append(tok)
-        # unknown tokens are silently skipped (status will show 0 pts)
-
-    combined: set[int] = set()
-    for name in resolved:
-        combined.update(_MP_IDX.get(name, []))
-    return sorted(combined), resolved
-
-
 # ── Node ─────────────────────────────────────────────────────────────────────
 
 class BD_FaceFeatureCoords(io.ComfyNode):
     """
-    Extract pixel-space point coords for selected face feature(s) from LANDMARKS_BATCH.
+    Extract pixel-space landmark coords for selected face features from LANDMARKS_BATCH.
 
-    Outputs SAM3_Detect-ready positive_coords (STRING JSON) and a tight
-    BOUNDING_BOX covering all selected features.  Select multiple features
-    with a comma-separated list ("eyes, lips") to segment their union in one
-    SAM3_Detect call.  Use two nodes with "left_eye" / "right_eye" when you
-    need independent masks.
+    Toggle individual features on/off.  All enabled features are merged into a
+    single positive_coords JSON string for one SAM3_Detect call.
+
+    Use two nodes (e.g. left_eye only / right_eye only) to produce independent
+    masks from two separate SAM3_Detect calls.
     """
 
     @classmethod
@@ -172,46 +126,42 @@ class BD_FaceFeatureCoords(io.ComfyNode):
             display_name="BD Face Feature Coords",
             category="🧠BrainDead/FaceWrap",
             description=(
-                "Extract MediaPipe landmark coordinates for the selected face feature(s) "
-                "and emit them as SAM3_Detect-ready JSON.\n\n"
+                "Extract MediaPipe landmark coords for selected face features and emit "
+                "them as SAM3_Detect-ready JSON.\n\n"
+                "Toggle individual features. All enabled features are merged into one "
+                "positive_coords payload for a single SAM3_Detect call.\n\n"
                 "positive_coords → SAM3_Detect positive_coords (STRING)\n"
-                "bbox            → SAM3_Detect bboxes (BOUNDING_BOX)\n\n"
-                "Features: left_eye  right_eye  eyes  left_brow  right_brow  brows\n"
-                "          left_iris  right_iris  irises  lips  nose\n"
-                "          face_oval  contours  all_features  all\n\n"
-                "Comma-separate to combine: 'eyes, lips' → one SAM3 pass covering both."
+                "bbox_json       → informational bounding box (STRING JSON)"
             ),
             inputs=[
                 LandmarksBatchInput(
                     "landmarks_batch",
                     tooltip="LANDMARKS_BATCH from BD_FaceLandmarks.",
                 ),
-                io.String.Input(
-                    "features",
-                    default="left_eye",
-                    tooltip=(
-                        "Feature(s) to extract. Single name or comma-separated list.\n"
-                        "Individual: left_eye  right_eye  left_brow  right_brow\n"
-                        "            left_iris  right_iris  lips  nose  face_oval  contours\n"
-                        "Groups:     eyes (left+right eye)  brows (left+right brow)\n"
-                        "            irises (left+right iris)  all_features  all"
-                    ),
-                ),
                 io.Int.Input(
                     "frame_index", default=0, min=0, max=63, step=1, optional=True,
                     tooltip="Which frame in the batch to extract. 0 for single-image pipelines.",
                 ),
+                io.Boolean.Input("left_eye",   default=False, optional=True),
+                io.Boolean.Input("right_eye",  default=False, optional=True),
+                io.Boolean.Input("left_brow",  default=False, optional=True),
+                io.Boolean.Input("right_brow", default=False, optional=True),
+                io.Boolean.Input("left_iris",  default=False, optional=True),
+                io.Boolean.Input("right_iris", default=False, optional=True),
+                io.Boolean.Input("lips",       default=False, optional=True),
+                io.Boolean.Input("nose",       default=False, optional=True),
+                io.Boolean.Input("face_oval",  default=False, optional=True),
+                io.Boolean.Input("contours",   default=False, optional=True),
             ],
             outputs=[
                 io.String.Output(
                     display_name="positive_coords",
-                    tooltip='JSON [{x,y},...] of all landmark points for the selected feature(s). '
-                            'Wire to SAM3_Detect positive_coords.',
+                    tooltip="JSON [{x,y},...] of all enabled feature landmarks. "
+                            "Wire to SAM3_Detect positive_coords.",
                 ),
-                io.BoundingBox.Output(
-                    display_name="bbox",
-                    tooltip='Tight bounding box {x,y,width,height} covering all selected points. '
-                            'Wire to SAM3_Detect bboxes.',
+                io.String.Output(
+                    display_name="bbox_json",
+                    tooltip="Tight bounding box as JSON {x,y,width,height} covering all enabled features.",
                 ),
                 io.String.Output(display_name="status"),
             ],
@@ -221,35 +171,56 @@ class BD_FaceFeatureCoords(io.ComfyNode):
     def execute(
         cls,
         landmarks_batch: dict,
-        features: str = "left_eye",
         frame_index: int = 0,
+        left_eye: bool = False,
+        right_eye: bool = False,
+        left_brow: bool = False,
+        right_brow: bool = False,
+        left_iris: bool = False,
+        right_iris: bool = False,
+        lips: bool = False,
+        nose: bool = False,
+        face_oval: bool = False,
+        contours: bool = False,
     ) -> io.NodeOutput:
 
-        empty_bbox = {"x": 0.0, "y": 0.0, "width": 512.0, "height": 512.0}
+        enabled = {
+            "left_eye": left_eye, "right_eye": right_eye,
+            "left_brow": left_brow, "right_brow": right_brow,
+            "left_iris": left_iris, "right_iris": right_iris,
+            "lips": lips, "nose": nose,
+            "face_oval": face_oval, "contours": contours,
+        }
+        selected = [f for f in _ALL_FEATURES if enabled.get(f, False)]
+
+        if not selected:
+            return io.NodeOutput(
+                "[]", "{}",
+                "BD_FaceFeatureCoords: no features selected",
+            )
 
         views = (landmarks_batch or {}).get("views", [])
         if not views:
-            return io.NodeOutput("[]", empty_bbox, "BD_FaceFeatureCoords: no views in landmarks_batch")
+            return io.NodeOutput("[]", "{}", "BD_FaceFeatureCoords: no views in landmarks_batch")
 
         idx = min(frame_index, len(views) - 1)
         view = views[idx]
 
         if not view.get("detected", False):
             return io.NodeOutput(
-                "[]", empty_bbox,
+                "[]", "{}",
                 f"BD_FaceFeatureCoords: frame {idx} — no face detected",
             )
 
         lm2d: np.ndarray = view["landmarks_2d"]   # (478, 2) float pixel coords
         H, W = view["image_size"]
 
-        indices, resolved_names = _resolve_features(features)
+        _init_mp_idx()
 
-        if not indices:
-            return io.NodeOutput(
-                "[]", empty_bbox,
-                f"BD_FaceFeatureCoords: no valid features in '{features}'",
-            )
+        combined: set[int] = set()
+        for feat in selected:
+            combined.update(_MP_IDX.get(feat, []))
+        indices = sorted(combined)
 
         pts_arr = lm2d[indices]   # (N, 2)
         coords_json = json.dumps([
@@ -257,21 +228,20 @@ class BD_FaceFeatureCoords(io.ComfyNode):
             for p in pts_arr
         ])
 
-        xs = pts_arr[:, 0]
-        ys = pts_arr[:, 1]
+        xs, ys = pts_arr[:, 0], pts_arr[:, 1]
         x1 = float(max(0.0, float(xs.min())))
         y1 = float(max(0.0, float(ys.min())))
         x2 = float(min(float(W), float(xs.max())))
         y2 = float(min(float(H), float(ys.max())))
-        bbox = {"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1}
+        bbox_json = json.dumps({"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1})
 
         status = (
-            f"BD_FaceFeatureCoords: frame={idx} features=[{', '.join(resolved_names)}] "
-            f"pts={len(indices)} bbox=({x1:.0f},{y1:.0f},{x2-x1:.0f}×{y2-y1:.0f})"
+            f"BD_FaceFeatureCoords: frame={idx} features=[{', '.join(selected)}] "
+            f"pts={len(indices)} bbox=({x1:.0f},{y1:.0f} {x2-x1:.0f}×{y2-y1:.0f})"
         )
         print(f"[BD_FaceFeatureCoords] {status}", flush=True)
 
-        return io.NodeOutput(coords_json, bbox, status)
+        return io.NodeOutput(coords_json, bbox_json, status)
 
 
 FACEWRAP_FEATURE_COORDS_V3_NODES = [BD_FaceFeatureCoords]
