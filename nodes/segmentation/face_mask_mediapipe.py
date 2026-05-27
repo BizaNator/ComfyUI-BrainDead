@@ -487,7 +487,6 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
 
         n_out = len(_KEYS)
         _blank1 = torch.zeros((1, 1, 1), dtype=torch.float32)
-        _empty_bbox: dict = {}
         _empty_bbox_json: str = "{}"
 
         if not HAS_MEDIAPIPE or not HAS_CV2:
@@ -499,14 +498,14 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
             return io.NodeOutput(
                 *([_blank1] * n_out),
                 f"BD_MediaPipeFaceMask: missing packages — pip install {' '.join(missing)}",
-                _empty_bbox, _empty_bbox_json,
+                None, _empty_bbox_json,
             )
 
         if not os.path.exists(_MODEL_PATH):
             return io.NodeOutput(
                 *([_blank1] * n_out),
                 f"BD_MediaPipeFaceMask: model not found at {_MODEL_PATH}",
-                _empty_bbox, _empty_bbox_json,
+                None, _empty_bbox_json,
             )
 
         _init_mp_idx()
@@ -580,7 +579,7 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
 
         # Bbox for selected feature from bbox_frame
         import json as _json
-        bbox_out: dict = {}
+        bbox_out = None   # None → SAM3_Detect's `b_boxes is not None` guard skips box path
         bbox_json_out: str = "{}"
         if bbox_feature != "none" and bbox_feature in _KEYS:
             fi = min(bbox_frame, B - 1)
