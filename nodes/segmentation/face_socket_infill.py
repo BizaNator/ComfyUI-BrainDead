@@ -105,16 +105,29 @@ def _fill_convex(pts: np.ndarray, H: int, W: int,
     return out
 
 
-def _fill_arch_band(pts: np.ndarray, H: int, W: int,
-                    expand_x: int = 0, expand_y: int = 6) -> np.ndarray:
-    """
-    Fill a curved arch band for eyebrow landmarks.
+def _smooth_1d(arr: np.ndarray, window: int = 5) -> np.ndarray:
+    """Moving-average smooth of a 1-D float array.  Pads with edge values."""
+    if len(arr) < window:
+        return arr.copy()
+    kernel = np.ones(window, dtype=np.float32) / window
+    padded = np.pad(arr.astype(np.float32), window // 2, mode='edge')
+    return np.convolve(padded, kernel, mode='valid')[:len(arr)]
 
-    Brow landmarks sit only on the top edge of the arch — convex hull gives a
-    flat-bottomed polygon that ignores the curve.  Instead, we sort the points
-    left→right, shift a copy up by expand_y (upper edge) and down by expand_y
-    (lower edge), then fill the band between them.  This faithfully follows the
-    arch no matter how pronounced the curve is.
+
+def _fill_arch_band(pts: np.ndarray, H: int, W: int,
+                    expand_x: int = 0, expand_y: int = 0,
+                    band_half: int = 12) -> np.ndarray:
+    """
+    Fill a smooth arch band through sorted brow landmarks.
+
+    Two fixes vs. convex hull:
+    1. Arch shape — upper/lower edges follow the landmark curve instead of
+       bridging across the arch with a straight baseline.
+    2. Smooth Y — MediaPipe brow points have per-point Y jitter; a moving
+       average over the sorted sequence removes the squiggle.
+
+    band_half  — base half-height of the band in pixels (already scaled to
+                 native resolution by the caller).  expand_y adds on top.
     """
     out = np.zeros((H, W), dtype=np.uint8)
     if len(pts) < 2:
@@ -122,13 +135,16 @@ def _fill_arch_band(pts: np.ndarray, H: int, W: int,
 
     pts_sorted = pts[np.argsort(pts[:, 0])].astype(np.float32)
 
+    # Smooth Y to remove point-to-point jitter along the arch
+    window = min(len(pts_sorted), 5)
+    pts_sorted[:, 1] = _smooth_1d(pts_sorted[:, 1], window)
+
     if expand_x > 0:
         left  = pts_sorted[0].copy();  left[0]  = max(0.0, left[0] - expand_x)
         right = pts_sorted[-1].copy(); right[0] = min(float(W - 1), right[0] + expand_x)
         pts_sorted = np.vstack([left, pts_sorted, right])
 
-    # half_h: minimum 4 px so the band is always visible even at expand_y=0
-    half_h = max(4, expand_y)
+    half_h = max(band_half, expand_y)
     upper  = pts_sorted.copy(); upper[:, 1] = np.clip(upper[:, 1] - half_h, 0, H - 1)
     lower  = pts_sorted.copy(); lower[:, 1] = np.clip(lower[:, 1] + half_h, 0, H - 1)
 
@@ -216,6 +232,7 @@ def _process_frame(
     landmarker,
     zone_expand: dict[str, tuple[int, int]],   # zone → (expand_x, expand_y)
     eye_mode: str = "iris",
+    brow_band: int = 12,                        # native-px half-height of arch band
 ) -> tuple[dict[str, np.ndarray], str]:
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
@@ -237,15 +254,19 @@ def _process_frame(
     def _brow_zone(feat_key: str) -> np.ndarray:
         ex, ey = zone_expand['brows']
         return _fill_arch_band(_pts(_MP_IDX[feat_key], lm, H, W), H, W,
-                               expand_x=ex, expand_y=ey)
+                               expand_x=ex, expand_y=ey, band_half=brow_band)
 
     def _eye_zone(iris_key: str, eyelid_key: str) -> np.ndarray:
         ex, ey = zone_expand['eyes']
+        eyelid_mask = _fill_convex(_pts(_MP_IDX[eyelid_key], lm, H, W), H, W,
+                                   expand_x=ex, expand_y=ey)
         if eye_mode == "iris" and has_iris:
-            return _fill_iris_ellipse(_pts(_MP_IDX[iris_key], lm, H, W), H, W,
-                                      expand_x=ex, expand_y=ey)
-        return _fill_convex(_pts(_MP_IDX[eyelid_key], lm, H, W), H, W,
-                            expand_x=ex, expand_y=ey)
+            # Iris ellipse centres the socket; eyelid convex hull clips it so
+            # the mask can't bleed outside the actual eye opening.
+            iris_mask = _fill_iris_ellipse(_pts(_MP_IDX[iris_key], lm, H, W), H, W,
+                                           expand_x=ex, expand_y=ey)
+            return np.minimum(iris_mask, eyelid_mask)
+        return eyelid_mask
 
     left_eye  = _eye_zone('left_iris',  'left_eye')
     right_eye = _eye_zone('right_iris', 'right_eye')
@@ -362,6 +383,10 @@ class BD_FaceSocketInfill(io.ComfyNode):
                              tooltip="Brow horizontal override. Raise to catch side hairs."),
                 io.Int.Input("brows_expand_y", default=-1, min=-1, max=60, step=1, optional=True,
                              tooltip="Brow vertical override. Keep low to avoid eye socket bleed."),
+                io.Int.Input("brow_band", default=12, min=2, max=60, step=1, optional=True,
+                             tooltip="Base half-height of the brow arch band in 512px-normalised "
+                                     "pixels. This sets the minimum band thickness independently "
+                                     "of expand_y. Increase if brows look too thin."),
                 io.Int.Input("lips_expand_x",  default=-1, min=-1, max=60, step=1, optional=True,
                              tooltip="Lip horizontal override. Raise to cover laugh lines."),
                 io.Int.Input("lips_expand_y",  default=-1, min=-1, max=60, step=1, optional=True,
@@ -422,6 +447,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         eyes_expand_y: int = -1,
         brows_expand_x: int = -1,
         brows_expand_y: int = -1,
+        brow_band: int = 12,
         lips_expand_x: int = -1,
         lips_expand_y: int = -1,
         nose_expand_x: int = -1,
@@ -501,7 +527,10 @@ class BD_FaceSocketInfill(io.ComfyNode):
                     frame_u8 = frame_u8[..., :3]
                 frame_rgb_u8 = frame_u8.copy()
 
-                masks, status = _process_frame(frame_rgb_u8, landmarker, zone_expand, eye_mode)
+                brow_band_px = max(2, round(brow_band * scale))
+                masks, status = _process_frame(
+                    frame_rgb_u8, landmarker, zone_expand, eye_mode, brow_band_px
+                )
                 statuses.append(status)
 
                 for k in _MASK_KEYS:
