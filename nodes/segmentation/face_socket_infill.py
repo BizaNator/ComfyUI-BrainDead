@@ -100,6 +100,38 @@ def _fill_convex(pts: np.ndarray, H: int, W: int,
     return out
 
 
+def _fill_arch_band(pts: np.ndarray, H: int, W: int,
+                    expand_x: int = 0, expand_y: int = 6) -> np.ndarray:
+    """
+    Fill a curved arch band for eyebrow landmarks.
+
+    Brow landmarks sit only on the top edge of the arch — convex hull gives a
+    flat-bottomed polygon that ignores the curve.  Instead, we sort the points
+    left→right, shift a copy up by expand_y (upper edge) and down by expand_y
+    (lower edge), then fill the band between them.  This faithfully follows the
+    arch no matter how pronounced the curve is.
+    """
+    out = np.zeros((H, W), dtype=np.uint8)
+    if len(pts) < 2:
+        return out
+
+    pts_sorted = pts[np.argsort(pts[:, 0])].astype(np.float32)
+
+    if expand_x > 0:
+        left  = pts_sorted[0].copy();  left[0]  = max(0.0, left[0] - expand_x)
+        right = pts_sorted[-1].copy(); right[0] = min(float(W - 1), right[0] + expand_x)
+        pts_sorted = np.vstack([left, pts_sorted, right])
+
+    # half_h: minimum 4 px so the band is always visible even at expand_y=0
+    half_h = max(4, expand_y)
+    upper  = pts_sorted.copy(); upper[:, 1] = np.clip(upper[:, 1] - half_h, 0, H - 1)
+    lower  = pts_sorted.copy(); lower[:, 1] = np.clip(lower[:, 1] + half_h, 0, H - 1)
+
+    band_poly = np.vstack([upper, lower[::-1]]).astype(np.int32).reshape((-1, 1, 2))
+    cv2.fillPoly(out, [band_poly], 255)
+    return out
+
+
 def _union(*masks: np.ndarray) -> np.ndarray:
     out = masks[0].copy()
     for m in masks[1:]:
@@ -151,12 +183,17 @@ def _process_frame(
         return _fill_convex(_pts(_MP_IDX[feat_key], lm, H, W), H, W,
                             expand_x=ex, expand_y=ey)
 
+    def _brow_zone(feat_key: str) -> np.ndarray:
+        ex, ey = zone_expand['brows']
+        return _fill_arch_band(_pts(_MP_IDX[feat_key], lm, H, W), H, W,
+                               expand_x=ex, expand_y=ey)
+
     left_eye  = _zone('eyes', 'left_eye')
     right_eye = _zone('eyes', 'right_eye')
     eyes      = _union(left_eye, right_eye)
 
-    left_brow  = _zone('brows', 'left_brow')
-    right_brow = _zone('brows', 'right_brow')
+    left_brow  = _brow_zone('left_brow')
+    right_brow = _brow_zone('right_brow')
     brows      = _union(left_brow, right_brow)
 
     lips = _fill_convex(_pts(_MP_IDX['lips'], lm, H, W), H, W,
