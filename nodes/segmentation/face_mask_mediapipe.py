@@ -456,15 +456,12 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                 io.Mask.Output(display_name="hair",
                                tooltip="Region above face oval, to image top edge."),
                 io.String.Output(display_name="status"),
-                io.Custom("BOUNDING_BOX").Output(
-                    display_name="bbox",
-                    tooltip="Bounding box of bbox_feature from bbox_frame as {x,y,width,height}. "
-                            "Wire to SAM3_Detect bboxes for box-prompted segmentation. "
-                            "Empty dict {} when bbox_feature='none' or face not detected.",
-                ),
                 io.String.Output(
                     display_name="bbox_json",
-                    tooltip="Same bbox as JSON string — reliable alternative when BOUNDING_BOX type causes issues.",
+                    tooltip='Tight bbox of bbox_feature from bbox_frame as JSON string {"x","y","width","height"}. '
+                            '"{}\"when bbox_feature=\'none\' or face not detected. '
+                            "Note: BOUNDING_BOX typed output is omitted — V3 dispatcher routes the dict to the "
+                            "wrong downstream parameter. Use bbox_json + a JSON parse node if you need a bbox socket.",
                 ),
             ],
         )
@@ -498,14 +495,14 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
             return io.NodeOutput(
                 *([_blank1] * n_out),
                 f"BD_MediaPipeFaceMask: missing packages — pip install {' '.join(missing)}",
-                None, _empty_bbox_json,
+                _empty_bbox_json,
             )
 
         if not os.path.exists(_MODEL_PATH):
             return io.NodeOutput(
                 *([_blank1] * n_out),
                 f"BD_MediaPipeFaceMask: model not found at {_MODEL_PATH}",
-                None, _empty_bbox_json,
+                _empty_bbox_json,
             )
 
         _init_mp_idx()
@@ -577,19 +574,17 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
         )
         print(f"[BD_MediaPipeFaceMask] {status_str}", flush=True)
 
-        # Bbox for selected feature from bbox_frame
+        # Bbox JSON for selected feature from bbox_frame
         import json as _json
-        bbox_out = None   # None → SAM3_Detect's `b_boxes is not None` guard skips box path
         bbox_json_out: str = "{}"
         if bbox_feature != "none" and bbox_feature in _KEYS:
             fi = min(bbox_frame, B - 1)
             feat_mask_np = (region_batches[bbox_feature][fi].numpy() * 255).astype(np.uint8)
             result = _bbox_from_mask(feat_mask_np)
             if result is not None:
-                bbox_out = result
                 bbox_json_out = _json.dumps(result)
 
-        return io.NodeOutput(*outputs, status_str, bbox_out, bbox_json_out)
+        return io.NodeOutput(*outputs, status_str, bbox_json_out)
 
 
 FACE_MASK_MP_V3_NODES = [BD_MediaPipeFaceMask]
