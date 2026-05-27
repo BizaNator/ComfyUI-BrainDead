@@ -18,6 +18,10 @@ skin        face_oval minus (eyes + brows + lips [+ nose if subtract_nose]).
 left_eye /  Individual eye contour masks. MediaPipe convention: "left" = subject's
 right_eye   left eye, which appears on the RIGHT side of a front-facing image.
 
+left_iris / Iris-only masks — the coloured disc of each eye.  Derived from MediaPipe's
+right_iris  4-point iris landmark ring (indices 469-477).  Requires the 478-point model.
+            Falls back to blank if iris landmarks are absent.
+
 eyes        Union of left_eye + right_eye.
 
 left_brow / Individual eyebrow masks.
@@ -117,6 +121,9 @@ def _init_mp_idx() -> None:
         'left_brow':  _conn_verts(_FLC.FACE_LANDMARKS_LEFT_EYEBROW),
         'right_brow': _conn_verts(_FLC.FACE_LANDMARKS_RIGHT_EYEBROW),
         'lips':       _conn_verts(_FLC.FACE_LANDMARKS_LIPS),
+        # Iris ring landmarks (478-point model only; 468-472=right, 473-477=left)
+        'left_iris':  _conn_verts(_FLC.FACE_LANDMARKS_LEFT_IRIS),   # [474,475,476,477]
+        'right_iris': _conn_verts(_FLC.FACE_LANDMARKS_RIGHT_IRIS),  # [469,470,471,472]
     }
 
 
@@ -181,6 +188,18 @@ def _to_tensor(m: np.ndarray) -> torch.Tensor:
 
 # ── Derived region helpers ────────────────────────────────────────────────────
 
+def _bbox_from_mask(mask: np.ndarray) -> dict | None:
+    """Return {x,y,width,height} pixel bbox for non-zero region, or None if empty."""
+    rows = np.any(mask > 0, axis=1)
+    cols = np.any(mask > 0, axis=0)
+    if not rows.any():
+        return None
+    y1, y2 = int(np.where(rows)[0][0]), int(np.where(rows)[0][-1])
+    x1, x2 = int(np.where(cols)[0][0]), int(np.where(cols)[0][-1])
+    return {"x": float(x1), "y": float(y1),
+            "width": float(x2 - x1 + 1), "height": float(y2 - y1 + 1)}
+
+
 def _hair_mask(oval_pts: np.ndarray, H: int, W: int, expand: int = 20) -> np.ndarray:
     if len(oval_pts) == 0:
         return _blank(H, W)
@@ -226,6 +245,18 @@ _KEYS = [
     'face_oval', 'skin',
     'left_eye', 'right_eye', 'eyes',
     'left_brow', 'right_brow', 'brows',
+    'left_iris', 'right_iris', 'irises',
+    'lips', 'nose',
+    'left_ear', 'right_ear', 'ears',
+    'forehead', 'hair',
+]
+
+_BBOX_FEATURES = [
+    'none',
+    'face_oval', 'skin',
+    'left_eye', 'right_eye', 'eyes',
+    'left_brow', 'right_brow', 'brows',
+    'left_iris', 'right_iris', 'irises',
     'lips', 'nose',
     'left_ear', 'right_ear', 'ears',
     'forehead', 'hair',
@@ -237,6 +268,7 @@ def _process_frame(
     landmarker,
     face_expand: int,
     feature_expand: int,
+    iris_expand: int,
     subtract_nose: bool,
     ear_expand: int,
     hair_expand: int,
@@ -274,6 +306,15 @@ def _process_frame(
     # Nose
     nose = _fill_convex(_pts(_NOSE_INDICES, lm, H, W), H, W)
 
+    # Iris (478-point model only — guard for shorter landmark lists)
+    if len(lm) > 477 and 'left_iris' in _MP_IDX:
+        left_iris  = _fill_convex(_pts(_MP_IDX['left_iris'],  lm, H, W), H, W, expand=iris_expand)
+        right_iris = _fill_convex(_pts(_MP_IDX['right_iris'], lm, H, W), H, W, expand=iris_expand)
+    else:
+        left_iris  = _blank(H, W)
+        right_iris = _blank(H, W)
+    irises = _union(left_iris, right_iris)
+
     # Ears
     left_ear  = _ear_mask(_pts(_LEFT_EAR_OVAL,  lm, H, W), face_cx, H, W, 'left',  ear_expand)
     right_ear = _ear_mask(_pts(_RIGHT_EAR_OVAL, lm, H, W), face_cx, H, W, 'right', ear_expand)
@@ -294,6 +335,7 @@ def _process_frame(
         'face_oval': face_oval, 'skin': skin,
         'left_eye': left_eye, 'right_eye': right_eye, 'eyes': eyes,
         'left_brow': left_brow, 'right_brow': right_brow, 'brows': brows,
+        'left_iris': left_iris, 'right_iris': right_iris, 'irises': irises,
         'lips': lips, 'nose': nose,
         'left_ear': left_ear, 'right_ear': right_ear, 'ears': ears,
         'forehead': forehead, 'hair': hair,
@@ -350,12 +392,29 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                     tooltip="When True, nose region is also excluded from skin mask.",
                 ),
                 io.Int.Input(
+                    "iris_expand", default=4, min=0, max=20, step=1, optional=True,
+                    tooltip="Pixels to expand iris landmark ring outward to fill the coloured disc. "
+                            "Iris ring is 4 points; 3-6 px gives a natural circle. 0 = tight hull only.",
+                ),
+                io.Int.Input(
                     "ear_expand", default=25, min=0, max=80, step=1, optional=True,
                     tooltip="Pixels to expand ear (preauricular) region beyond the face oval edge.",
                 ),
                 io.Int.Input(
                     "hair_expand", default=20, min=0, max=80, step=1, optional=True,
                     tooltip="Pixels to expand hair region downward into the hairline transition zone.",
+                ),
+                io.Combo.Input(
+                    "bbox_feature",
+                    options=_BBOX_FEATURES,
+                    default="none", optional=True,
+                    tooltip="Which feature to emit as a bounding box. 'none' skips bbox computation. "
+                            "bbox is from frame 0 (or first detected frame). "
+                            "Wire bbox to SAM3_Detect bboxes for box-prompted segmentation.",
+                ),
+                io.Int.Input(
+                    "bbox_frame", default=0, min=0, max=63, step=1, optional=True,
+                    tooltip="Which frame index to extract the bbox from (default 0).",
                 ),
             ],
             outputs=[
@@ -376,6 +435,12 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                                tooltip="Right eyebrow."),
                 io.Mask.Output(display_name="brows",
                                tooltip="Both brows combined."),
+                io.Mask.Output(display_name="left_iris",
+                               tooltip="Left iris disc (coloured part of eye). Requires 478-point model."),
+                io.Mask.Output(display_name="right_iris",
+                               tooltip="Right iris disc."),
+                io.Mask.Output(display_name="irises",
+                               tooltip="Both irises combined."),
                 io.Mask.Output(display_name="lips",
                                tooltip="Full lip area (upper + lower, inner + outer contour)."),
                 io.Mask.Output(display_name="nose",
@@ -389,9 +454,18 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                 io.Mask.Output(display_name="forehead",
                                tooltip="Upper ~40% of face_oval minus brow band."),
                 io.Mask.Output(display_name="hair",
-                               tooltip="Region above face oval, to image top edge. "
-                                       "Wire to BD_ColorExtract for hair colour analysis."),
+                               tooltip="Region above face oval, to image top edge."),
                 io.String.Output(display_name="status"),
+                io.Custom("BOUNDING_BOX").Output(
+                    display_name="bbox",
+                    tooltip="Bounding box of bbox_feature from bbox_frame as {x,y,width,height}. "
+                            "Wire to SAM3_Detect bboxes for box-prompted segmentation. "
+                            "Empty dict {} when bbox_feature='none' or face not detected.",
+                ),
+                io.String.Output(
+                    display_name="bbox_json",
+                    tooltip="Same bbox as JSON string — reliable alternative when BOUNDING_BOX type causes issues.",
+                ),
             ],
         )
 
@@ -403,13 +477,18 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
         detection_confidence: float = 0.5,
         face_expand: int = 0,
         feature_expand: int = 4,
+        iris_expand: int = 4,
         subtract_nose: bool = False,
         ear_expand: int = 25,
         hair_expand: int = 20,
+        bbox_feature: str = "none",
+        bbox_frame: int = 0,
     ) -> io.NodeOutput:
 
         n_out = len(_KEYS)
         _blank1 = torch.zeros((1, 1, 1), dtype=torch.float32)
+        _empty_bbox: dict = {}
+        _empty_bbox_json: str = "{}"
 
         if not HAS_MEDIAPIPE or not HAS_CV2:
             missing = []
@@ -420,12 +499,14 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
             return io.NodeOutput(
                 *([_blank1] * n_out),
                 f"BD_MediaPipeFaceMask: missing packages — pip install {' '.join(missing)}",
+                _empty_bbox, _empty_bbox_json,
             )
 
         if not os.path.exists(_MODEL_PATH):
             return io.NodeOutput(
                 *([_blank1] * n_out),
                 f"BD_MediaPipeFaceMask: model not found at {_MODEL_PATH}",
+                _empty_bbox, _empty_bbox_json,
             )
 
         _init_mp_idx()
@@ -476,6 +557,7 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                     frame_rgb, landmarker,
                     face_expand=face_expand,
                     feature_expand=feature_expand,
+                    iris_expand=iris_expand,
                     subtract_nose=subtract_nose,
                     ear_expand=ear_expand,
                     hair_expand=hair_expand,
@@ -496,7 +578,19 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
         )
         print(f"[BD_MediaPipeFaceMask] {status_str}", flush=True)
 
-        return io.NodeOutput(*outputs, status_str)
+        # Bbox for selected feature from bbox_frame
+        import json as _json
+        bbox_out: dict = {}
+        bbox_json_out: str = "{}"
+        if bbox_feature != "none" and bbox_feature in _KEYS:
+            fi = min(bbox_frame, B - 1)
+            feat_mask_np = (region_batches[bbox_feature][fi].numpy() * 255).astype(np.uint8)
+            result = _bbox_from_mask(feat_mask_np)
+            if result is not None:
+                bbox_out = result
+                bbox_json_out = _json.dumps(result)
+
+        return io.NodeOutput(*outputs, status_str, bbox_out, bbox_json_out)
 
 
 FACE_MASK_MP_V3_NODES = [BD_MediaPipeFaceMask]
