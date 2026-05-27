@@ -47,6 +47,14 @@ except ImportError:
 
 # ── Landmark index sets ───────────────────────────────────────────────────────
 
+# Outer lip perimeter in winding order: left corner → upper lip → right corner
+# → lower lip → back.  Excludes inner contour indices that cause the
+# double-cupid's-bow when all lip landmarks are used together.
+_OUTER_LIP_IDX = [
+     61, 185,  40,  39,  37,   0, 267, 269, 270, 409, 291,   # upper (L→R)
+    375, 321, 405, 314,  17,  84, 181,  91, 146,             # lower (R→L)
+]
+
 _NOSE_INDICES = sorted({
     168, 6, 197, 195, 5, 4, 1, 2,
     19, 94, 141, 370,
@@ -182,77 +190,42 @@ def _fill_lip_shape(pts: np.ndarray, H: int, W: int,
                     expand_x: int = 0, expand_y: int = 0,
                     lip_band: int = 6) -> np.ndarray:
     """
-    Fill the lip polygon from the true outer contour via X-binning.
+    Fill lip polygon from ordered outer lip contour landmarks.
 
-    Centroid-Y split still included inner-lip contour points, producing a
-    smaller, irregular polygon that mis-filled.  X-binning takes the topmost
-    point (min Y) and bottommost point (max Y) within each horizontal slice,
-    giving the actual outer lip boundary regardless of inner contour noise.
+    pts must arrive in perimeter winding order via _OUTER_LIP_IDX — NOT
+    sorted by angle or index.  The outer contour naturally carries the
+    cupid's bow; inner contour indices are excluded, fixing the previous
+    double-cupid and box issues.
 
-    lip_band  — minimum half-height from centroid to each curve (native px).
-    expand_x  — extends the endpoints only → natural taper at corners.
-    expand_y  — shifts the upper curve up and lower curve down uniformly.
+    Expansion pushes each point outward from the centroid using sign(delta):
+      corners      → expand_x sideways (tapers naturally along corner edge)
+      top-centre   → expand_y upward
+      bottom-centre → expand_y downward
+
+    lip_band — minimum half-height from centroid (native px).
     """
     out = np.zeros((H, W), dtype=np.uint8)
     if len(pts) < 6:
         return out
 
-    pts_f = pts.astype(np.float64)
-    x_min, x_max = pts_f[:, 0].min(), pts_f[:, 0].max()
-    if x_max - x_min < 2:
-        return _fill_convex(pts, H, W, expand_x, expand_y)
+    pts_f = pts.astype(np.float32).copy()
+    cx = float(pts_f[:, 0].mean())
+    cy = float(pts_f[:, 1].mean())
 
-    # Adaptive bin count: more bins = more detail, but we smooth anyway
-    n_bins = max(16, len(pts) // 2)
-    edges = np.linspace(x_min, x_max, n_bins + 1)
-    upper_pts: list[list[float]] = []
-    lower_pts: list[list[float]] = []
+    if expand_x > 0 or expand_y > 0:
+        dx = pts_f[:, 0] - cx
+        dy = pts_f[:, 1] - cy
+        pts_f[:, 0] = np.clip(pts_f[:, 0] + np.sign(dx) * expand_x, 0, W - 1)
+        pts_f[:, 1] = np.clip(pts_f[:, 1] + np.sign(dy) * expand_y, 0, H - 1)
 
-    for i in range(n_bins):
-        lo, hi = edges[i], edges[i + 1]
-        in_bin = (pts_f[:, 0] >= lo) & (pts_f[:, 0] < hi)
-        if not in_bin.any():
-            continue
-        bp = pts_f[in_bin]
-        cx = float(bp[:, 0].mean())
-        upper_pts.append([cx, float(bp[:, 1].min())])
-        lower_pts.append([cx, float(bp[:, 1].max())])
-
-    if len(upper_pts) < 2 or len(lower_pts) < 2:
-        return _fill_convex(pts, H, W, expand_x, expand_y)
-
-    upper = np.array(upper_pts, dtype=np.float32)   # already sorted left→right
-    lower = np.array(lower_pts, dtype=np.float32)
-
-    # Smooth Y on each curve to remove bin-edge jaggedness
-    w = min(7, len(upper))
-    upper[:, 1] = _smooth_1d(upper[:, 1], w)
-    lower[:, 1] = _smooth_1d(lower[:, 1], w)
-
-    # Enforce minimum band half-height from each curve's local centroid
     if lip_band > 0:
-        mid_y = (upper[:, 1].mean() + lower[:, 1].mean()) * 0.5
-        upper[:, 1] = np.minimum(upper[:, 1], mid_y - lip_band)
-        lower[:, 1] = np.maximum(lower[:, 1], mid_y + lip_band)
+        above = pts_f[:, 1] < cy
+        below = pts_f[:, 1] > cy
+        pts_f[above, 1] = np.minimum(pts_f[above, 1], cy - lip_band)
+        pts_f[below, 1] = np.maximum(pts_f[below, 1], cy + lip_band)
+        np.clip(pts_f[:, 1], 0, H - 1, out=pts_f[:, 1])
 
-    # Horizontal: extend endpoints only — taper follows corner angle naturally
-    if expand_x > 0:
-        upper[0,  0] = max(0.0,        upper[0,  0] - expand_x)
-        upper[-1, 0] = min(float(W-1), upper[-1, 0] + expand_x)
-        lower[0,  0] = max(0.0,        lower[0,  0] - expand_x)
-        lower[-1, 0] = min(float(W-1), lower[-1, 0] + expand_x)
-
-    # Vertical: push curves away from centre
-    if expand_y > 0:
-        upper[:, 1] = np.clip(upper[:, 1] - expand_y, 0, H - 1)
-        lower[:, 1] = np.clip(lower[:, 1] + expand_y, 0, H - 1)
-
-    np.clip(upper[:, 1], 0, H - 1, out=upper[:, 1])
-    np.clip(lower[:, 1], 0, H - 1, out=lower[:, 1])
-
-    # upper left→right + lower right→left closes the polygon correctly
-    poly = np.vstack([upper, lower[::-1]]).astype(np.int32).reshape(-1, 1, 2)
-    cv2.fillPoly(out, [poly], 255)
+    cv2.fillPoly(out, [pts_f.astype(np.int32).reshape(-1, 1, 2)], 255)
     return out
 
 
@@ -338,7 +311,7 @@ def _process_frame(
     right_brow = _brow_zone('right_brow')
     brows      = _union(left_brow, right_brow)
 
-    lips = _fill_lip_shape(_pts(_MP_IDX['lips'], lm, H, W), H, W,
+    lips = _fill_lip_shape(_pts(_OUTER_LIP_IDX, lm, H, W), H, W,
                            expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1],
                            lip_band=lip_band)
     nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W,
