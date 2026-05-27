@@ -186,10 +186,35 @@ def _surround_fill(frame_u8: np.ndarray, socket_u8: np.ndarray, radius: int) -> 
     return blurred / 255.0
 
 
-def _inpaint_fill(frame_u8: np.ndarray, socket_u8: np.ndarray) -> np.ndarray:
-    """OpenCV Telea inpaint — fills socket region using surrounding pixels."""
-    inpainted = cv2.inpaint(frame_u8, socket_u8, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
-    return inpainted.astype(np.float32) / 255.0
+def _inpaint_fill(
+    frame_u8: np.ndarray,
+    socket_u8: np.ndarray,
+    effective_expand: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    OpenCV Telea inpaint.
+
+    Returns (fill_np, inpaint_mask_u8):
+      fill_np         — (H,W,3) float32, inpainted result
+      inpaint_mask_u8 — expanded uint8 mask actually fed to cv2.inpaint
+
+    The inpaint mask is dilated by an extra margin so the mask boundary
+    sits on clean skin, not on hair fringe — that's what causes traces.
+    Callers should use inpaint_mask_u8 (not the original socket_u8) when
+    feathering/blending so the soft edge also sits on clean skin.
+    """
+    # Extra dilation: push the boundary off hair pixels onto clean skin.
+    # ~0.5× effective_expand gives a visible safety margin without being huge.
+    fringe_margin = max(4, effective_expand // 2)
+    inpaint_mask  = cv2.dilate(socket_u8, _ellipse_k(fringe_margin))
+
+    # Inpaint radius must reach across any remaining visible feature detail.
+    # Scale with effective_expand so it stays proportional at any resolution.
+    inpaint_radius = max(12, effective_expand)
+
+    inpainted = cv2.inpaint(frame_u8, inpaint_mask, inpaintRadius=inpaint_radius,
+                             flags=cv2.INPAINT_TELEA)
+    return inpainted.astype(np.float32) / 255.0, inpaint_mask
 
 
 # ── Node ─────────────────────────────────────────────────────────────────────
@@ -405,23 +430,29 @@ class BD_FaceSocketInfill(io.ComfyNode):
                         torch.from_numpy(masks[k].astype(np.float32) / 255.0)
                     )
 
-                # ── Feathered socket mask (float32, used for blending) ───────
-                socket_soft = _feather_mask(socket_u8, feather)   # (H, W) float [0,1]
-                batches['socket_soft'].append(torch.from_numpy(socket_soft))
+                # ── Fill image + determine which mask to feather/blend with ──
+                blend_mask_u8 = socket_u8   # default: feather the original socket
 
-                # ── Fill image (H, W, 3) float32 ────────────────────────────
                 if fill_mode == "surround":
-                    # Radius = 4× effective expand so blur reaches past the socket
-                    radius = max(15, effective_expand * 4)
-                    fill_np = _surround_fill(frame_rgb_u8, socket_u8, radius)  # (H,W,3) float
+                    radius  = max(15, effective_expand * 4)
+                    fill_np = _surround_fill(frame_rgb_u8, socket_u8, radius)
                 elif fill_mode == "inpaint":
-                    fill_np = _inpaint_fill(frame_rgb_u8, socket_u8)           # (H,W,3) float
+                    fill_np, blend_mask_u8 = _inpaint_fill(
+                        frame_rgb_u8, socket_u8, effective_expand
+                    )
+                    # blend_mask_u8 is the dilated inpaint mask — its boundary
+                    # is on clean skin, so the feathered edge won't blend back
+                    # any original hair pixels
                 else:  # flat
                     fill_np = np.full((H, W, 3), flat_rgb, dtype=np.float32)
 
+                # ── Feathered mask (from the blend_mask for this mode) ───────
+                socket_soft = _feather_mask(blend_mask_u8, feather)   # (H,W) [0,1]
+                batches['socket_soft'].append(torch.from_numpy(socket_soft))
+
                 # ── Blend: filled = frame * (1-alpha) + fill * alpha ─────────
-                frame_f   = frame[..., :3].astype(np.float32)         # (H,W,3)
-                alpha_2d  = socket_soft[:, :, np.newaxis]              # (H,W,1)
+                frame_f  = frame[..., :3].astype(np.float32)           # (H,W,3)
+                alpha_2d = socket_soft[:, :, np.newaxis]                # (H,W,1)
                 blended   = frame_f * (1.0 - alpha_2d) + fill_np * alpha_2d
                 blended   = blended.clip(0.0, 1.0)
 
