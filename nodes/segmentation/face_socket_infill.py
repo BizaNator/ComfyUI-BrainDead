@@ -6,22 +6,21 @@ regions with a flat colour or the surrounding skin tone, producing a base
 texture with empty "sockets" that separate flipbook animation layers can be
 composited into.
 
+feature_expand / feather are the master (default) values used for all zones.
+Per-zone overrides (eyes_expand, brows_expand, lips_expand, nose_expand and
+their *_feather counterparts) take priority when set to any value ≥ 0.
+Set them to -1 (or leave unwired) to fall back to the master values.
+
 feature_expand is normalised to 512 px and auto-scales with image resolution:
-  6 px at  512 × 512  →  6 px effective
-  6 px at 1024 × 1024 → 12 px effective
-  6 px at 2048 × 2048 → 24 px effective
+  6 px at  512 × 512  →   6 px effective
+  6 px at 1024 × 1024 →  12 px effective
+  6 px at 1536 × 1536 →  18 px effective
 
 fill_mode:
-  flat      — fill_r / fill_g / fill_b (default white, useful for UV textures)
-  surround  — Gaussian-blur the frame and composite through the socket mask,
-              so the fill colour matches the surrounding skin tone
-  inpaint   — OpenCV Telea inpaint (good quality, slower)
-
-Wire pattern:
-  LoadImage → BD_FaceSocketInfill → socket_image  (UV / texture export)
-                                  → alpha_image   (RGBA, sockets transparent)
-                                  → socket_mask   (for further compositing)
-                                  → left_eye / right_eye / … (animation align)
+  flat     — fill_r / fill_g / fill_b (default white, good for UV textures)
+  surround — Gaussian-blur frame and composite so fill matches surrounding skin
+  inpaint  — OpenCV Telea inpaint per zone (best quality, slower)
+             Each zone is inpainted independently so brows can't bleed into eyes.
 """
 
 from __future__ import annotations
@@ -118,6 +117,15 @@ def _blank(H: int, W: int) -> np.ndarray:
     return np.zeros((H, W), dtype=np.uint8)
 
 
+def _feather_mask(mask_u8: np.ndarray, feather: int) -> np.ndarray:
+    """Binary uint8 mask → float32 [0,1] with Gaussian-softened edges."""
+    if feather <= 0:
+        return mask_u8.astype(np.float32) / 255.0
+    ksize = feather * 2 + 1
+    blurred = cv2.GaussianBlur(mask_u8.astype(np.float32), (ksize, ksize), feather * 0.5)
+    return (blurred / 255.0).clip(0.0, 1.0)
+
+
 # ── Per-frame mask extraction ─────────────────────────────────────────────────
 
 _MASK_KEYS = [
@@ -126,13 +134,19 @@ _MASK_KEYS = [
     'lips', 'nose',
 ]
 
+# zone keys referenced in zone_expand / zone_feather dicts
+_ZONES = ('eyes', 'brows', 'lips', 'nose')
+
 
 def _process_frame(
     frame_rgb: np.ndarray,
     landmarker,
-    effective_expand: int,
+    zone_expand: dict[str, int],
 ) -> tuple[dict[str, np.ndarray], str]:
-    """Return raw binary uint8 masks at the frame's native resolution."""
+    """
+    Return per-feature binary uint8 masks at the frame's native resolution.
+    Each zone uses its own expansion radius from zone_expand.
+    """
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
 
@@ -143,17 +157,18 @@ def _process_frame(
         return {k: blank for k in _MASK_KEYS}, "no face detected"
 
     lm = result.face_landmarks[0]
+    ex = zone_expand   # shorthand
 
-    left_eye  = _fill_convex(_pts(_MP_IDX['left_eye'],  lm, H, W), H, W, expand=effective_expand)
-    right_eye = _fill_convex(_pts(_MP_IDX['right_eye'], lm, H, W), H, W, expand=effective_expand)
+    left_eye  = _fill_convex(_pts(_MP_IDX['left_eye'],  lm, H, W), H, W, expand=ex['eyes'])
+    right_eye = _fill_convex(_pts(_MP_IDX['right_eye'], lm, H, W), H, W, expand=ex['eyes'])
     eyes      = _union(left_eye, right_eye)
 
-    left_brow  = _fill_convex(_pts(_MP_IDX['left_brow'],  lm, H, W), H, W, expand=effective_expand)
-    right_brow = _fill_convex(_pts(_MP_IDX['right_brow'], lm, H, W), H, W, expand=effective_expand)
+    left_brow  = _fill_convex(_pts(_MP_IDX['left_brow'],  lm, H, W), H, W, expand=ex['brows'])
+    right_brow = _fill_convex(_pts(_MP_IDX['right_brow'], lm, H, W), H, W, expand=ex['brows'])
     brows      = _union(left_brow, right_brow)
 
-    lips = _fill_convex(_pts(_MP_IDX['lips'], lm, H, W), H, W, expand=effective_expand)
-    nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W)
+    lips = _fill_convex(_pts(_MP_IDX['lips'], lm, H, W), H, W, expand=ex['lips'])
+    nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W, expand=ex['nose'])
 
     return {
         'left_eye': left_eye, 'right_eye': right_eye, 'eyes': eyes,
@@ -164,57 +179,30 @@ def _process_frame(
 
 # ── Fill helpers ──────────────────────────────────────────────────────────────
 
-def _feather_mask(mask_u8: np.ndarray, feather: int) -> np.ndarray:
-    """Gaussian-blur a binary uint8 mask → float32 [0,1] with soft edges."""
-    if feather <= 0:
-        return mask_u8.astype(np.float32) / 255.0
-    ksize = feather * 2 + 1
-    blurred = cv2.GaussianBlur(mask_u8.astype(np.float32), (ksize, ksize), feather * 0.5)
-    return (blurred / 255.0).clip(0.0, 1.0)
-
-
-def _surround_fill(frame_u8: np.ndarray, socket_u8: np.ndarray, radius: int) -> np.ndarray:
-    """
-    Return a (H,W,3) float32 fill image by blurring the frame with a large
-    Gaussian so socket colours become the weighted average of surrounding skin.
-    Radius ≈ 2-3× the feature_expand value gives good results.
-    """
-    ksize = max(3, radius * 2 + 1)
+def _surround_fill(frame_u8: np.ndarray, radius: int) -> np.ndarray:
+    """Large Gaussian blur so fill colour matches surrounding skin."""
+    ksize = radius * 2 + 1
     if ksize % 2 == 0:
         ksize += 1
-    blurred = cv2.GaussianBlur(frame_u8.astype(np.float32), (ksize, ksize), radius * 0.5)
-    return blurred / 255.0
+    return cv2.GaussianBlur(frame_u8.astype(np.float32), (ksize, ksize), radius * 0.5) / 255.0
 
 
-def _inpaint_fill(
+def _inpaint_zone(
     frame_u8: np.ndarray,
-    socket_u8: np.ndarray,
+    zone_mask_u8: np.ndarray,
     effective_expand: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    OpenCV Telea inpaint.
+    Inpaint a single zone.  Returns (inpainted_frame_u8, expanded_mask_u8).
 
-    Returns (fill_np, inpaint_mask_u8):
-      fill_np         — (H,W,3) float32, inpainted result
-      inpaint_mask_u8 — expanded uint8 mask actually fed to cv2.inpaint
-
-    The inpaint mask is dilated by an extra margin so the mask boundary
-    sits on clean skin, not on hair fringe — that's what causes traces.
-    Callers should use inpaint_mask_u8 (not the original socket_u8) when
-    feathering/blending so the soft edge also sits on clean skin.
+    The mask is dilated before inpainting so its boundary sits on clean skin,
+    not on hair fringe — that's what causes trace artifacts.
     """
-    # Extra dilation: push the boundary off hair pixels onto clean skin.
-    # ~0.5× effective_expand gives a visible safety margin without being huge.
-    fringe_margin = max(4, effective_expand // 2)
-    inpaint_mask  = cv2.dilate(socket_u8, _ellipse_k(fringe_margin))
-
-    # Inpaint radius must reach across any remaining visible feature detail.
-    # Scale with effective_expand so it stays proportional at any resolution.
-    inpaint_radius = max(12, effective_expand)
-
-    inpainted = cv2.inpaint(frame_u8, inpaint_mask, inpaintRadius=inpaint_radius,
-                             flags=cv2.INPAINT_TELEA)
-    return inpainted.astype(np.float32) / 255.0, inpaint_mask
+    fringe = max(4, effective_expand // 2)
+    inpaint_mask = cv2.dilate(zone_mask_u8, _ellipse_k(fringe))
+    radius       = max(12, effective_expand)
+    inpainted    = cv2.inpaint(frame_u8, inpaint_mask, radius, cv2.INPAINT_TELEA)
+    return inpainted, inpaint_mask
 
 
 # ── Node ─────────────────────────────────────────────────────────────────────
@@ -227,12 +215,13 @@ class BD_FaceSocketInfill(io.ComfyNode):
     One-shot face socket creator for 2D animation flipbook textures.
 
     Detects face features via MediaPipe, fills selected regions with a flat
-    colour or surrounding skin tone, and outputs the socket image, RGBA
-    version with transparent sockets, combined socket mask, and individual
-    feature masks for animation overlay alignment.
+    colour, surrounding skin tone, or per-zone OpenCV inpaint.  Outputs:
+    - socket_image (RGB)  — sockets filled
+    - alpha_image  (RGBA) — sockets transparent
+    - socket_mask         — feathered union of all active zones
+    - per-feature binary masks for animation layer alignment
 
-    feature_expand is normalised to 512 px — it auto-scales with image
-    resolution, so the same value looks consistent across resolutions.
+    Per-zone expand / feather overrides (-1 = use master value).
     """
 
     @classmethod
@@ -242,99 +231,105 @@ class BD_FaceSocketInfill(io.ComfyNode):
             display_name="BD Face Socket Infill",
             category="🧠BrainDead/Segmentation",
             description=(
-                "Detects eye / brow / lip / nose regions via MediaPipe and fills "
-                "selected regions to produce a base texture with empty sockets for "
-                "2D animation flipbook compositing.\n\n"
-                "feature_expand is 512px-normalised and auto-scales with resolution.\n\n"
+                "Detects eye/brow/lip/nose regions via MediaPipe and fills them "
+                "to produce a base texture with empty sockets for 2D animation.\n\n"
+                "feature_expand is 512px-normalised and auto-scales with resolution.\n"
+                "Per-zone expand/feather overrides: set ≥ 0 to override, -1 = use master.\n\n"
                 "fill_mode:\n"
-                "  flat     — fill_r/g/b (white by default, good for UV textures)\n"
-                "  surround — Gaussian-blur surrounding skin into the socket\n"
-                "  inpaint  — OpenCV Telea inpaint (best quality, slower)\n\n"
-                "feather blurs the socket mask edges for smooth compositing."
+                "  flat     — fill_r/g/b (white by default)\n"
+                "  surround — Gaussian-blurred surrounding skin\n"
+                "  inpaint  — OpenCV Telea per zone (cleanest, slower)\n\n"
+                "inpaint dilates each zone's mask before inpainting so the boundary\n"
+                "sits on clean skin, not hair fringe — eliminates trace artifacts."
             ),
             inputs=[
                 io.Image.Input(
                     "image",
-                    tooltip="Input image or batch. Each frame is processed independently.",
+                    tooltip="Input image or batch. Each frame processed independently.",
                 ),
                 io.Float.Input(
                     "detection_confidence", default=0.5, min=0.1, max=1.0, step=0.05,
                     optional=True,
                     tooltip="MediaPipe face detection confidence threshold.",
                 ),
-                io.Boolean.Input(
-                    "eyes", default=True, optional=True,
-                    tooltip="Include left + right eye regions in the socket.",
-                ),
-                io.Boolean.Input(
-                    "brows", default=True, optional=True,
-                    tooltip="Include left + right eyebrow regions in the socket.",
-                ),
-                io.Boolean.Input(
-                    "lips", default=True, optional=True,
-                    tooltip="Include lip region in the socket.",
-                ),
-                io.Boolean.Input(
-                    "nose", default=False, optional=True,
-                    tooltip="Include nose region in the socket.",
-                ),
+
+                # ── Zone toggles ─────────────────────────────────────────────
+                io.Boolean.Input("eyes",  default=True,  optional=True,
+                                 tooltip="Include left + right eye regions."),
+                io.Boolean.Input("brows", default=True,  optional=True,
+                                 tooltip="Include left + right eyebrow regions."),
+                io.Boolean.Input("lips",  default=True,  optional=True,
+                                 tooltip="Include lip region."),
+                io.Boolean.Input("nose",  default=False, optional=True,
+                                 tooltip="Include nose region."),
+
+                # ── Master expand / feather ───────────────────────────────────
                 io.Int.Input(
                     "feature_expand", default=6, min=0, max=60, step=1, optional=True,
-                    tooltip="Socket region expansion in 512px-normalised pixels. "
-                            "Auto-scales with image resolution — 6 at 512px becomes "
-                            "12 at 1024px, 24 at 2048px. Covers lashes and lip border.",
+                    tooltip="Master socket expansion in 512px-normalised pixels. "
+                            "Auto-scales: 6 at 512px → 12 at 1024px → 18 at 1536px. "
+                            "Per-zone overrides take priority when set ≥ 0.",
                 ),
                 io.Int.Input(
                     "feather", default=3, min=0, max=30, step=1, optional=True,
-                    tooltip="Gaussian blur radius applied to socket mask edges. "
-                            "0 = hard binary edge. 3-8 gives natural blending.",
+                    tooltip="Master Gaussian blur radius for socket mask edges. "
+                            "0 = hard edge. Per-zone overrides take priority when ≥ 0.",
                 ),
+
+                # ── Per-zone expand overrides (-1 = use feature_expand) ───────
+                io.Int.Input("eyes_expand",  default=-1, min=-1, max=60, step=1, optional=True,
+                             tooltip="Eye expand override (−1 = use feature_expand)."),
+                io.Int.Input("brows_expand", default=-1, min=-1, max=60, step=1, optional=True,
+                             tooltip="Brow expand override. Raise this when brow hairs leave a trace."),
+                io.Int.Input("lips_expand",  default=-1, min=-1, max=60, step=1, optional=True,
+                             tooltip="Lip expand override (−1 = use feature_expand)."),
+                io.Int.Input("nose_expand",  default=-1, min=-1, max=60, step=1, optional=True,
+                             tooltip="Nose expand override (−1 = use feature_expand)."),
+
+                # ── Per-zone feather overrides (-1 = use feather) ────────────
+                io.Int.Input("eyes_feather",  default=-1, min=-1, max=30, step=1, optional=True,
+                             tooltip="Eye feather override (−1 = use feather)."),
+                io.Int.Input("brows_feather", default=-1, min=-1, max=30, step=1, optional=True,
+                             tooltip="Brow feather override. Higher = softer edge on brow socket."),
+                io.Int.Input("lips_feather",  default=-1, min=-1, max=30, step=1, optional=True,
+                             tooltip="Lip feather override (−1 = use feather)."),
+                io.Int.Input("nose_feather",  default=-1, min=-1, max=30, step=1, optional=True,
+                             tooltip="Nose feather override (−1 = use feather)."),
+
+                # ── Fill ─────────────────────────────────────────────────────
                 io.Combo.Input(
-                    "fill_mode",
-                    options=_FILL_MODES,
-                    default="flat", optional=True,
-                    tooltip="flat: fill_r/g/b colour (UV textures). "
-                            "surround: Gaussian-blurred surrounding skin. "
-                            "inpaint: OpenCV Telea inpaint (slow, best quality).",
+                    "fill_mode", options=_FILL_MODES, default="flat", optional=True,
+                    tooltip="flat: fill_r/g/b. surround: skin-tone blur. "
+                            "inpaint: per-zone Telea (cleanest).",
                 ),
-                io.Int.Input(
-                    "fill_r", default=255, min=0, max=255, step=1, optional=True,
-                    tooltip="Fill colour red channel (0-255). Used when fill_mode=flat.",
-                ),
-                io.Int.Input(
-                    "fill_g", default=255, min=0, max=255, step=1, optional=True,
-                    tooltip="Fill colour green channel.",
-                ),
-                io.Int.Input(
-                    "fill_b", default=255, min=0, max=255, step=1, optional=True,
-                    tooltip="Fill colour blue channel.",
-                ),
+                io.Int.Input("fill_r", default=255, min=0, max=255, step=1, optional=True,
+                             tooltip="Fill red (0-255). Used when fill_mode=flat."),
+                io.Int.Input("fill_g", default=255, min=0, max=255, step=1, optional=True,
+                             tooltip="Fill green (0-255)."),
+                io.Int.Input("fill_b", default=255, min=0, max=255, step=1, optional=True,
+                             tooltip="Fill blue (0-255)."),
             ],
             outputs=[
                 io.Image.Output(
                     display_name="socket_image",
-                    tooltip="RGB image with socket regions replaced by the fill (flat colour, "
-                            "surrounding skin, or inpainted). Good for UV texture export.",
+                    tooltip="RGB image with socket regions replaced by the fill.",
                 ),
                 io.Image.Output(
                     display_name="alpha_image",
-                    tooltip="RGBA image — socket regions fully transparent (alpha=0). "
-                            "Non-socket pixels keep full opacity. Drop directly into a "
-                            "game engine or compositing tool.",
+                    tooltip="RGBA — socket regions fully transparent (alpha=0).",
                 ),
                 io.Mask.Output(
                     display_name="socket_mask",
-                    tooltip="Feathered union of all enabled feature masks. "
-                            "White = socket region. Soft edges when feather > 0.",
+                    tooltip="Feathered union of all active zone masks.",
                 ),
-                io.Mask.Output(display_name="left_eye",   tooltip="Left eye convex hull (binary)."),
-                io.Mask.Output(display_name="right_eye",  tooltip="Right eye convex hull (binary)."),
-                io.Mask.Output(display_name="eyes",       tooltip="Both eyes combined (binary)."),
-                io.Mask.Output(display_name="left_brow",  tooltip="Left eyebrow mask (binary)."),
-                io.Mask.Output(display_name="right_brow", tooltip="Right eyebrow mask (binary)."),
-                io.Mask.Output(display_name="brows",      tooltip="Both brows combined (binary)."),
-                io.Mask.Output(display_name="lips",       tooltip="Full lip area mask (binary)."),
-                io.Mask.Output(display_name="nose",       tooltip="Nose region mask (binary)."),
+                io.Mask.Output(display_name="left_eye"),
+                io.Mask.Output(display_name="right_eye"),
+                io.Mask.Output(display_name="eyes"),
+                io.Mask.Output(display_name="left_brow"),
+                io.Mask.Output(display_name="right_brow"),
+                io.Mask.Output(display_name="brows"),
+                io.Mask.Output(display_name="lips"),
+                io.Mask.Output(display_name="nose"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -350,6 +345,14 @@ class BD_FaceSocketInfill(io.ComfyNode):
         nose: bool = False,
         feature_expand: int = 6,
         feather: int = 3,
+        eyes_expand: int = -1,
+        brows_expand: int = -1,
+        lips_expand: int = -1,
+        nose_expand: int = -1,
+        eyes_feather: int = -1,
+        brows_feather: int = -1,
+        lips_feather: int = -1,
+        nose_feather: int = -1,
         fill_mode: str = "flat",
         fill_r: int = 255,
         fill_g: int = 255,
@@ -362,15 +365,12 @@ class BD_FaceSocketInfill(io.ComfyNode):
         _n_mask     = len(_MASK_KEYS)  # 8
 
         def _fail(msg: str) -> io.NodeOutput:
-            return io.NodeOutput(
-                _blank_img, _blank_rgba, _blank1,
-                *([_blank1] * _n_mask),
-                msg,
-            )
+            return io.NodeOutput(_blank_img, _blank_rgba, _blank1,
+                                 *([_blank1] * _n_mask), msg)
 
         if not HAS_MEDIAPIPE or not HAS_CV2:
             missing = [p for p, h in [("mediapipe", HAS_MEDIAPIPE), ("opencv-python", HAS_CV2)] if not h]
-            return _fail(f"BD_FaceSocketInfill: missing packages — {', '.join(missing)}")
+            return _fail(f"BD_FaceSocketInfill: missing — {', '.join(missing)}")
 
         if not os.path.exists(_MODEL_PATH):
             return _fail(f"BD_FaceSocketInfill: model not found at {_MODEL_PATH}")
@@ -381,8 +381,28 @@ class BD_FaceSocketInfill(io.ComfyNode):
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
 
-        # Scale expand relative to 512px baseline
-        effective_expand = max(1, round(feature_expand * max(H, W) / 512))
+        # ── Scale master expand to image resolution ───────────────────────────
+        scale = max(H, W) / 512.0
+
+        def _eff_expand(override: int) -> int:
+            base = override if override >= 0 else feature_expand
+            return max(1, round(base * scale))
+
+        def _eff_feather(override: int) -> int:
+            return override if override >= 0 else feather
+
+        eff_expand = {
+            'eyes':  _eff_expand(eyes_expand),
+            'brows': _eff_expand(brows_expand),
+            'lips':  _eff_expand(lips_expand),
+            'nose':  _eff_expand(nose_expand),
+        }
+        eff_feather = {
+            'eyes':  _eff_feather(eyes_feather),
+            'brows': _eff_feather(brows_feather),
+            'lips':  _eff_feather(lips_feather),
+            'nose':  _eff_feather(nose_feather),
+        }
 
         flat_rgb = np.array([fill_r / 255.0, fill_g / 255.0, fill_b / 255.0], dtype=np.float32)
 
@@ -403,75 +423,94 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
         with _mpv.FaceLandmarker.create_from_options(opts) as landmarker:
             for b in range(B):
-                frame = image[b].cpu().numpy()            # (H, W, C) float32
+                frame    = image[b].cpu().numpy()
                 frame_u8 = (frame * 255.0).clip(0, 255).astype(np.uint8)
                 if C == 4:
                     frame_u8 = frame_u8[..., :3]
                 frame_rgb_u8 = frame_u8.copy()
 
-                masks, status = _process_frame(frame_rgb_u8, landmarker, effective_expand)
+                masks, status = _process_frame(frame_rgb_u8, landmarker, eff_expand)
                 statuses.append(status)
 
-                # ── Socket mask (binary uint8) from enabled features ─────────
-                active_np = []
-                if eyes:
-                    active_np.append(masks['eyes'])
-                if brows:
-                    active_np.append(masks['brows'])
-                if lips:
-                    active_np.append(masks['lips'])
-                if nose:
-                    active_np.append(masks['nose'])
-                socket_u8 = _union(*active_np) if active_np else _blank(H, W)
-
-                # ── Individual binary mask tensors ───────────────────────────
+                # ── Individual binary masks ───────────────────────────────────
                 for k in _MASK_KEYS:
                     batches[k].append(
                         torch.from_numpy(masks[k].astype(np.float32) / 255.0)
                     )
 
-                # ── Fill image + determine which mask to feather/blend with ──
-                blend_mask_u8 = socket_u8   # default: feather the original socket
+                # ── Active zones: zone mask + its blend mask + feathered soft ─
+                # For inpaint: we sequentially inpaint each zone independently
+                # so brows can't contaminate eyes and vice versa.
+                # blend_mask per zone may be the inpaint-expanded mask (wider
+                # than the feature mask) so the feathered edge sits on clean skin.
 
-                if fill_mode == "surround":
-                    radius  = max(15, effective_expand * 4)
-                    fill_np = _surround_fill(frame_rgb_u8, socket_u8, radius)
-                elif fill_mode == "inpaint":
-                    fill_np, blend_mask_u8 = _inpaint_fill(
-                        frame_rgb_u8, socket_u8, effective_expand
-                    )
-                    # blend_mask_u8 is the dilated inpaint mask — its boundary
-                    # is on clean skin, so the feathered edge won't blend back
-                    # any original hair pixels
+                zone_info = [
+                    # (enabled, zone_key, feature_mask)
+                    (eyes,  'eyes',  masks['eyes']),
+                    (brows, 'brows', masks['brows']),
+                    (lips,  'lips',  masks['lips']),
+                    (nose,  'nose',  masks['nose']),
+                ]
+
+                combined_soft = np.zeros((H, W), dtype=np.float32)
+
+                if fill_mode == "inpaint":
+                    # Inpaint each active zone into a running result buffer
+                    result_u8 = frame_rgb_u8.copy()
+                    for enabled, zone, zone_mask in zone_info:
+                        if not enabled or not zone_mask.any():
+                            continue
+                        result_u8, exp_mask = _inpaint_zone(result_u8, zone_mask,
+                                                             eff_expand[zone])
+                        zone_soft = _feather_mask(exp_mask, eff_feather[zone])
+                        np.maximum(combined_soft, zone_soft, out=combined_soft)
+                    fill_np = result_u8.astype(np.float32) / 255.0
+
+                elif fill_mode == "surround":
+                    # One big blur, per-zone feather
+                    max_expand = max(eff_expand.values())
+                    fill_np = _surround_fill(frame_rgb_u8, max(15, max_expand * 4))
+                    for enabled, zone, zone_mask in zone_info:
+                        if not enabled or not zone_mask.any():
+                            continue
+                        zone_soft = _feather_mask(zone_mask, eff_feather[zone])
+                        np.maximum(combined_soft, zone_soft, out=combined_soft)
+
                 else:  # flat
                     fill_np = np.full((H, W, 3), flat_rgb, dtype=np.float32)
+                    for enabled, zone, zone_mask in zone_info:
+                        if not enabled or not zone_mask.any():
+                            continue
+                        zone_soft = _feather_mask(zone_mask, eff_feather[zone])
+                        np.maximum(combined_soft, zone_soft, out=combined_soft)
 
-                # ── Feathered mask (from the blend_mask for this mode) ───────
-                socket_soft = _feather_mask(blend_mask_u8, feather)   # (H,W) [0,1]
-                batches['socket_soft'].append(torch.from_numpy(socket_soft))
+                batches['socket_soft'].append(torch.from_numpy(combined_soft))
 
-                # ── Blend: filled = frame * (1-alpha) + fill * alpha ─────────
-                frame_f  = frame[..., :3].astype(np.float32)           # (H,W,3)
-                alpha_2d = socket_soft[:, :, np.newaxis]                # (H,W,1)
-                blended   = frame_f * (1.0 - alpha_2d) + fill_np * alpha_2d
-                blended   = blended.clip(0.0, 1.0)
+                # ── Blend ─────────────────────────────────────────────────────
+                frame_f  = frame[..., :3].astype(np.float32)
+                alpha_2d = combined_soft[:, :, np.newaxis]
+                blended  = (frame_f * (1.0 - alpha_2d) + fill_np * alpha_2d).clip(0.0, 1.0)
+                socket_images.append(torch.from_numpy(blended))
 
-                socket_images.append(torch.from_numpy(blended))        # (H,W,3)
+                alpha_ch = (1.0 - combined_soft)[:, :, np.newaxis]
+                alpha_images.append(torch.from_numpy(
+                    np.concatenate([blended, alpha_ch], axis=-1).astype(np.float32)
+                ))
 
-                # ── RGBA: blended RGB + (1-socket_soft) as alpha ─────────────
-                alpha_ch = (1.0 - socket_soft)[:, :, np.newaxis]
-                rgba     = np.concatenate([blended, alpha_ch], axis=-1)
-                alpha_images.append(torch.from_numpy(rgba.astype(np.float32)))  # (H,W,4)
-
-        socket_image = torch.stack(socket_images, dim=0)   # (B, H, W, 3)
-        alpha_image  = torch.stack(alpha_images,  dim=0)   # (B, H, W, 4)
+        socket_image = torch.stack(socket_images, dim=0)
+        alpha_image  = torch.stack(alpha_images,  dim=0)
         out = {k: torch.stack(batches[k], dim=0) for k in _MASK_KEYS + ['socket_soft']}
 
-        detected  = sum(1 for s in statuses if s == "ok")
-        status_str = f"BD_FaceSocketInfill: {detected}/{B} detected | expand={effective_expand}px feather={feather} fill={fill_mode}"
+        detected = sum(1 for s in statuses if s == "ok")
+        ex_str   = " ".join(f"{z}={eff_expand[z]}" for z in _ZONES)
+        ft_str   = " ".join(f"{z}={eff_feather[z]}" for z in _ZONES)
+        status_str = (
+            f"BD_FaceSocketInfill: {detected}/{B} detected | {fill_mode} | "
+            f"expand({ex_str}) feather({ft_str})"
+        )
         if detected < B:
             failed = [i for i, s in enumerate(statuses) if s != "ok"]
-            status_str += f" | missed frames: {failed}"
+            status_str += f" | missed: {failed}"
         print(f"[BD_FaceSocketInfill] {status_str}", flush=True)
 
         return io.NodeOutput(
@@ -483,6 +522,6 @@ class BD_FaceSocketInfill(io.ComfyNode):
         )
 
 
-FACE_SOCKET_INFILL_V3_NODES    = [BD_FaceSocketInfill]
-FACE_SOCKET_INFILL_NODES       = {"BD_FaceSocketInfill": BD_FaceSocketInfill}
+FACE_SOCKET_INFILL_V3_NODES      = [BD_FaceSocketInfill]
+FACE_SOCKET_INFILL_NODES         = {"BD_FaceSocketInfill": BD_FaceSocketInfill}
 FACE_SOCKET_INFILL_DISPLAY_NAMES = {"BD_FaceSocketInfill": "BD Face Socket Infill"}
