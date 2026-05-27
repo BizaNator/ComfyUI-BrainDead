@@ -179,52 +179,79 @@ def _fill_iris_ellipse(pts: np.ndarray, H: int, W: int,
 
 
 def _fill_lip_shape(pts: np.ndarray, H: int, W: int,
-                    expand_x: int = 0, expand_y: int = 0) -> np.ndarray:
+                    expand_x: int = 0, expand_y: int = 0,
+                    lip_band: int = 6) -> np.ndarray:
     """
-    Fill the lip polygon following the actual lip contour.
+    Fill the lip polygon from the true outer contour via X-binning.
 
-    MediaPipe lip landmarks include both the outer and inner lip contours.
-    Angle-sorting all of them together interleaves inner/outer points and
-    produces a figure-8 polygon that creates a double cupid's bow.
+    Centroid-Y split still included inner-lip contour points, producing a
+    smaller, irregular polygon that mis-filled.  X-binning takes the topmost
+    point (min Y) and bottommost point (max Y) within each horizontal slice,
+    giving the actual outer lip boundary regardless of inner contour noise.
 
-    Fix: split by centroid Y into upper (outer upper lip / cupid's bow) and
-    lower (outer lower lip) groups, sort each by X, then expand the polygon
-    points directly before filling:
-      expand_x — extends the leftmost and rightmost endpoints only, so the
-                 corners taper naturally along the existing lip-corner angle
-                 instead of squaring off from a post-fill dilation.
-      expand_y — shifts the upper curve up and lower curve down uniformly.
-
-    No dilation is applied after filling.
+    lip_band  — minimum half-height from centroid to each curve (native px).
+    expand_x  — extends the endpoints only → natural taper at corners.
+    expand_y  — shifts the upper curve up and lower curve down uniformly.
     """
     out = np.zeros((H, W), dtype=np.uint8)
     if len(pts) < 6:
         return out
 
-    cy = float(pts[:, 1].mean())
-    upper = pts[pts[:, 1] <= cy].astype(np.float32)
-    lower = pts[pts[:, 1] >= cy].astype(np.float32)
-
-    if len(upper) < 2 or len(lower) < 2:
-        # Degenerate: fall back to convex hull
+    pts_f = pts.astype(np.float64)
+    x_min, x_max = pts_f[:, 0].min(), pts_f[:, 0].max()
+    if x_max - x_min < 2:
         return _fill_convex(pts, H, W, expand_x, expand_y)
 
-    upper = upper[np.argsort(upper[:, 0])]          # left → right (cupid's bow)
-    lower = lower[np.argsort(lower[:, 0])[::-1]]    # right → left (lower lip)
+    # Adaptive bin count: more bins = more detail, but we smooth anyway
+    n_bins = max(16, len(pts) // 2)
+    edges = np.linspace(x_min, x_max, n_bins + 1)
+    upper_pts: list[list[float]] = []
+    lower_pts: list[list[float]] = []
 
-    # Expand X: move endpoints only — taper follows the natural corner angle
+    for i in range(n_bins):
+        lo, hi = edges[i], edges[i + 1]
+        in_bin = (pts_f[:, 0] >= lo) & (pts_f[:, 0] < hi)
+        if not in_bin.any():
+            continue
+        bp = pts_f[in_bin]
+        cx = float(bp[:, 0].mean())
+        upper_pts.append([cx, float(bp[:, 1].min())])
+        lower_pts.append([cx, float(bp[:, 1].max())])
+
+    if len(upper_pts) < 2 or len(lower_pts) < 2:
+        return _fill_convex(pts, H, W, expand_x, expand_y)
+
+    upper = np.array(upper_pts, dtype=np.float32)   # already sorted left→right
+    lower = np.array(lower_pts, dtype=np.float32)
+
+    # Smooth Y on each curve to remove bin-edge jaggedness
+    w = min(7, len(upper))
+    upper[:, 1] = _smooth_1d(upper[:, 1], w)
+    lower[:, 1] = _smooth_1d(lower[:, 1], w)
+
+    # Enforce minimum band half-height from each curve's local centroid
+    if lip_band > 0:
+        mid_y = (upper[:, 1].mean() + lower[:, 1].mean()) * 0.5
+        upper[:, 1] = np.minimum(upper[:, 1], mid_y - lip_band)
+        lower[:, 1] = np.maximum(lower[:, 1], mid_y + lip_band)
+
+    # Horizontal: extend endpoints only — taper follows corner angle naturally
     if expand_x > 0:
-        upper[0,  0] = max(0.0,        upper[0,  0] - expand_x)   # upper-left
-        upper[-1, 0] = min(float(W-1), upper[-1, 0] + expand_x)   # upper-right
-        lower[0,  0] = min(float(W-1), lower[0,  0] + expand_x)   # lower-right (reversed)
-        lower[-1, 0] = max(0.0,        lower[-1, 0] - expand_x)   # lower-left  (reversed)
+        upper[0,  0] = max(0.0,        upper[0,  0] - expand_x)
+        upper[-1, 0] = min(float(W-1), upper[-1, 0] + expand_x)
+        lower[0,  0] = max(0.0,        lower[0,  0] - expand_x)
+        lower[-1, 0] = min(float(W-1), lower[-1, 0] + expand_x)
 
-    # Expand Y: push curves away from centre
+    # Vertical: push curves away from centre
     if expand_y > 0:
         upper[:, 1] = np.clip(upper[:, 1] - expand_y, 0, H - 1)
         lower[:, 1] = np.clip(lower[:, 1] + expand_y, 0, H - 1)
 
-    poly = np.vstack([upper, lower]).astype(np.int32).reshape(-1, 1, 2)
+    np.clip(upper[:, 1], 0, H - 1, out=upper[:, 1])
+    np.clip(lower[:, 1], 0, H - 1, out=lower[:, 1])
+
+    # upper left→right + lower right→left closes the polygon correctly
+    poly = np.vstack([upper, lower[::-1]]).astype(np.int32).reshape(-1, 1, 2)
     cv2.fillPoly(out, [poly], 255)
     return out
 
@@ -266,6 +293,7 @@ def _process_frame(
     eye_mode: str = "iris",
     brow_band: int = 12,                        # native-px half-height of arch band
     eye_inset: int = 3,                         # native-px erosion inside eyelid (iris mode)
+    lip_band: int = 6,                          # native-px minimum half-height of lip band
 ) -> tuple[dict[str, np.ndarray], str]:
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
@@ -311,7 +339,8 @@ def _process_frame(
     brows      = _union(left_brow, right_brow)
 
     lips = _fill_lip_shape(_pts(_MP_IDX['lips'], lm, H, W), H, W,
-                           expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1])
+                           expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1],
+                           lip_band=lip_band)
     nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W,
                         expand_x=zone_expand['nose'][0], expand_y=zone_expand['nose'][1])
 
@@ -423,8 +452,12 @@ class BD_FaceSocketInfill(io.ComfyNode):
                              tooltip="Brow vertical override. Keep low to avoid eye socket bleed."),
                 io.Int.Input("brow_band", default=12, min=2, max=60, step=1, optional=True,
                              tooltip="Base half-height of the brow arch band in 1536px-normalised "
-                                     "pixels. This sets the minimum band thickness independently "
-                                     "of expand_y. Increase if brows look too thin."),
+                                     "pixels. Sets minimum band thickness independently of "
+                                     "expand_y. Increase if brows look too thin."),
+                io.Int.Input("lip_band", default=6, min=0, max=40, step=1, optional=True,
+                             tooltip="Minimum half-height of the lip band from centroid "
+                                     "(1536px-normalised). Ensures full coverage even when the "
+                                     "mouth is nearly closed. expand_y adds on top of this."),
                 io.Int.Input("lips_expand_x",  default=-1, min=-1, max=60, step=1, optional=True,
                              tooltip="Lip horizontal override. Raise to cover laugh lines."),
                 io.Int.Input("lips_expand_y",  default=-1, min=-1, max=60, step=1, optional=True,
@@ -486,6 +519,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         brows_expand_x: int = -1,
         brows_expand_y: int = -1,
         brow_band: int = 12,
+        lip_band: int = 6,
         lips_expand_x: int = -1,
         lips_expand_y: int = -1,
         nose_expand_x: int = -1,
@@ -567,9 +601,11 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 frame_rgb_u8 = frame_u8.copy()
 
                 brow_band_px = max(2, round(brow_band * scale))
-                eye_inset_px = max(0, round(eye_inset * scale))
+                lip_band_px  = max(0, round(lip_band  * scale))
+                eye_inset_px = max(0, round(eye_inset  * scale))
                 masks, status = _process_frame(
-                    frame_rgb_u8, landmarker, zone_expand, eye_mode, brow_band_px, eye_inset_px
+                    frame_rgb_u8, landmarker, zone_expand,
+                    eye_mode, brow_band_px, eye_inset_px, lip_band_px,
                 )
                 statuses.append(status)
 
