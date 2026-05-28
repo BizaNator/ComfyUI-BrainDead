@@ -96,7 +96,7 @@ class BD_MaskColorFill(io.ComfyNode):
                 io.Int.Input(f"expand_{n}", default=0, min=0, max=60, step=1, optional=True,
                              tooltip=f"Dilate mask slot {n} by this many pixels before coloring. "
                                      f"Grows the painted region outward."),
-                io.Int.Input(f"feather_{n}", default=0, min=-30, max=30, step=1, optional=True,
+                io.Int.Input(f"feather_{n}", default=0, min=-200, max=200, step=1, optional=True,
                              tooltip=f"Edge feather for mask slot {n}. Applied after expand.\n"
                                      f"Positive: soft ramp extends OUTWARD from the fill edge — "
                                      f"interior stays fully opaque, only the boundary bleeds out.\n"
