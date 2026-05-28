@@ -136,21 +136,26 @@ class BD_MaskColorFill(io.ComfyNode):
                                optional=True,
                                tooltip="Alpha of the background in the RGBA output. "
                                        "0 = transparent background (default). "
-                                       "1 = fully opaque. "
-                                       "Ignored when bg_alpha_from_image is ON."),
+                                       "1 = fully opaque."),
+                io.Mask.Input("bg_mask", optional=True,
+                              tooltip="Clip mask applied AFTER all slot painting. "
+                                      "Uses ComfyUI mask convention: 1.0 (white) = keep/opaque, "
+                                      "0.0 (black) = transparent.\n\n"
+                                      "Wire your head silhouette mask here — areas outside the head "
+                                      "(mask=0) become transparent even if a slot bleeds there. "
+                                      "This is the recommended way to clip by head shape.\n\n"
+                                      "bg_alpha controls the non-slot base: 0=only slot zones show, "
+                                      "1=whole masked region is opaque showing background pixels."),
                 io.Boolean.Input("bg_alpha_from_image", default=False, optional=True,
                                  tooltip="When ON and a background image is connected, the background "
-                                         "image's luminance is used as a CLIP MASK applied AFTER all "
-                                         "slot painting. Pixels outside the background shape (luma≈0) "
-                                         "become fully transparent regardless of slot masks.\n\n"
-                                         "Use bg_alpha to control the non-slot areas inside the shape:\n"
-                                         "  bg_alpha=0 → only slot-colored zones are visible (e.g. just "
-                                         "eyes/mouth floating on a transparent head silhouette)\n"
-                                         "  bg_alpha=1 → whole head shape is opaque, slot zones painted "
-                                         "on top showing the background image everywhere else\n\n"
-                                         "Typical use: background = head silhouette (white head, black "
-                                         "outside), bg_alpha_from_image=ON, bg_alpha=0 → eye/mouth zones "
-                                         "visible on transparent background, clipped to head boundary."),
+                                         "image's luminance is also used as a clip (in addition to "
+                                         "bg_mask if wired). White=opaque, black=transparent.\n\n"
+                                         "Enable bg_alpha_invert if your background image has the "
+                                         "opposite convention (white=background, dark=head)."),
+                io.Boolean.Input("bg_alpha_invert", default=False, optional=True,
+                                 tooltip="Invert the bg_alpha_from_image clip. Use when your background "
+                                         "image has white=background (to be clipped out) and dark=head "
+                                         "(to be kept). Has no effect when bg_alpha_from_image is OFF."),
                 *_slot(1, 255,   0,   0),
                 *_slot(2,   0, 255,   0),
                 *_slot(3,   0,   0, 255),
@@ -172,7 +177,9 @@ class BD_MaskColorFill(io.ComfyNode):
         background: torch.Tensor | None = None,
         bg_r: int = 0, bg_g: int = 0, bg_b: int = 0,
         bg_alpha: float = 0.0,
+        bg_mask: torch.Tensor | None = None,
         bg_alpha_from_image: bool = False,
+        bg_alpha_invert: bool = False,
         mask_1: torch.Tensor | None = None,
         r_1: int = 255, g_1: int = 0,   b_1: int = 0,
         expand_1: int = 0, feather_1: int = 0,
@@ -225,13 +232,14 @@ class BD_MaskColorFill(io.ComfyNode):
             else:
                 canvas = np.full((H, W, 3), bg_color, dtype=np.float32)
 
-            # Pre-compute bg luma for clip BEFORE painting changes the canvas
+            # Pre-compute image luma clip BEFORE painting changes the canvas
             if bg_alpha_from_image and background is not None:
-                bg_luma = (0.2126 * canvas[..., 0]
-                           + 0.7152 * canvas[..., 1]
-                           + 0.0722 * canvas[..., 2]).clip(0.0, 1.0)
+                luma = (0.2126 * canvas[..., 0]
+                        + 0.7152 * canvas[..., 1]
+                        + 0.0722 * canvas[..., 2]).clip(0.0, 1.0)
+                img_clip = (1.0 - luma) if bg_alpha_invert else luma
             else:
-                bg_luma = None
+                img_clip = None
 
             combined_alpha = np.full((H, W), bg_alpha, dtype=np.float32)
 
@@ -243,13 +251,15 @@ class BD_MaskColorFill(io.ComfyNode):
                 canvas = canvas * (1.0 - a3) + color * a3
                 np.maximum(combined_alpha, m_np, out=combined_alpha)
 
-            # bg_alpha_from_image: clip combined_alpha by background luma AFTER
-            # all slots are painted. Pixels outside the background shape (luma≈0)
-            # become transparent even if a mask bled there. Inside the shape the
-            # slot masks determine opacity — use bg_alpha=0 to see only slot zones,
-            # bg_alpha=1 to keep the whole head opaque showing background pixels.
-            if bg_luma is not None:
-                combined_alpha *= bg_luma
+            # Apply clip masks after all slot painting.
+            # bg_mask (MASK input): native ComfyUI convention, 1=keep 0=transparent.
+            # img_clip (from bg_alpha_from_image): luma of background image.
+            # Both multiply into combined_alpha so only areas inside ALL clips are opaque.
+            if bg_mask is not None:
+                bm = _to_hw(bg_mask, b, H, W)
+                combined_alpha *= bm
+            if img_clip is not None:
+                combined_alpha *= img_clip
 
             canvas         = canvas.clip(0.0, 1.0)
             combined_alpha = combined_alpha.clip(0.0, 1.0)
@@ -261,10 +271,14 @@ class BD_MaskColorFill(io.ComfyNode):
             rgbas_out.append(torch.from_numpy(rgba))
             masks_out.append(torch.from_numpy(combined_alpha))
 
-        n_active  = len(active)
-        bg_alpha_desc = "luma" if (bg_alpha_from_image and background is not None) else f"{bg_alpha:.2f}"
-        status    = (f"BD_MaskColorFill: {B} frame(s), {n_active}/{len(slots)} slots active, "
-                     f"bg_alpha={bg_alpha_desc}")
+        n_active = len(active)
+        clips = []
+        if bg_mask is not None: clips.append("bg_mask")
+        if bg_alpha_from_image and background is not None:
+            clips.append(f"img_luma{'(inv)' if bg_alpha_invert else ''}")
+        clip_desc = "+".join(clips) if clips else "none"
+        status = (f"BD_MaskColorFill: {B} frame(s), {n_active}/{len(slots)} slots active, "
+                  f"bg_alpha={bg_alpha:.2f} clip={clip_desc}")
         print(f"[BD_MaskColorFill] {status}", flush=True)
 
         return io.NodeOutput(
