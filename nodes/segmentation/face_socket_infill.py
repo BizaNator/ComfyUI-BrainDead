@@ -91,6 +91,7 @@ def _init_mp_idx() -> None:
         'left_brow':  _verts(_FLC.FACE_LANDMARKS_LEFT_EYEBROW),
         'right_brow': _verts(_FLC.FACE_LANDMARKS_RIGHT_EYEBROW),
         'lips':       _verts(_FLC.FACE_LANDMARKS_LIPS),
+        'face_oval':  _verts(_FLC.FACE_LANDMARKS_FACE_OVAL),
     }
     # Iris ring landmarks (indices 468-477, only present when FaceLandmarker
     # returns 478-point mesh).  Hardcoded — FLC has no FACE_LANDMARKS_*_IRIS.
@@ -261,7 +262,7 @@ def _feather_mask(mask_u8: np.ndarray, feather: int) -> np.ndarray:
 _MASK_KEYS = [
     'left_eye', 'right_eye', 'eyes',
     'left_brow', 'right_brow', 'brows',
-    'lips', 'nose',
+    'lips', 'nose', 'face_oval',
 ]
 _ZONES = ('eyes', 'brows', 'lips', 'nose')
 
@@ -324,10 +325,15 @@ def _process_frame(
     nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W,
                         expand_x=zone_expand['nose'][0], expand_y=zone_expand['nose'][1])
 
+    # Face oval — filled convex hull of the face perimeter landmarks.
+    # No expand applied (oval is a large-area shape; the caller handles subtraction).
+    face_oval = _fill_convex(_pts(_MP_IDX['face_oval'], lm, H, W), H, W,
+                             expand_x=0, expand_y=0)
+
     return {
         'left_eye': left_eye, 'right_eye': right_eye, 'eyes': eyes,
         'left_brow': left_brow, 'right_brow': right_brow, 'brows': brows,
-        'lips': lips, 'nose': nose,
+        'lips': lips, 'nose': nose, 'face_oval': face_oval,
     }, "ok"
 
 
@@ -411,6 +417,13 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 io.Boolean.Input("brows", default=True,  optional=True),
                 io.Boolean.Input("lips",  default=True,  optional=True),
                 io.Boolean.Input("nose",  default=False, optional=True),
+                io.Boolean.Input("oval_subtract_sockets", default=True, optional=True,
+                                 tooltip="face_oval output only. When ON (default): socket zones "
+                                         "(eyes, brows, lips, nose — whichever are active) are "
+                                         "subtracted from the face_oval mask so the oval doesn't "
+                                         "overlap the socket areas. Use for blending layers where "
+                                         "the oval should be the skin/non-socket region.\n"
+                                         "OFF: raw face oval with no subtraction."),
 
                 # ── Eye fill strategy ─────────────────────────────────────────
                 io.Combo.Input("eye_mode", options=["iris", "eyelid"], default="iris",
@@ -470,6 +483,17 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 io.Combo.Input("fill_mode", options=_FILL_MODES, default="flat", optional=True,
                                tooltip="flat: fill_r/g/b. surround: skin-tone blur. "
                                        "inpaint: per-zone Telea."),
+                io.Boolean.Input("fill_from_guide", default=False, optional=True,
+                                 tooltip="surround / inpaint only. When ON and image1 is connected: "
+                                         "sample fill COLORS from the detection guide (image) rather "
+                                         "than the fill target (image1). The result is still applied "
+                                         "to image1.\n\n"
+                                         "Use when image1 already has pre-filled socket areas — "
+                                         "those pre-fills would otherwise bias the surrounding-color "
+                                         "sample and bleed into the fill. Sampling from the clean "
+                                         "guide avoids that contamination.\n\n"
+                                         "Has no effect when image1 is not connected, or with "
+                                         "fill_mode=flat."),
                 io.Int.Input("fill_r", default=255, min=0, max=255, step=1, optional=True),
                 io.Int.Input("fill_g", default=255, min=0, max=255, step=1, optional=True),
                 io.Int.Input("fill_b", default=255, min=0, max=255, step=1, optional=True),
@@ -489,6 +513,10 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 io.Mask.Output("brows"),
                 io.Mask.Output("lips"),
                 io.Mask.Output("nose"),
+                io.Mask.Output("face_oval",
+                               tooltip="MediaPipe face oval mask. By default, active socket zones "
+                                       "are subtracted (oval_subtract_sockets=ON) so this gives "
+                                       "the skin/non-socket face region for blending."),
                 io.String.Output("status"),
             ],
         )
@@ -503,6 +531,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         brows: bool = True,
         lips: bool = True,
         nose: bool = False,
+        oval_subtract_sockets: bool = True,
         expand_x: int = 6,
         expand_y: int = 6,
         eyes_expand_x: int = -1,
@@ -523,6 +552,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         eye_mode: str = "iris",
         eye_inset: int = 2,
         fill_mode: str = "flat",
+        fill_from_guide: bool = False,
         fill_r: int = 255,
         fill_g: int = 255,
         fill_b: int = 255,
@@ -632,10 +662,24 @@ class BD_FaceSocketInfill(io.ComfyNode):
                     'lips': 'lips', 'nose': 'nose',
                 }
                 for k in _MASK_KEYS:
-                    fth = zone_feather[_zone_for[k]]
-                    batches[k].append(
-                        torch.from_numpy(_feather_mask(masks[k], fth))
-                    )
+                    if k == 'face_oval':
+                        # Build oval mask with optional socket subtraction.
+                        oval_u8 = masks['face_oval'].copy()
+                        if oval_subtract_sockets:
+                            sockets_u8 = np.zeros_like(oval_u8)
+                            if eyes:  np.maximum(sockets_u8, masks['eyes'],  out=sockets_u8)
+                            if brows: np.maximum(sockets_u8, masks['brows'], out=sockets_u8)
+                            if lips:  np.maximum(sockets_u8, masks['lips'],  out=sockets_u8)
+                            if nose:  np.maximum(sockets_u8, masks['nose'],  out=sockets_u8)
+                            oval_u8 = np.where(sockets_u8 > 127, 0, oval_u8).astype(np.uint8)
+                        batches['face_oval'].append(
+                            torch.from_numpy(_feather_mask(oval_u8, feather))
+                        )
+                    else:
+                        fth = zone_feather[_zone_for[k]]
+                        batches[k].append(
+                            torch.from_numpy(_feather_mask(masks[k], fth))
+                        )
 
                 # ── Active zones, ordered for sequential inpaint ───────────────
                 zone_info = [
@@ -647,8 +691,13 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 combined_soft = np.zeros((H, W), dtype=np.float32)
 
+                # Source for surround / inpaint color sampling.
+                # fill_from_guide=True samples from image0 (clean detect guide)
+                # so pre-filled socket areas in image1 don't contaminate the sample.
+                fill_src_u8 = detect_rgb_u8 if (fill_from_guide and image1 is not None) else fill_rgb_u8
+
                 if fill_mode == "inpaint":
-                    result_u8 = fill_rgb_u8.copy()
+                    result_u8 = fill_src_u8.copy()
                     for enabled, zone, zone_mask in zone_info:
                         if not enabled or not zone_mask.any():
                             continue
@@ -660,7 +709,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 elif fill_mode == "surround":
                     max_ex = max(ex for ex, ey in zone_expand.values())
-                    fill_np = _surround_fill(fill_rgb_u8, max(15, max_ex * 4))
+                    fill_np = _surround_fill(fill_src_u8, max(15, max_ex * 4))
                     for enabled, zone, zone_mask in zone_info:
                         if not enabled or not zone_mask.any():
                             continue
@@ -705,7 +754,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
             socket_image, alpha_image, out['socket_soft'],
             out['left_eye'], out['right_eye'], out['eyes'],
             out['left_brow'], out['right_brow'], out['brows'],
-            out['lips'], out['nose'],
+            out['lips'], out['nose'], out['face_oval'],
             status_str,
         )
 
