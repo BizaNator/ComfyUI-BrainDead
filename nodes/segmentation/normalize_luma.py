@@ -90,21 +90,32 @@ class BD_NormalizeLuma(io.ComfyNode):
                               tooltip="Optional region mask. Percentile calc only considers pixels "
                                       "where mask > 0.5. By default (apply_to_mask_only=ON), the "
                                       "normalization is also only applied within this region."),
+                io.Float.Input("luma_apply_min", default=0.0, min=0.0, max=1.0, step=0.01,
+                               optional=True,
+                               tooltip="Tone floor — normalization fades out BELOW this luminance. "
+                                       "0.0 = apply to all tones (default, existing behaviour). "
+                                       "0.5 = only pixels at or above mid-grey receive the full "
+                                       "normalized result; darker pixels fade back to original. "
+                                       "Use this to bring down highlights without touching shadows.\n\n"
+                                       "Combined with luma_apply_max to target a tone band:\n"
+                                       "  luma_apply_min=0.6, luma_apply_max=1.0 → highlights only\n"
+                                       "  luma_apply_min=0.0, luma_apply_max=0.5 → shadows only\n"
+                                       "  luma_apply_min=0.3, luma_apply_max=0.7 → midtones only"),
                 io.Float.Input("luma_apply_max", default=1.0, min=0.0, max=1.0, step=0.01,
                                optional=True,
                                tooltip="Tone ceiling — normalization fades out above this luminance. "
                                        "1.0 = apply to all tones (default, existing behaviour). "
                                        "0.5 = only pixels at or below mid-grey receive the full "
                                        "normalized result; brighter pixels fade back to original. "
-                                       "Use this to lift shadows without touching highlights.\n\n"
-                                       "The blend is computed on the ORIGINAL luma so it doesn't "
-                                       "chase the output — a highlight stays a highlight."),
+                                       "Use this to lift shadows without touching highlights."),
                 io.Float.Input("luma_apply_feather", default=0.15, min=0.0, max=1.0, step=0.01,
                                optional=True,
-                               tooltip="Width of the soft transition above luma_apply_max. "
-                                       "0 = hard cutoff. 0.15 = blend ramps from full→none over "
-                                       "0.15 luma units above luma_apply_max (recommended). "
-                                       "Ignored when luma_apply_max = 1.0."),
+                               tooltip="Soft transition width applied to BOTH the floor (luma_apply_min) "
+                                       "and ceiling (luma_apply_max) edges. "
+                                       "0 = hard cutoff. 0.15 = blend ramps over 0.15 luma units "
+                                       "at each edge (recommended).\n"
+                                       "Blend is always computed from ORIGINAL luma so the result "
+                                       "doesn't chase the output — a highlight stays a highlight."),
             ],
             outputs=[
                 io.Image.Output(display_name="image",
@@ -122,7 +133,8 @@ class BD_NormalizeLuma(io.ComfyNode):
                 clip_percent_high=1.0, clip_percent_low=1.0,
                 preserve_color=True, proportional_scale=False,
                 apply_to_mask_only=True, mask=None,
-                luma_apply_max=1.0, luma_apply_feather=0.15) -> io.NodeOutput:
+                luma_apply_min=0.0, luma_apply_max=1.0,
+                luma_apply_feather=0.15) -> io.NodeOutput:
 
         img = image if image.ndim == 4 else image.unsqueeze(0)
         img = img.float()
@@ -212,13 +224,23 @@ class BD_NormalizeLuma(io.ComfyNode):
 
             rescaled = rescaled.clamp(0.0, 1.0)
 
-            # Tone-range blend: fade normalization out above luma_apply_max.
-            # Weight is computed from ORIGINAL luma so highlights stay anchored
-            # to their source values regardless of what the normalization does.
-            if luma_apply_max < 1.0:
-                fade_end = luma_apply_max + max(luma_apply_feather, 1e-4)
-                # tone_w = 1 below luma_apply_max, ramps to 0 at fade_end
-                tone_w = 1.0 - ((luma_i - luma_apply_max) / (fade_end - luma_apply_max)).clamp(0.0, 1.0)
+            # Tone-range blend — weight computed from ORIGINAL luma so each
+            # tone anchor stays fixed regardless of what normalization does.
+            # shadow_w : 1 below luma_apply_max, fades to 0 above ceiling
+            # highlight_w: 0 below luma_apply_min, fades to 1 above floor
+            # tone_w = shadow_w * highlight_w → targets a specific tone band
+            need_tone_blend = luma_apply_max < 1.0 or luma_apply_min > 0.0
+            if need_tone_blend:
+                feather = max(luma_apply_feather, 1e-4)
+                tone_w = torch.ones_like(luma_i)
+                if luma_apply_max < 1.0:
+                    fade_end = luma_apply_max + feather
+                    shadow_w = 1.0 - ((luma_i - luma_apply_max) / (fade_end - luma_apply_max)).clamp(0.0, 1.0)
+                    tone_w = tone_w * shadow_w
+                if luma_apply_min > 0.0:
+                    fade_start = luma_apply_min - feather
+                    highlight_w = ((luma_i - fade_start) / (luma_apply_min - fade_start)).clamp(0.0, 1.0)
+                    tone_w = tone_w * highlight_w
                 tone_w = tone_w.unsqueeze(-1)   # (H, W, 1)
                 rescaled = rescaled * tone_w + img[i] * (1.0 - tone_w)
                 rescaled = rescaled.clamp(0.0, 1.0)
@@ -243,8 +265,10 @@ class BD_NormalizeLuma(io.ComfyNode):
             mode_desc = f"PROPORTIONAL scale={target_max / max(avg_max, 1e-6):.4f}"
         else:
             mode_desc = f"RANGE FIT [{target_min:.3f}, {target_max:.3f}]"
-        tone_desc = (f" tone_range=[0,{luma_apply_max:.2f}]+feather{luma_apply_feather:.2f}"
-                     if luma_apply_max < 1.0 else "")
+        if luma_apply_max < 1.0 or luma_apply_min > 0.0:
+            tone_desc = f" tone_range=[{luma_apply_min:.2f},{luma_apply_max:.2f}]±{luma_apply_feather:.2f}"
+        else:
+            tone_desc = ""
         print(f"[BD_NormalizeLuma] luma={luma_standard}, "
               f"source range: [{avg_min:.4f}, {avg_max:.4f}] "
               f"→ {mode_desc}{tone_desc}, "

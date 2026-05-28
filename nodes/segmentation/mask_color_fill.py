@@ -39,6 +39,20 @@ def _to_hw(mask_t: torch.Tensor, b: int, H: int, W: int) -> np.ndarray:
     return m_np.clip(0.0, 1.0)
 
 
+def _process_mask(m_np: np.ndarray, expand: int, feather: int) -> np.ndarray:
+    """Dilate then Gaussian-feather a float32 (H,W) mask."""
+    if (expand <= 0 and feather <= 0) or not HAS_CV2:
+        return m_np
+    u8 = (m_np * 255.0).clip(0, 255).astype(np.uint8)
+    if expand > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * expand + 1, 2 * expand + 1))
+        u8 = cv2.dilate(u8, k)
+    if feather > 0:
+        ksize = feather * 2 + 1
+        u8 = cv2.GaussianBlur(u8, (ksize, ksize), feather * 0.5)
+    return (u8.astype(np.float32) / 255.0).clip(0.0, 1.0)
+
+
 class BD_MaskColorFill(io.ComfyNode):
     """
     Fill up to 4 mask regions with flat colors and composite into one image.
@@ -61,6 +75,12 @@ class BD_MaskColorFill(io.ComfyNode):
                              tooltip=f"Green channel for slot {n}."),
                 io.Int.Input(f"b_{n}", default=b, min=0, max=255, step=1, optional=True,
                              tooltip=f"Blue channel for slot {n}."),
+                io.Int.Input(f"expand_{n}", default=0, min=0, max=60, step=1, optional=True,
+                             tooltip=f"Dilate mask slot {n} by this many pixels before coloring. "
+                                     f"Grows the painted region outward."),
+                io.Int.Input(f"feather_{n}", default=0, min=0, max=30, step=1, optional=True,
+                             tooltip=f"Gaussian feather radius for mask slot {n}. "
+                                     f"Softens the color fill edge. Applied after expand."),
             ]
 
         return io.Schema(
@@ -70,10 +90,14 @@ class BD_MaskColorFill(io.ComfyNode):
             description=(
                 "Fill up to 4 mask regions with flat colors and composite them "
                 "over an optional background.\n\n"
-                "Slots are layered 1 (bottom) → 4 (top).  Overlapping regions "
+                "Slots are layered 1 (bottom) → 4 (top). Overlapping regions "
                 "are painted by the higher-numbered slot.\n\n"
-                "RGBA alpha = union of all active masks (bg_alpha controls "
-                "background transparency).\n\n"
+                "Each slot has independent expand (dilate) and feather (blur) so "
+                "you can grow and soften each zone separately.\n\n"
+                "bg_alpha_from_image: when ON and a background image is connected, "
+                "the background image's luminance drives the RGBA alpha channel — "
+                "white areas of the background become opaque, black areas transparent. "
+                "Use this when your background is a head/body shape cutout.\n\n"
                 "Plug BD_FaceSocketInfill mask outputs here to build flat-color "
                 "UV textures for 2D flipbook animation."
             ),
@@ -90,8 +114,17 @@ class BD_MaskColorFill(io.ComfyNode):
                 io.Float.Input("bg_alpha", default=0.0, min=0.0, max=1.0, step=0.01,
                                optional=True,
                                tooltip="Alpha of the background in the RGBA output. "
-                                       "0 = transparent background (default, for layering). "
-                                       "1 = opaque background."),
+                                       "0 = transparent background (default). "
+                                       "1 = fully opaque. "
+                                       "Ignored when bg_alpha_from_image is ON."),
+                io.Boolean.Input("bg_alpha_from_image", default=False, optional=True,
+                                 tooltip="When ON and a background image is connected, the background "
+                                         "image's luminance becomes the RGBA alpha floor instead of "
+                                         "the flat bg_alpha scalar.\n\n"
+                                         "Use this when background is a shape cutout (e.g. white head "
+                                         "on black) — white areas become opaque, black areas transparent, "
+                                         "and mask slots paint on top. Lets you composite head shape + "
+                                         "colored feature zones in one node without a separate alpha."),
                 *_slot(1, 255,   0,   0),
                 *_slot(2,   0, 255,   0),
                 *_slot(3,   0,   0, 255),
@@ -113,23 +146,28 @@ class BD_MaskColorFill(io.ComfyNode):
         background: torch.Tensor | None = None,
         bg_r: int = 0, bg_g: int = 0, bg_b: int = 0,
         bg_alpha: float = 0.0,
+        bg_alpha_from_image: bool = False,
         mask_1: torch.Tensor | None = None,
         r_1: int = 255, g_1: int = 0,   b_1: int = 0,
+        expand_1: int = 0, feather_1: int = 0,
         mask_2: torch.Tensor | None = None,
         r_2: int = 0,   g_2: int = 255, b_2: int = 0,
+        expand_2: int = 0, feather_2: int = 0,
         mask_3: torch.Tensor | None = None,
         r_3: int = 0,   g_3: int = 0,   b_3: int = 255,
+        expand_3: int = 0, feather_3: int = 0,
         mask_4: torch.Tensor | None = None,
         r_4: int = 255, g_4: int = 255, b_4: int = 0,
+        expand_4: int = 0, feather_4: int = 0,
     ) -> io.NodeOutput:
 
         slots = [
-            (mask_1, r_1, g_1, b_1),
-            (mask_2, r_2, g_2, b_2),
-            (mask_3, r_3, g_3, b_3),
-            (mask_4, r_4, g_4, b_4),
+            (mask_1, r_1, g_1, b_1, expand_1, feather_1),
+            (mask_2, r_2, g_2, b_2, expand_2, feather_2),
+            (mask_3, r_3, g_3, b_3, expand_3, feather_3),
+            (mask_4, r_4, g_4, b_4, expand_4, feather_4),
         ]
-        active = [(m, r, g, b) for m, r, g, b in slots if m is not None]
+        active = [(m, r, g, b, ex, fth) for m, r, g, b, ex, fth in slots if m is not None]
 
         # Resolve canvas dimensions
         if background is not None:
@@ -161,10 +199,18 @@ class BD_MaskColorFill(io.ComfyNode):
             else:
                 canvas = np.full((H, W, 3), bg_color, dtype=np.float32)
 
-            combined_alpha = np.full((H, W), bg_alpha, dtype=np.float32)
+            # Alpha floor: image luma (shape cutout) or flat scalar
+            if bg_alpha_from_image and background is not None:
+                bg_luma = (0.2126 * canvas[..., 0]
+                           + 0.7152 * canvas[..., 1]
+                           + 0.0722 * canvas[..., 2])
+                combined_alpha = bg_luma.clip(0.0, 1.0)
+            else:
+                combined_alpha = np.full((H, W), bg_alpha, dtype=np.float32)
 
-            for mask_t, r, g, bv in active:
+            for mask_t, r, g, bv, ex, fth in active:
                 m_np  = _to_hw(mask_t, b, H, W)
+                m_np  = _process_mask(m_np, ex, fth)
                 color = np.array([r / 255.0, g / 255.0, bv / 255.0], dtype=np.float32)
                 a3    = m_np[:, :, np.newaxis]
                 canvas = canvas * (1.0 - a3) + color * a3
@@ -181,7 +227,9 @@ class BD_MaskColorFill(io.ComfyNode):
             masks_out.append(torch.from_numpy(combined_alpha))
 
         n_active  = len(active)
-        status    = f"BD_MaskColorFill: {B} frame(s), {n_active}/{len(slots)} slots active"
+        bg_alpha_desc = "luma" if (bg_alpha_from_image and background is not None) else f"{bg_alpha:.2f}"
+        status    = (f"BD_MaskColorFill: {B} frame(s), {n_active}/{len(slots)} slots active, "
+                     f"bg_alpha={bg_alpha_desc}")
         print(f"[BD_MaskColorFill] {status}", flush=True)
 
         return io.NodeOutput(
