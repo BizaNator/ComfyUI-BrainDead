@@ -582,8 +582,18 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 )
                 statuses.append(status)
 
+                # Per-zone feather applied to individual mask outputs so they
+                # match the soft edges used in the fill blend.
+                _zone_for = {
+                    'left_eye': 'eyes',  'right_eye': 'eyes',  'eyes': 'eyes',
+                    'left_brow': 'brows', 'right_brow': 'brows', 'brows': 'brows',
+                    'lips': 'lips', 'nose': 'nose',
+                }
                 for k in _MASK_KEYS:
-                    batches[k].append(torch.from_numpy(masks[k].astype(np.float32) / 255.0))
+                    fth = zone_feather[_zone_for[k]]
+                    batches[k].append(
+                        torch.from_numpy(_feather_mask(masks[k], fth))
+                    )
 
                 # ── Active zones, ordered for sequential inpaint ───────────────
                 zone_info = [
