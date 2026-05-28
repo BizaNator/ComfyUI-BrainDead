@@ -90,6 +90,21 @@ class BD_NormalizeLuma(io.ComfyNode):
                               tooltip="Optional region mask. Percentile calc only considers pixels "
                                       "where mask > 0.5. By default (apply_to_mask_only=ON), the "
                                       "normalization is also only applied within this region."),
+                io.Float.Input("luma_apply_max", default=1.0, min=0.0, max=1.0, step=0.01,
+                               optional=True,
+                               tooltip="Tone ceiling — normalization fades out above this luminance. "
+                                       "1.0 = apply to all tones (default, existing behaviour). "
+                                       "0.5 = only pixels at or below mid-grey receive the full "
+                                       "normalized result; brighter pixels fade back to original. "
+                                       "Use this to lift shadows without touching highlights.\n\n"
+                                       "The blend is computed on the ORIGINAL luma so it doesn't "
+                                       "chase the output — a highlight stays a highlight."),
+                io.Float.Input("luma_apply_feather", default=0.15, min=0.0, max=1.0, step=0.01,
+                               optional=True,
+                               tooltip="Width of the soft transition above luma_apply_max. "
+                                       "0 = hard cutoff. 0.15 = blend ramps from full→none over "
+                                       "0.15 luma units above luma_apply_max (recommended). "
+                                       "Ignored when luma_apply_max = 1.0."),
             ],
             outputs=[
                 io.Image.Output(display_name="image",
@@ -106,7 +121,8 @@ class BD_NormalizeLuma(io.ComfyNode):
                 target_max=0.95, target_min=0.0,
                 clip_percent_high=1.0, clip_percent_low=1.0,
                 preserve_color=True, proportional_scale=False,
-                apply_to_mask_only=True, mask=None) -> io.NodeOutput:
+                apply_to_mask_only=True, mask=None,
+                luma_apply_max=1.0, luma_apply_feather=0.15) -> io.NodeOutput:
 
         img = image if image.ndim == 4 else image.unsqueeze(0)
         img = img.float()
@@ -196,6 +212,17 @@ class BD_NormalizeLuma(io.ComfyNode):
 
             rescaled = rescaled.clamp(0.0, 1.0)
 
+            # Tone-range blend: fade normalization out above luma_apply_max.
+            # Weight is computed from ORIGINAL luma so highlights stay anchored
+            # to their source values regardless of what the normalization does.
+            if luma_apply_max < 1.0:
+                fade_end = luma_apply_max + max(luma_apply_feather, 1e-4)
+                # tone_w = 1 below luma_apply_max, ramps to 0 at fade_end
+                tone_w = 1.0 - ((luma_i - luma_apply_max) / (fade_end - luma_apply_max)).clamp(0.0, 1.0)
+                tone_w = tone_w.unsqueeze(-1)   # (H, W, 1)
+                rescaled = rescaled * tone_w + img[i] * (1.0 - tone_w)
+                rescaled = rescaled.clamp(0.0, 1.0)
+
             # When mask is wired AND apply_to_mask_only is on, blend back to the
             # original outside the mask region (soft mask values give natural feather).
             if apply_to_mask_only and roi is not None:
@@ -216,9 +243,11 @@ class BD_NormalizeLuma(io.ComfyNode):
             mode_desc = f"PROPORTIONAL scale={target_max / max(avg_max, 1e-6):.4f}"
         else:
             mode_desc = f"RANGE FIT [{target_min:.3f}, {target_max:.3f}]"
+        tone_desc = (f" tone_range=[0,{luma_apply_max:.2f}]+feather{luma_apply_feather:.2f}"
+                     if luma_apply_max < 1.0 else "")
         print(f"[BD_NormalizeLuma] luma={luma_standard}, "
               f"source range: [{avg_min:.4f}, {avg_max:.4f}] "
-              f"→ {mode_desc}, "
+              f"→ {mode_desc}{tone_desc}, "
               f"clip=[{clip_percent_low:.1f}%, {clip_percent_high:.1f}%], "
               f"preserve_color={'yes' if preserve_color else 'no'}, "
               f"mask_active={'yes' if mask is not None else 'no'}, "
