@@ -40,16 +40,34 @@ def _to_hw(mask_t: torch.Tensor, b: int, H: int, W: int) -> np.ndarray:
 
 
 def _process_mask(m_np: np.ndarray, expand: int, feather: int) -> np.ndarray:
-    """Dilate then Gaussian-feather a float32 (H,W) mask."""
-    if (expand <= 0 and feather <= 0) or not HAS_CV2:
+    """Dilate then edge-feather a float32 (H,W) mask.
+
+    Positive feather: blurs outward from the edge — interior stays fully
+    opaque (1.0), soft ramp extends BEYOND the fill boundary.
+    np.maximum(binary, blurred) preserves the interior while letting the
+    Gaussian escape outward, so the fill region shows no opacity loss.
+
+    Negative feather: blurs inward from the edge — exterior stays 0,
+    interior fades toward the boundary. np.minimum(binary, blurred).
+
+    Zero feather: binary pass-through.
+    """
+    if not HAS_CV2:
         return m_np
     u8 = (m_np * 255.0).clip(0, 255).astype(np.uint8)
     if expand > 0:
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * expand + 1, 2 * expand + 1))
         u8 = cv2.dilate(u8, k)
     if feather > 0:
+        inner = u8.copy()
         ksize = feather * 2 + 1
-        u8 = cv2.GaussianBlur(u8, (ksize, ksize), feather * 0.5)
+        blurred = cv2.GaussianBlur(u8, (ksize, ksize), feather * 0.5)
+        u8 = np.maximum(inner, blurred)   # interior stays 255, edge escapes outward
+    elif feather < 0:
+        abs_fth = abs(feather)
+        ksize = abs_fth * 2 + 1
+        blurred = cv2.GaussianBlur(u8, (ksize, ksize), abs_fth * 0.5)
+        u8 = np.minimum(u8, blurred)      # exterior stays 0, edge blends inward
     return (u8.astype(np.float32) / 255.0).clip(0.0, 1.0)
 
 
@@ -78,9 +96,12 @@ class BD_MaskColorFill(io.ComfyNode):
                 io.Int.Input(f"expand_{n}", default=0, min=0, max=60, step=1, optional=True,
                              tooltip=f"Dilate mask slot {n} by this many pixels before coloring. "
                                      f"Grows the painted region outward."),
-                io.Int.Input(f"feather_{n}", default=0, min=0, max=30, step=1, optional=True,
-                             tooltip=f"Gaussian feather radius for mask slot {n}. "
-                                     f"Softens the color fill edge. Applied after expand."),
+                io.Int.Input(f"feather_{n}", default=0, min=-30, max=30, step=1, optional=True,
+                             tooltip=f"Edge feather for mask slot {n}. Applied after expand.\n"
+                                     f"Positive: soft ramp extends OUTWARD from the fill edge — "
+                                     f"interior stays fully opaque, only the boundary bleeds out.\n"
+                                     f"Negative: soft ramp goes INWARD — fill fades toward its own edge.\n"
+                                     f"0 = hard binary edge."),
             ]
 
         return io.Schema(
@@ -119,12 +140,17 @@ class BD_MaskColorFill(io.ComfyNode):
                                        "Ignored when bg_alpha_from_image is ON."),
                 io.Boolean.Input("bg_alpha_from_image", default=False, optional=True,
                                  tooltip="When ON and a background image is connected, the background "
-                                         "image's luminance becomes the RGBA alpha floor instead of "
-                                         "the flat bg_alpha scalar.\n\n"
-                                         "Use this when background is a shape cutout (e.g. white head "
-                                         "on black) — white areas become opaque, black areas transparent, "
-                                         "and mask slots paint on top. Lets you composite head shape + "
-                                         "colored feature zones in one node without a separate alpha."),
+                                         "image's luminance is used as a CLIP MASK applied AFTER all "
+                                         "slot painting. Pixels outside the background shape (luma≈0) "
+                                         "become fully transparent regardless of slot masks.\n\n"
+                                         "Use bg_alpha to control the non-slot areas inside the shape:\n"
+                                         "  bg_alpha=0 → only slot-colored zones are visible (e.g. just "
+                                         "eyes/mouth floating on a transparent head silhouette)\n"
+                                         "  bg_alpha=1 → whole head shape is opaque, slot zones painted "
+                                         "on top showing the background image everywhere else\n\n"
+                                         "Typical use: background = head silhouette (white head, black "
+                                         "outside), bg_alpha_from_image=ON, bg_alpha=0 → eye/mouth zones "
+                                         "visible on transparent background, clipped to head boundary."),
                 *_slot(1, 255,   0,   0),
                 *_slot(2,   0, 255,   0),
                 *_slot(3,   0,   0, 255),
@@ -199,14 +225,15 @@ class BD_MaskColorFill(io.ComfyNode):
             else:
                 canvas = np.full((H, W, 3), bg_color, dtype=np.float32)
 
-            # Alpha floor: image luma (shape cutout) or flat scalar
+            # Pre-compute bg luma for clip BEFORE painting changes the canvas
             if bg_alpha_from_image and background is not None:
                 bg_luma = (0.2126 * canvas[..., 0]
                            + 0.7152 * canvas[..., 1]
-                           + 0.0722 * canvas[..., 2])
-                combined_alpha = bg_luma.clip(0.0, 1.0)
+                           + 0.0722 * canvas[..., 2]).clip(0.0, 1.0)
             else:
-                combined_alpha = np.full((H, W), bg_alpha, dtype=np.float32)
+                bg_luma = None
+
+            combined_alpha = np.full((H, W), bg_alpha, dtype=np.float32)
 
             for mask_t, r, g, bv, ex, fth in active:
                 m_np  = _to_hw(mask_t, b, H, W)
@@ -215,6 +242,14 @@ class BD_MaskColorFill(io.ComfyNode):
                 a3    = m_np[:, :, np.newaxis]
                 canvas = canvas * (1.0 - a3) + color * a3
                 np.maximum(combined_alpha, m_np, out=combined_alpha)
+
+            # bg_alpha_from_image: clip combined_alpha by background luma AFTER
+            # all slots are painted. Pixels outside the background shape (luma≈0)
+            # become transparent even if a mask bled there. Inside the shape the
+            # slot masks determine opacity — use bg_alpha=0 to see only slot zones,
+            # bg_alpha=1 to keep the whole head opaque showing background pixels.
+            if bg_luma is not None:
+                combined_alpha *= bg_luma
 
             canvas         = canvas.clip(0.0, 1.0)
             combined_alpha = combined_alpha.clip(0.0, 1.0)
