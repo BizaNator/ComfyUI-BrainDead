@@ -12,6 +12,13 @@ brows stay tight vertically so they don't bleed into the eye sockets below.
 Per-zone overrides (eyes_expand_x, brows_expand_y, …) take priority over the
 master expand_x / expand_y when set ≥ 0.  −1 means "use master value."
 
+Two-image mode:
+  image  — detection guide. MediaPipe runs on this. Use your cleanest, most
+           representative frame (e.g. neutral lighting, no motion blur).
+  image1 — fill target (optional). The actual image that gets infilled. When
+           not connected, falls back to image (single-image behaviour).
+  Typical use: image = line-art / ILM guide, image1 = albedo / skin layer.
+
 fill_mode:
   flat     — fill_r / fill_g / fill_b (default white, good for UV textures)
   surround — Gaussian-blurred surrounding skin
@@ -384,8 +391,18 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 "they can't contaminate each other's fill."
             ),
             inputs=[
-                io.Image.Input("image",
-                               tooltip="Input image or batch. Each frame processed independently."),
+                io.Image.Input(
+                    "image",
+                    tooltip="Detection guide — MediaPipe runs on this to locate feature zones. "
+                            "Use your cleanest, most representative image (e.g. neutral pose, "
+                            "good lighting). Does NOT need to be the image you want to fill."),
+                io.Image.Input(
+                    "image1", optional=True,
+                    tooltip="Fill target (optional). The image that actually gets infilled. "
+                            "Masks are computed from 'image' but applied to 'image1'. "
+                            "Leave unconnected to fill 'image' itself (original behaviour).\n\n"
+                            "Typical use: image = ILM / line-art guide, image1 = albedo / skin layer.\n"
+                            "Resolution should match 'image'; if different it is resized to match."),
                 io.Float.Input("detection_confidence", default=0.5, min=0.1, max=1.0,
                                step=0.05, optional=True),
 
@@ -480,6 +497,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
     def execute(
         cls,
         image: torch.Tensor,
+        image1: torch.Tensor | None = None,
         detection_confidence: float = 0.5,
         eyes: bool = True,
         brows: bool = True,
@@ -531,6 +549,11 @@ class BD_FaceSocketInfill(io.ComfyNode):
         B, H, W, C = image.shape
         scale = max(H, W) / 1536.0
 
+        # Normalise image1 if provided
+        if image1 is not None:
+            if image1.ndim == 3:
+                image1 = image1.unsqueeze(0)
+
         # ── Resolve per-zone (expand_x, expand_y) at native resolution ────────
         def _eff(override: int, master: int) -> int:
             return max(0, round((override if override >= 0 else master) * scale))
@@ -567,11 +590,30 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
         with _mpv.FaceLandmarker.create_from_options(opts) as landmarker:
             for b in range(B):
-                frame    = image[b].cpu().numpy()
-                frame_u8 = (frame * 255.0).clip(0, 255).astype(np.uint8)
+                # ── Detection frame (image0) — MediaPipe runs on this ─────────
+                detect_f  = image[b].cpu().numpy()
+                detect_u8 = (detect_f * 255.0).clip(0, 255).astype(np.uint8)
                 if C == 4:
-                    frame_u8 = frame_u8[..., :3]
-                frame_rgb_u8 = frame_u8.copy()
+                    detect_u8 = detect_u8[..., :3]
+                detect_rgb_u8 = detect_u8.copy()
+
+                # ── Fill frame (image1 if provided, else image0) ──────────────
+                if image1 is not None:
+                    b1 = min(b, image1.shape[0] - 1)
+                    fill_f  = image1[b1].cpu().numpy()
+                    fill_u8 = (fill_f * 255.0).clip(0, 255).astype(np.uint8)
+                    if fill_f.shape[-1] == 4:
+                        fill_u8 = fill_u8[..., :3]
+                    if fill_u8.shape[:2] != (H, W):
+                        fill_u8 = cv2.resize(fill_u8, (W, H), interpolation=cv2.INTER_LINEAR)
+                    fill_rgb_u8 = fill_u8.copy()
+                    fill_frame_f = fill_f[..., :3].astype(np.float32)
+                    if fill_frame_f.shape[:2] != (H, W):
+                        fill_frame_f = cv2.resize(fill_frame_f, (W, H), interpolation=cv2.INTER_LINEAR)
+                else:
+                    fill_rgb_u8  = detect_rgb_u8
+                    fill_frame_f = detect_f[..., :3].astype(np.float32)
+                frame_rgb_u8 = detect_rgb_u8  # alias for _process_frame call below
 
                 brow_band_px = max(2, round(brow_band * scale))
                 lip_band_px  = max(0, round(lip_band  * scale))
@@ -606,7 +648,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 combined_soft = np.zeros((H, W), dtype=np.float32)
 
                 if fill_mode == "inpaint":
-                    result_u8 = frame_rgb_u8.copy()
+                    result_u8 = fill_rgb_u8.copy()
                     for enabled, zone, zone_mask in zone_info:
                         if not enabled or not zone_mask.any():
                             continue
@@ -618,7 +660,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 elif fill_mode == "surround":
                     max_ex = max(ex for ex, ey in zone_expand.values())
-                    fill_np = _surround_fill(frame_rgb_u8, max(15, max_ex * 4))
+                    fill_np = _surround_fill(fill_rgb_u8, max(15, max_ex * 4))
                     for enabled, zone, zone_mask in zone_info:
                         if not enabled or not zone_mask.any():
                             continue
@@ -635,9 +677,8 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 batches['socket_soft'].append(torch.from_numpy(combined_soft))
 
-                frame_f  = frame[..., :3].astype(np.float32)
                 alpha_2d = combined_soft[:, :, np.newaxis]
-                blended  = (frame_f * (1.0 - alpha_2d) + fill_np * alpha_2d).clip(0.0, 1.0)
+                blended  = (fill_frame_f * (1.0 - alpha_2d) + fill_np * alpha_2d).clip(0.0, 1.0)
                 socket_images.append(torch.from_numpy(blended))
 
                 alpha_ch = (1.0 - combined_soft)[:, :, np.newaxis]
