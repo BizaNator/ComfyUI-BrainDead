@@ -118,6 +118,7 @@ def _match_best(
     used_cands: set[int],
     min_iou: float,
     target_expand: int,
+    clip_expand: int,
     max_target_fill: float,
     exclusive: bool,
 ) -> tuple[np.ndarray | None, int, float, str]:
@@ -125,11 +126,18 @@ def _match_best(
 
     Returns (refined_or_None, best_j, best_iou, note).
     refined is None on skip (full-white) or no match.
+
+    Strategy: MediaPipe identifies the zone (IoU matching via expanded hull).
+    The SAM3 candidate provides the pixel-accurate shape — it is clipped by
+    the clip-expanded hull (not the raw hull) so candidate edge detail outside
+    the tight MediaPipe boundary is preserved while wild bleed-out is still blocked.
     """
     fill = float((t_arr > 0.5).mean())
     if max_target_fill < 1.0 and fill > max_target_fill:
         return None, -1, fill, f"SKIPPED fill={fill:.1%}"
 
+    # Expand for IoU matching — wider than clip so we find the right candidate
+    # even when MediaPipe is tight and only partially overlaps the SAM3 segment.
     t_query = _dilate(t_arr, target_expand)
 
     best_iou, best_j = -1.0, -1
@@ -141,7 +149,11 @@ def _match_best(
             best_iou, best_j = iou, j
 
     if best_j >= 0 and best_iou >= min_iou:
-        refined = np.minimum(t_arr, cands_hw[best_j]).clip(0, 1)
+        # Clip guard: candidate is clipped to the clip-expanded hull, not the
+        # raw hull. This lets SAM3's pixel-accurate edges show through at the
+        # boundary while still blocking bleed beyond clip_expand pixels.
+        t_clip = _dilate(t_arr, clip_expand) if clip_expand != target_expand else t_query
+        refined = np.minimum(t_clip, cands_hw[best_j]).clip(0, 1)
         return refined, best_j, best_iou, f"cand={best_j} IoU={best_iou:.3f}"
 
     return None, -1, best_iou, f"no match (best IoU={best_iou:.3f})"
@@ -229,8 +241,16 @@ class BD_FaceSkinRefine(io.ComfyNode):
                 io.Int.Input(
                     "target_expand", default=4, min=0, max=60, step=1, optional=True,
                     tooltip="Pixels to dilate each feature mask BEFORE computing IoU. "
-                            "Helps when MediaPipe hulls are tight and only partially overlap the "
-                            "SAM3 segment. 4–8 px is usually enough.",
+                            "Used only for finding the right SAM3 candidate — does not affect the "
+                            "final clip boundary. 4–8 px is usually enough.",
+                ),
+                io.Int.Input(
+                    "clip_expand", default=4, min=0, max=40, step=1, optional=True,
+                    tooltip="How far outside the raw MediaPipe hull the SAM3 candidate is allowed to extend. "
+                            "SAM3 provides the pixel-accurate shape; this guards against wild bleed. "
+                            "Matches target_expand by default. "
+                            "Raise to let SAM3's edges show through more freely. "
+                            "Lower to stay closer to the MediaPipe shape.",
                 ),
                 io.Int.Input(
                     "feature_expand", default=0, min=0, max=20, step=1, optional=True,
@@ -312,6 +332,7 @@ class BD_FaceSkinRefine(io.ComfyNode):
         nose:       torch.Tensor | None = None,
         min_iou: float = 0.05,
         target_expand: int = 4,
+        clip_expand: int = 4,
         feature_expand: int = 0,
         max_target_fill: float = 0.95,
         exclusive: bool = True,
@@ -382,7 +403,7 @@ class BD_FaceSkinRefine(io.ComfyNode):
 
             result, best_j, best_iou, note = _match_best(
                 t_arr, cands_hw, used_cands, min_iou, target_expand,
-                max_target_fill, exclusive,
+                clip_expand, max_target_fill, exclusive,
             )
 
             if result is not None:
@@ -442,7 +463,8 @@ class BD_FaceSkinRefine(io.ComfyNode):
         n_matched = sum(1 for l in info_lines if "matched" in l)
         header = (
             f"BD_FaceSkinRefine: {n_matched}/{wired_count} features matched "
-            f"from {len(cands_hw)} candidates (min_iou={min_iou}, target_expand={target_expand})"
+            f"from {len(cands_hw)} candidates "
+            f"(min_iou={min_iou}, target_expand={target_expand}, clip_expand={clip_expand})"
         )
         match_info = header + "\n" + "\n".join(info_lines)
         print(f"[BD_FaceSkinRefine] {match_info}", flush=True)
