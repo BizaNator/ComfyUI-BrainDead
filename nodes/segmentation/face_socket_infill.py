@@ -249,12 +249,29 @@ def _blank(H: int, W: int) -> np.ndarray:
 
 
 def _feather_mask(mask_u8: np.ndarray, feather: int) -> np.ndarray:
-    """Binary uint8 mask → float32 [0,1] with Gaussian-softened edges."""
-    if feather <= 0:
+    """Binary uint8 mask → float32 [0,1].
+
+    Positive feather: ramp starts AT the edge and expands OUTWARD.
+    Interior stays fully opaque (255); only the boundary bleeds out.
+    Uses np.maximum(inner, blurred) so the interior is never dimmed.
+
+    Negative feather: ramp goes INWARD from the edge.
+    Exterior stays 0; fill fades toward its own boundary.
+    Uses np.minimum(mask, blurred).
+
+    Zero: hard binary edge pass-through.
+    """
+    if feather == 0:
         return mask_u8.astype(np.float32) / 255.0
-    ksize = feather * 2 + 1
-    blurred = cv2.GaussianBlur(mask_u8.astype(np.float32), (ksize, ksize), feather * 0.5)
-    return (blurred / 255.0).clip(0.0, 1.0)
+    abs_f = abs(feather)
+    ksize = abs_f * 2 + 1
+    m_f = mask_u8.astype(np.float32)
+    blurred = cv2.GaussianBlur(m_f, (ksize, ksize), abs_f * 0.5)
+    if feather > 0:
+        result = np.maximum(m_f, blurred)   # interior stays 255, edge escapes outward
+    else:
+        result = np.minimum(m_f, blurred)   # exterior stays 0, edge blends inward
+    return (result / 255.0).clip(0.0, 1.0)
 
 
 # ── Per-frame mask extraction ─────────────────────────────────────────────────
@@ -469,15 +486,22 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 io.Int.Input("nose_expand_y",  default=-1, min=-1, max=60, step=1, optional=True),
 
                 # ── Feather ───────────────────────────────────────────────────
-                io.Int.Input("feather", default=3, min=0, max=30, step=1, optional=True,
-                             tooltip="Master Gaussian blur radius for soft socket edges."),
+                io.Int.Input("feather", default=3, min=-30, max=30, step=1, optional=True,
+                             tooltip="Master feather radius for socket edges.\n"
+                                     "Positive: ramp starts AT the edge and expands OUTWARD — "
+                                     "interior stays fully opaque (1.0), only the boundary bleeds out.\n"
+                                     "Negative: ramp goes INWARD from the edge — fill fades toward "
+                                     "its own boundary, exterior stays 0.\n"
+                                     "0 = hard binary edge."),
                 io.Int.Input("eyes_feather",  default=-1, min=-1, max=30, step=1, optional=True,
-                             tooltip="Eye feather override (−1 = master feather)."),
+                             tooltip="Eye feather override. −1 = use master feather "
+                                     "(inherits positive/negative direction). 0+ = outward override."),
                 io.Int.Input("brows_feather", default=-1, min=-1, max=30, step=1, optional=True,
-                             tooltip="Brow feather override."),
+                             tooltip="Brow feather override. −1 = use master feather."),
                 io.Int.Input("lips_feather",  default=-1, min=-1, max=30, step=1, optional=True,
-                             tooltip="Lip feather override."),
-                io.Int.Input("nose_feather",  default=-1, min=-1, max=30, step=1, optional=True),
+                             tooltip="Lip feather override. −1 = use master feather."),
+                io.Int.Input("nose_feather",  default=-1, min=-1, max=30, step=1, optional=True,
+                             tooltip="Nose feather override. −1 = use master feather."),
 
                 # ── Fill ─────────────────────────────────────────────────────
                 io.Combo.Input("fill_mode", options=_FILL_MODES, default="flat", optional=True,
