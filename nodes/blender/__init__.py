@@ -14,6 +14,7 @@ Provides high-quality mesh operations using Blender headlessly:
 
 from .decimate_full import (
     BD_BlenderDecimate,
+    BD_BlenderQuadDecimate,
     DECIMATE_FULL_V3_NODES,
     DECIMATE_FULL_NODES,
     DECIMATE_FULL_DISPLAY_NAMES,
@@ -52,6 +53,12 @@ from .export_mesh import (
     EXPORT_MESH_NODES,
     EXPORT_MESH_DISPLAY_NAMES,
 )
+from .planar_normals import (
+    BD_BlenderPlanarNormals,
+    PLANAR_NORMALS_V3_NODES,
+    PLANAR_NORMALS_NODES,
+    PLANAR_NORMALS_DISPLAY_NAMES,
+)
 
 # V3 node list for extension
 BLENDER_V3_NODES = [
@@ -61,6 +68,7 @@ BLENDER_V3_NODES = [
     *TRANSFER_V3_NODES,
     *ADDON_V3_NODES,
     *EXPORT_MESH_V3_NODES,
+    *PLANAR_NORMALS_V3_NODES,
 ]
 
 # V1 compatibility - NODE_CLASS_MAPPINGS dict
@@ -71,6 +79,7 @@ BLENDER_NODES = {
     **TRANSFER_NODES,
     **ADDON_NODES,
     **EXPORT_MESH_NODES,
+    **PLANAR_NORMALS_NODES,
 }
 
 BLENDER_DISPLAY_NAMES = {
@@ -80,6 +89,7 @@ BLENDER_DISPLAY_NAMES = {
     **TRANSFER_DISPLAY_NAMES,
     **ADDON_DISPLAY_NAMES,
     **EXPORT_MESH_DISPLAY_NAMES,
+    **PLANAR_NORMALS_DISPLAY_NAMES,
 }
 
 __all__ = [
@@ -87,6 +97,7 @@ __all__ = [
     "BLENDER_V3_NODES",
     # Individual classes - Decimate
     "BD_BlenderDecimate",
+    "BD_BlenderQuadDecimate",
     # Individual classes - Addon-based
     "BD_BlenderRemesh",
     "BD_BlenderCleanup",
@@ -95,6 +106,8 @@ __all__ = [
     "BD_BlenderNormals",
     # Individual classes - Export
     "BD_BlenderExportMesh",
+    # Individual classes - Planar normals
+    "BD_BlenderPlanarNormals",
     # Individual classes - Legacy
     "BD_BlenderRepair",
     "BD_BlenderTransferColors",

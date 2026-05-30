@@ -194,6 +194,38 @@ def _fill_iris_ellipse(pts: np.ndarray, H: int, W: int,
     return out
 
 
+def _fill_lip_plane(lm, H: int, W: int,
+                    lip_band_px: int = 12,
+                    expand_x_px: int = 0,
+                    expand_y_px: int = 0) -> np.ndarray:
+    """
+    Rotated rectangle plane along the mouth axis.
+
+    Uses landmark 61 (left corner) and 291 (right corner) to compute the
+    mouth axis angle, then draws a clean 4-point rectangle centred on the
+    lip region.  Unlike _fill_lip_shape, this produces a flat geometric
+    polygon with no cupid's bow — suitable for pre-drawing a stylised
+    lip plane before Qwen edit runs.
+    """
+    out = np.zeros((H, W), dtype=np.uint8)
+    lc = np.array([lm[61].x * W,  lm[61].y * H], dtype=np.float32)   # left corner
+    rc = np.array([lm[291].x * W, lm[291].y * H], dtype=np.float32)   # right corner
+    tc = np.array([lm[0].x * W,   lm[0].y * H],  dtype=np.float32)    # philtrum dip
+    bc = np.array([lm[17].x * W,  lm[17].y * H], dtype=np.float32)    # lower lip centre
+
+    dx, dy = rc - lc
+    angle_deg = float(np.degrees(np.arctan2(dy, dx)))
+    cx = float((lc[0] + rc[0]) / 2.0)
+    cy = float((tc[1] + bc[1]) / 2.0)
+
+    width  = float(np.sqrt(dx ** 2 + dy ** 2)) + expand_x_px * 2.0
+    height = float(max(lip_band_px * 2, abs(float(tc[1]) - float(bc[1])))) + expand_y_px * 2.0
+
+    box = cv2.boxPoints(((cx, cy), (width, height), angle_deg)).astype(np.int32)
+    cv2.fillConvexPoly(out, box, 255)
+    return out
+
+
 def _fill_lip_shape(pts: np.ndarray, H: int, W: int,
                     expand_x: int = 0, expand_y: int = 0,
                     lip_band: int = 6) -> np.ndarray:
@@ -280,6 +312,7 @@ _MASK_KEYS = [
     'left_eye', 'right_eye', 'eyes',
     'left_brow', 'right_brow', 'brows',
     'lips', 'nose', 'face_oval',
+    'lip_plane',  # rotated rectangle along 61→291 mouth axis
 ]
 _ZONES = ('eyes', 'brows', 'lips', 'nose')
 
@@ -292,6 +325,7 @@ def _process_frame(
     brow_band: int = 12,                        # native-px half-height of arch band
     eye_inset: int = 3,                         # native-px erosion inside eyelid (iris mode)
     lip_band: int = 6,                          # native-px minimum half-height of lip band
+    lip_mode: str = "organic",                  # "organic" | "plane"
 ) -> tuple[dict[str, np.ndarray], str]:
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
@@ -336,9 +370,20 @@ def _process_frame(
     right_brow = _brow_zone('right_brow')
     brows      = _union(left_brow, right_brow)
 
-    lips = _fill_lip_shape(_pts(_OUTER_LIP_IDX, lm, H, W), H, W,
-                           expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1],
-                           lip_band=lip_band)
+    lip_plane = _fill_lip_plane(lm, H, W,
+                                lip_band_px=lip_band,
+                                expand_x_px=zone_expand['lips'][0],
+                                expand_y_px=zone_expand['lips'][1])
+    if lip_mode == "plane":
+        lips = lip_plane
+    elif lip_mode == "contour":
+        # exact outer lip polygon — no forced band, no expansion
+        lips = _fill_lip_shape(_pts(_OUTER_LIP_IDX, lm, H, W), H, W,
+                               expand_x=0, expand_y=0, lip_band=0)
+    else:  # organic
+        lips = _fill_lip_shape(_pts(_OUTER_LIP_IDX, lm, H, W), H, W,
+                               expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1],
+                               lip_band=lip_band)
     nose = _fill_convex(_pts(_NOSE_INDICES,   lm, H, W), H, W,
                         expand_x=zone_expand['nose'][0], expand_y=zone_expand['nose'][1])
 
@@ -351,6 +396,7 @@ def _process_frame(
         'left_eye': left_eye, 'right_eye': right_eye, 'eyes': eyes,
         'left_brow': left_brow, 'right_brow': right_brow, 'brows': brows,
         'lips': lips, 'nose': nose, 'face_oval': face_oval,
+        'lip_plane': lip_plane,
     }, "ok"
 
 
@@ -521,6 +567,22 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 io.Int.Input("fill_r", default=255, min=0, max=255, step=1, optional=True),
                 io.Int.Input("fill_g", default=255, min=0, max=255, step=1, optional=True),
                 io.Int.Input("fill_b", default=255, min=0, max=255, step=1, optional=True),
+
+                # ── Lip plane mode ────────────────────────────────────────────
+                io.Combo.Input(
+                    "lip_mode", options=["organic", "contour", "plane"], default="organic",
+                    optional=True,
+                    tooltip="Controls the shape used for lip socket fill:\n"
+                            "organic (default): MediaPipe outer lip contour with lip_band "
+                            "minimum height and expand applied — can appear wider/taller "
+                            "than the actual lip pixels.\n"
+                            "contour: exact outer lip polygon with zero expansion and no "
+                            "forced minimum height. Tight crop that follows the MediaPipe "
+                            "landmark boundary precisely.\n"
+                            "plane: Rotated rectangle aligned to the 61→291 mouth axis — "
+                            "a flat geometric polygon for stylised pre-draw before Qwen.\n\n"
+                            "The lip_plane output always emits the rotated rectangle "
+                            "regardless of this setting."),
             ],
             outputs=[
                 io.Image.Output("socket_image",
@@ -541,6 +603,10 @@ class BD_FaceSocketInfill(io.ComfyNode):
                                tooltip="MediaPipe face oval mask. By default, active socket zones "
                                        "are subtracted (oval_subtract_sockets=ON) so this gives "
                                        "the skin/non-socket face region for blending."),
+                io.Mask.Output("lip_plane",
+                               tooltip="Rotated rectangle aligned to the 61→291 mouth axis. "
+                                       "Always a flat geometric polygon regardless of lip_mode. "
+                                       "Use to pre-draw a stylised midgrey plane before Qwen."),
                 io.String.Output("status"),
             ],
         )
@@ -580,6 +646,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         fill_r: int = 255,
         fill_g: int = 255,
         fill_b: int = 255,
+        lip_mode: str = "organic",
     ) -> io.NodeOutput:
 
         _blank1     = torch.zeros((1, 1, 1),    dtype=torch.float32)
@@ -674,7 +741,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 eye_inset_px = max(0, round(eye_inset  * scale))
                 masks, status = _process_frame(
                     frame_rgb_u8, landmarker, zone_expand,
-                    eye_mode, brow_band_px, eye_inset_px, lip_band_px,
+                    eye_mode, brow_band_px, eye_inset_px, lip_band_px, lip_mode,
                 )
                 statuses.append(status)
 
@@ -684,6 +751,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
                     'left_eye': 'eyes',  'right_eye': 'eyes',  'eyes': 'eyes',
                     'left_brow': 'brows', 'right_brow': 'brows', 'brows': 'brows',
                     'lips': 'lips', 'nose': 'nose',
+                    'lip_plane': 'lips',
                 }
                 for k in _MASK_KEYS:
                     if k == 'face_oval':
@@ -779,6 +847,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
             out['left_eye'], out['right_eye'], out['eyes'],
             out['left_brow'], out['right_brow'], out['brows'],
             out['lips'], out['nose'], out['face_oval'],
+            out['lip_plane'],
             status_str,
         )
 

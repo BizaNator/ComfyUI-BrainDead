@@ -291,16 +291,159 @@ class BD_SmartDecimate(io.ComfyNode):
             return io.NodeOutput(mesh, f"ERROR: {e}")
 
 
+class BD_MeshLibFillHoles(io.ComfyNode):
+    """
+    Fill mesh holes using MeshLib's high-quality hole filler.
+
+    MeshLib's fillHoleNicely produces smooth, fair patches that respect
+    curvature — significantly better than CuMesh or PyMeshLab for large
+    irregular holes common in Trellis2 and DC remesh output.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_MeshLibFillHoles",
+            display_name="BD MeshLib Fill Holes",
+            category="🧠BrainDead/Mesh",
+            description="""Fill mesh holes using MeshLib's curvature-aware hole filler.
+
+Handles large, irregular holes that CuMesh and PyMeshLab miss.
+Ideal for cleaning up DC remesh output before UV unwrap or export.
+
+max_hole_edges limits which holes get filled — set higher to fill
+larger holes, lower to only fill small artifacts.""",
+            inputs=[
+                TrimeshInput("mesh"),
+                io.Int.Input(
+                    "max_hole_edges",
+                    default=300,
+                    min=3,
+                    max=10000,
+                    step=10,
+                    tooltip="Maximum boundary edge count for a hole to be filled. Larger = fill bigger holes.",
+                ),
+                io.Boolean.Input(
+                    "nice_fill",
+                    default=True,
+                    tooltip="Use curvature-aware fill (slower but much better quality). False = fast trivial fill.",
+                ),
+            ],
+            outputs=[
+                TrimeshOutput(display_name="mesh"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, mesh, max_hole_edges: int = 300, nice_fill: bool = True) -> io.NodeOutput:
+        import tempfile
+
+        if not HAS_TRIMESH:
+            return io.NodeOutput(mesh, "ERROR: trimesh not installed")
+        if mesh is None:
+            return io.NodeOutput(None, "ERROR: No input mesh")
+
+        try:
+            import meshlib.mrmeshpy as mr
+        except ImportError:
+            return io.NodeOutput(mesh, "ERROR: meshlib not installed")
+
+        temp_in = temp_out = None
+        start_time = time.time()
+        initial_verts = len(mesh.vertices)
+        initial_faces = len(mesh.faces) if mesh.faces is not None else 0
+
+        print(f"[BD MeshLib Fill] Input: {initial_verts:,} verts, {initial_faces:,} faces")
+
+        try:
+            # Save to temp PLY
+            with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as f:
+                temp_in = f.name
+            mesh.export(temp_in, file_type='ply')
+
+            mr_mesh = mr.loadMesh(temp_in)
+
+            # Find all hole boundary edges (one representative edge per hole)
+            holes = []
+            seen = set()
+            for edge_idx in range(mr_mesh.topology.edgeSize()):
+                e = mr.EdgeId(edge_idx)
+                if not mr_mesh.topology.isLeftInFace(e):
+                    u = int(mr_mesh.topology.undirectedEdge(e))
+                    if u not in seen:
+                        # Count this hole's boundary length
+                        length = 0
+                        cur = e
+                        for _ in range(max_hole_edges + 1):
+                            seen.add(int(mr_mesh.topology.undirectedEdge(cur)))
+                            cur = mr_mesh.topology.next(cur)
+                            length += 1
+                            if cur == e:
+                                break
+                        if length <= max_hole_edges:
+                            holes.append(e)
+
+            print(f"[BD MeshLib Fill] Found {len(holes)} fillable holes (≤{max_hole_edges} edges)")
+
+            filled = 0
+            if nice_fill:
+                settings = mr.FillHoleNicelySettings()
+                for h in holes:
+                    try:
+                        mr.fillHoleNicely(mr_mesh, h, settings)
+                        filled += 1
+                    except Exception as ex:
+                        print(f"[BD MeshLib Fill] Warning: hole fill failed: {ex}")
+            else:
+                params = mr.FillHoleParams()
+                for h in holes:
+                    try:
+                        mr.fillHole(mr_mesh, h, params)
+                        filled += 1
+                    except Exception as ex:
+                        print(f"[BD MeshLib Fill] Warning: hole fill failed: {ex}")
+
+            # Save and reload
+            with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as f:
+                temp_out = f.name
+            mr.saveMesh(mr_mesh, temp_out)
+
+            result = trimesh.load(temp_out, process=False)
+
+            final_verts = len(result.vertices)
+            final_faces = len(result.faces) if hasattr(result, 'faces') else 0
+            elapsed = time.time() - start_time
+            mode = "nice" if nice_fill else "trivial"
+            status = (f"Filled {filled}/{len(holes)} holes ({mode}) | "
+                      f"{initial_faces:,} → {final_faces:,} faces | {elapsed:.1f}s")
+            print(f"[BD MeshLib Fill] {status}")
+
+            return io.NodeOutput(result, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return io.NodeOutput(mesh, f"ERROR: {e}")
+
+        finally:
+            for p in (temp_in, temp_out):
+                if p and os.path.exists(p):
+                    os.unlink(p)
+
+
 # V3 node list for extension
-MESH_PROCESSING_V3_NODES = [BD_MeshRepair, BD_SmartDecimate]
+MESH_PROCESSING_V3_NODES = [BD_MeshRepair, BD_SmartDecimate, BD_MeshLibFillHoles]
 
 # V1 compatibility - NODE_CLASS_MAPPINGS dict
 MESH_PROCESSING_NODES = {
     "BD_MeshRepair": BD_MeshRepair,
     "BD_SmartDecimate": BD_SmartDecimate,
+    "BD_MeshLibFillHoles": BD_MeshLibFillHoles,
 }
 
 MESH_PROCESSING_DISPLAY_NAMES = {
     "BD_MeshRepair": "BD Mesh Repair",
     "BD_SmartDecimate": "BD Smart Decimate",
+    "BD_MeshLibFillHoles": "BD MeshLib Fill Holes",
 }
