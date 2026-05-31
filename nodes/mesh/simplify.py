@@ -311,8 +311,8 @@ Note: CuMesh operates on geometry only - vertex colors are NOT preserved.""",
                         print(f"[BD CuMesh]   Consider using resolution <= {min(remesh_resolution, estimated_resolution * 2)} to avoid artifacts")
 
                     # Dual contour remesh with optional sharp edge preservation
-                    # Scale needs to account for band width expansion
-                    effective_scale = (remesh_resolution + 3 * remesh_band) / remesh_resolution * scale
+                    # 10% margin keeps surface safely inside the voxel domain
+                    effective_scale = scale * 1.1
 
                     remesh_start = time.time()
                     new_verts, new_faces = cumesh.remeshing.remesh_narrow_band_dc(
@@ -485,14 +485,234 @@ Note: CuMesh operates on geometry only - vertex colors are NOT preserved.""",
             return io.NodeOutput(mesh, f"ERROR: {e}")
 
 
+def _save_quad_obj(vertices_np: np.ndarray, quad_faces_np: np.ndarray, path: str) -> None:
+    """Write an OBJ file preserving quad faces (4-vertex polygons)."""
+    with open(path, 'w') as f:
+        f.write("# BD CuMesh Quad Remesh\n")
+        for v in vertices_np:
+            f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+        for q in quad_faces_np:
+            # OBJ is 1-indexed
+            f.write(f"f {q[0]+1} {q[1]+1} {q[2]+1} {q[3]+1}\n")
+
+
+class BD_CuMeshQuadRemesh(io.ComfyNode):
+    """
+    GPU-accelerated quad remesh via dual contouring.
+
+    Returns the native quad topology from the DC algorithm before triangle
+    splitting. Outputs a triangulated TRIMESH for pipeline use plus saves
+    a quad OBJ file for Blender/Maya/animation workflows.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CuMeshQuadRemesh",
+            display_name="BD CuMesh Quad Remesh",
+            category="🧠BrainDead/Mesh",
+            description="""GPU dual-contouring remesh that preserves quad topology.
+
+Outputs:
+- mesh: triangulated TRIMESH for pipeline use (quads split to tris)
+- quad_obj_path: path to OBJ file with true quad faces for Blender/animation
+
+Quad OBJ is the primary deliverable for rigging and subdivision workflows.
+The TRIMESH output is a triangulated copy for downstream ComfyUI nodes.""",
+            inputs=[
+                TrimeshInput("mesh"),
+                io.Int.Input(
+                    "resolution",
+                    default=512,
+                    min=128,
+                    max=2048,
+                    step=64,
+                    tooltip="Voxel grid resolution. Higher = more quads, more detail.",
+                ),
+                io.Float.Input(
+                    "band",
+                    default=1.0,
+                    min=0.5,
+                    max=4.0,
+                    step=0.5,
+                    tooltip="Narrow band width in voxel units around the surface.",
+                ),
+                io.Float.Input(
+                    "project_back",
+                    default=0.9,
+                    min=0.0,
+                    max=1.0,
+                    step=0.1,
+                    tooltip="How much to snap quad vertices back to the original surface.",
+                ),
+                io.Boolean.Input(
+                    "preserve_sharp_edges",
+                    default=True,
+                    tooltip="Use sharp-edge-aware dual contouring kernel.",
+                ),
+                io.Float.Input(
+                    "sharp_angle",
+                    default=30.0,
+                    min=10.0,
+                    max=90.0,
+                    step=5.0,
+                    tooltip="Dihedral angle threshold (degrees) for sharp edge detection.",
+                ),
+                io.String.Input(
+                    "filename",
+                    default="quad_mesh",
+                    tooltip="Base filename for the quad OBJ output.",
+                ),
+                io.String.Input(
+                    "name_prefix",
+                    default="",
+                    optional=True,
+                    tooltip="Optional subdirectory prefix (e.g. 'Project/Head').",
+                ),
+            ],
+            outputs=[
+                TrimeshOutput(display_name="mesh"),
+                io.String.Output(display_name="quad_obj_path"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        mesh,
+        resolution: int = 512,
+        band: float = 1.0,
+        project_back: float = 0.9,
+        preserve_sharp_edges: bool = True,
+        sharp_angle: float = 30.0,
+        filename: str = "quad_mesh",
+        name_prefix: str = "",
+    ) -> io.NodeOutput:
+        import folder_paths
+        from glob import glob
+
+        if not HAS_TORCH:
+            return io.NodeOutput(mesh, "", "ERROR: torch not installed")
+        if not HAS_CUMESH:
+            return io.NodeOutput(mesh, "", "ERROR: cumesh not installed")
+        if not HAS_TRIMESH:
+            return io.NodeOutput(mesh, "", "ERROR: trimesh not installed")
+        if mesh is None:
+            return io.NodeOutput(None, "", "ERROR: No input mesh")
+
+        start_time = time.time()
+        orig_verts = len(mesh.vertices)
+        orig_faces = len(mesh.faces)
+        print(f"[BD QuadRemesh] Input: {orig_verts:,} verts, {orig_faces:,} faces @ res={resolution}")
+
+        try:
+            # Merge split vertices if needed
+            verts_per_face = orig_verts / orig_faces if orig_faces > 0 else 0
+            if verts_per_face > 2.9:
+                work = trimesh.Trimesh(vertices=mesh.vertices.copy(), faces=mesh.faces.copy(), process=False)
+                work.merge_vertices()
+            else:
+                work = mesh
+
+            vertices = torch.tensor(work.vertices, dtype=torch.float32).cuda()
+            faces = torch.tensor(work.faces, dtype=torch.int32).cuda()
+
+            # Z-up → Y-up for CuMesh
+            v_yup = vertices.clone()
+            v_yup[:, 1], v_yup[:, 2] = -vertices[:, 2].clone(), vertices[:, 1].clone()
+
+            # Compute mesh bounds for scale/center
+            mesh_min = v_yup.min(dim=0).values
+            mesh_max = v_yup.max(dim=0).values
+            center = (mesh_min + mesh_max) / 2
+            scale = (mesh_max - mesh_min).max().item() * 1.1
+
+            bvh = cumesh.cuBVH(v_yup, faces)
+
+            new_verts, quad_faces = cumesh.remeshing.remesh_narrow_band_dc(
+                v_yup, faces,
+                center=center,
+                scale=scale,
+                resolution=resolution,
+                band=band,
+                project_back=project_back,
+                verbose=True,
+                bvh=bvh,
+                preserve_sharp_edges=preserve_sharp_edges,
+                sharp_angle_threshold=sharp_angle,
+                return_quads=True,
+            )
+
+            del bvh, v_yup, vertices, faces
+            torch.cuda.empty_cache()
+
+            verts_np = new_verts.cpu().numpy().astype(np.float32)
+            quads_np = quad_faces.cpu().numpy()
+
+            # Y-up → Z-up for output
+            verts_np[:, 1], verts_np[:, 2] = verts_np[:, 2].copy(), -verts_np[:, 1].copy()
+
+            # Triangulate quads for TRIMESH output (split each quad into 2 tris)
+            tri_faces = np.concatenate([
+                quads_np[:, [0, 1, 2]],
+                quads_np[:, [0, 2, 3]],
+            ], axis=0)
+            result = trimesh.Trimesh(vertices=verts_np, faces=tri_faces, process=False)
+
+            # Resolve output path
+            output_base = folder_paths.get_output_directory()
+            full_name = f"{name_prefix}_{filename}" if name_prefix else filename
+            full_name = full_name.replace('\\', '/')
+            if '/' in full_name:
+                subdir, base = full_name.rsplit('/', 1)
+                output_dir = os.path.join(output_base, subdir)
+            else:
+                output_dir = output_base
+                base = full_name
+            os.makedirs(output_dir, exist_ok=True)
+
+            pattern = os.path.join(output_dir, f"{base}_*.obj")
+            existing = glob(pattern)
+            nums = []
+            for p in existing:
+                try:
+                    nums.append(int(os.path.splitext(os.path.basename(p))[0].rsplit('_', 1)[1]))
+                except (ValueError, IndexError):
+                    pass
+            next_num = max(nums, default=0) + 1
+            obj_path = os.path.join(output_dir, f"{base}_{next_num:03d}.obj")
+
+            _save_quad_obj(verts_np, quads_np, obj_path)
+
+            elapsed = time.time() - start_time
+            status = (f"{orig_faces:,} tris → {len(quads_np):,} quads ({len(tri_faces):,} tris) "
+                      f"@ res={resolution} | {elapsed:.1f}s | {obj_path}")
+            print(f"[BD QuadRemesh] {status}")
+
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            return io.NodeOutput(result, obj_path, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            gc.collect()
+            torch.cuda.empty_cache()
+            return io.NodeOutput(mesh, "", f"ERROR: {e}")
+
+
 # V3 node list
-SIMPLIFY_V3_NODES = [BD_CuMeshSimplify]
+SIMPLIFY_V3_NODES = [BD_CuMeshSimplify, BD_CuMeshQuadRemesh]
 
 # V1 compatibility
 SIMPLIFY_NODES = {
     "BD_CuMeshSimplify": BD_CuMeshSimplify,
+    "BD_CuMeshQuadRemesh": BD_CuMeshQuadRemesh,
 }
 
 SIMPLIFY_DISPLAY_NAMES = {
     "BD_CuMeshSimplify": "BD CuMesh Simplify",
+    "BD_CuMeshQuadRemesh": "BD CuMesh Quad Remesh",
 }

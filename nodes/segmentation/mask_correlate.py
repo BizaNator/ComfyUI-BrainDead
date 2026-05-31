@@ -1,0 +1,724 @@
+"""
+BD_MaskCorrelate — match coarse guide masks to a batch of precise candidate masks by IoU.
+
+Primary use case: MediaPipe gives you WHERE a face feature is (approximate convex-hull
+polygon), SAM3 gives you WHAT'S in that region (pixel-accurate segment). This node
+pairs each guide with the best-overlapping SAM3 segment, then combines them with the
+chosen mode.
+
+Algorithm (per target slot):
+  1. Sort wired slots by priority (highest first) when exclusive=True.
+  2. Compute IoU between the target and every remaining candidate.
+  3. Accept the highest-IoU candidate if it meets min_iou threshold.
+  4. Combine: replace | intersect | union | weighted_blend.
+  5. If no candidate meets threshold → fall back (original target or blank).
+  6. Build a color-coded debug overlay: each matched slot in a distinct colour,
+     unmatched slots in dimmed grey, composited over the reference image (or black).
+
+Compared to BD_MaskResolver: no skin-tone heuristics, no fixed category names.
+Pure geometric matching — works with any mask pair (face features, body parts,
+object segments, etc.). Priority + exclusive mode replaces BD_MaskResolver's
+hard-coded category priority ordering.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import torch
+from comfy_api.latest import io
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+# 8 visually distinct colours for the debug overlay (RGB float, 0–1)
+_SLOT_COLORS = [
+    (1.00, 0.25, 0.25),  # red
+    (0.25, 0.85, 0.25),  # green
+    (0.25, 0.45, 1.00),  # blue
+    (1.00, 0.85, 0.10),  # yellow
+    (0.85, 0.25, 1.00),  # purple
+    (0.15, 0.90, 0.90),  # cyan
+    (1.00, 0.55, 0.05),  # orange
+    (0.55, 1.00, 0.20),  # lime
+]
+
+
+def _to_hw(mask: torch.Tensor) -> np.ndarray:
+    """Normalise any mask tensor → (H, W) float32 in [0, 1]."""
+    m = mask.detach().cpu().float()
+    if m.ndim == 3:
+        m = m[0]
+    return m.numpy().astype(np.float32)
+
+
+def _to_mask_tensor(arr: np.ndarray) -> torch.Tensor:
+    """(H, W) float32 → (1, H, W) ComfyUI MASK tensor."""
+    return torch.from_numpy(arr.astype(np.float32)).unsqueeze(0)
+
+
+def _iou(a: np.ndarray, b: np.ndarray) -> float:
+    """IoU between two (H, W) float masks, binarised at 0.5."""
+    ab = (a > 0.5).astype(np.float32)
+    bb = (b > 0.5).astype(np.float32)
+    inter = (ab * bb).sum()
+    union = np.maximum(ab + bb, 1e-6).clip(0, 1).sum()
+    return float(inter / union) if union > 0 else 0.0
+
+
+def _dilate(arr: np.ndarray, px: int) -> np.ndarray:
+    if px <= 0:
+        return arr
+    try:
+        import cv2
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * px + 1, 2 * px + 1))
+        u8 = (arr * 255).clip(0, 255).astype(np.uint8)
+        return cv2.dilate(u8, k).astype(np.float32) / 255.0
+    except ImportError:
+        return arr
+
+
+def _resize_to(arr: np.ndarray, H: int, W: int) -> np.ndarray:
+    if arr.shape == (H, W):
+        return arr
+    try:
+        import cv2
+        u8 = (arr * 255).clip(0, 255).astype(np.uint8)
+        return cv2.resize(u8, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32) / 255.0
+    except ImportError:
+        from PIL import Image
+        pil = Image.fromarray((arr * 255).clip(0, 255).astype(np.uint8), mode="L")
+        return np.asarray(pil.resize((W, H), Image.BILINEAR)).astype(np.float32) / 255.0
+
+
+def _combine(target: np.ndarray, candidate: np.ndarray, mode: str) -> np.ndarray:
+    if mode == "replace":
+        return candidate
+    elif mode == "intersect":
+        return np.minimum(target, candidate)
+    elif mode == "union":
+        return np.maximum(target, candidate)
+    elif mode == "weighted_blend":
+        conf = candidate.clip(0, 1)
+        return target * (1.0 - conf * 0.5) + candidate * conf
+    return candidate
+
+
+def _build_overlay(
+    base_rgb: np.ndarray,           # (H, W, 3) float32 in [0,1], or None
+    slot_masks: list[np.ndarray],   # list of _N (H,W) float32 masks
+    slot_matched: list[bool],       # True if slot was matched
+    overlay_alpha: float,
+    H: int,
+    W: int,
+) -> torch.Tensor:
+    """Build a colour-coded debug overlay as a (1, H, W, 3) IMAGE tensor."""
+    if base_rgb is None:
+        canvas = np.zeros((H, W, 3), dtype=np.float32)
+    else:
+        canvas = base_rgb.copy()
+
+    for slot_i, (mask, matched) in enumerate(zip(slot_masks, slot_matched)):
+        if mask.max() < 0.01:
+            continue  # skip blank/unwired slots
+        color = _SLOT_COLORS[slot_i % len(_SLOT_COLORS)]
+        if not matched:
+            # Dim unmatched slots — show as grey with reduced alpha
+            color = (0.55, 0.55, 0.55)
+            alpha = overlay_alpha * 0.4
+        else:
+            alpha = overlay_alpha
+
+        binary = (mask > 0.5).astype(np.float32)
+        for c, cv in enumerate(color):
+            canvas[..., c] = canvas[..., c] * (1.0 - binary * alpha) + cv * binary * alpha
+
+    return torch.from_numpy(canvas.clip(0, 1)).unsqueeze(0)
+
+
+def _parse_slot_modes(slot_modes_str: str, label_list: list[str]) -> dict[int, str]:
+    """Parse 'label_or_1based_idx: mode' lines into {0based_idx: mode} dict."""
+    valid_modes = {"replace", "intersect", "union", "weighted_blend"}
+    result = {}
+    for line in (slot_modes_str or "").splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        left, right = line.split(":", 1)
+        tok = left.strip()
+        mode_val = right.strip().lower()
+        if mode_val not in valid_modes:
+            continue
+        # Resolve slot index
+        try:
+            idx = int(tok) - 1
+        except ValueError:
+            idx = label_list.index(tok) if tok in label_list else -1
+        if 0 <= idx < _N:
+            result[idx] = mode_val
+    return result
+
+
+def _parse_subtract_pairs(
+    subtract_str: str,
+    label_list: list[str],
+) -> list[tuple[int, list[int]]]:
+    """Parse subtract_slots text into (target_0idx, [source_0idxes]) pairs.
+
+    Each line: "target: src1, src2, ..."
+    Tokens accepted as label names OR 1-based slot numbers.
+    Returns pairs in the order they appear (top line processed first).
+    """
+    def _resolve(tok: str) -> int | None:
+        tok = tok.strip()
+        if not tok:
+            return None
+        # Try 1-based int
+        try:
+            idx = int(tok) - 1
+            return idx if 0 <= idx < _N else None
+        except ValueError:
+            pass
+        # Try label match
+        if tok in label_list:
+            return label_list.index(tok)
+        return None
+
+    pairs = []
+    for line in (subtract_str or "").splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        left, right = line.split(":", 1)
+        target = _resolve(left)
+        if target is None:
+            continue
+        sources = [s for s in (_resolve(t) for t in right.split(",")) if s is not None and s != target]
+        if sources:
+            pairs.append((target, sources))
+    return pairs
+
+
+def _parse_priorities(priority_str: str, n: int) -> list[float]:
+    """Parse comma-separated priority string into a list of length n, default 1.0."""
+    if not (priority_str or "").strip():
+        return [1.0] * n
+    parts = [p.strip() for p in priority_str.split(",")]
+    result = []
+    for i in range(n):
+        try:
+            result.append(float(parts[i]) if i < len(parts) else 1.0)
+        except ValueError:
+            result.append(1.0)
+    return result
+
+
+def _parse_slot_filter(filter_str: str, label_list: list[str]) -> set[int]:
+    """Parse comma-separated label names or 1-based slot indices into a set of 0-based indices."""
+    result: set[int] = set()
+    for tok in (filter_str or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            idx = int(tok) - 1
+            if 0 <= idx < _N:
+                result.add(idx)
+        except ValueError:
+            if tok in label_list:
+                result.add(label_list.index(tok))
+    return result
+
+
+def _make_bg(bg_mode: str, H: int, W: int) -> np.ndarray:
+    if bg_mode == "white":
+        return np.ones((H, W, 3), dtype=np.float32)
+    if bg_mode == "checker":
+        sz = 16
+        rows = (np.arange(H) // sz)[:, None]
+        cols = (np.arange(W) // sz)[None, :]
+        light = np.where((rows + cols) % 2 == 0, 0.7, 0.4).astype(np.float32)
+        return np.stack([light, light, light], axis=-1)
+    return np.zeros((H, W, 3), dtype=np.float32)
+
+
+def _composite(img_np: np.ndarray, alpha: np.ndarray, bg_mode: str) -> torch.Tensor:
+    """Alpha-composite img_np with mask. Returns (1, H, W, 3 or 4) float32 tensor."""
+    H, W = alpha.shape
+    a = alpha[..., None]
+    if bg_mode == "transparent":
+        rgba = np.concatenate([img_np[..., :3] * a, a], axis=-1)
+        return torch.from_numpy(rgba.clip(0, 1).astype(np.float32)).unsqueeze(0)
+    bg = _make_bg(bg_mode, H, W)
+    composited = img_np[..., :3] * a + bg * (1.0 - a)
+    return torch.from_numpy(composited.clip(0, 1).astype(np.float32)).unsqueeze(0)
+
+
+# ── Node ─────────────────────────────────────────────────────────────────────
+
+_N = 8   # max target slots
+
+
+class BD_MaskCorrelate(io.ComfyNode):
+    """
+    Match coarse guide masks to precise candidate masks by IoU overlap.
+    Wire MediaPipe feature masks as targets, SAM3 segment batch as candidates.
+    For each target the best-overlapping candidate is found and combined with it.
+    Includes a colour-coded debug overlay and per-slot priority ordering.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        target_inputs = []
+        for i in range(1, _N + 1):
+            target_inputs.append(
+                io.Mask.Input(
+                    f"target_{i}", optional=True,
+                    tooltip=f"Target slot {i} — coarse guide mask (e.g. from BD_MediaPipeFaceMask). "
+                            f"Leave unwired to skip this slot.",
+                )
+            )
+
+        return io.Schema(
+            node_id="BD_MaskCorrelate",
+            display_name="BD Mask Correlate",
+            category="🧠BrainDead/Segmentation",
+            description=(
+                "Match coarse guide masks (targets) to a batch of precise candidate masks by IoU. "
+                "For each wired target the candidate with highest overlap is selected and combined "
+                "with the target using the chosen mode. Includes colour-coded debug overlay and "
+                "priority ordering for exclusive assignment."
+            ),
+            inputs=[
+                io.Mask.Input(
+                    "candidates",
+                    tooltip="Batch of precise candidate masks (B, H, W) — e.g. SAM3 segment output. "
+                            "Each frame in the batch is a separate candidate segment.",
+                ),
+                io.Image.Input(
+                    "reference_image", optional=True,
+                    tooltip="Original character image. When wired:\n"
+                            "  • Used as the base for the debug overlay\n"
+                            "  • Produces masked_image (union of all matched slots applied as alpha)\n"
+                            "Leave unwired to composite the debug overlay on black.",
+                ),
+                io.Mask.Input(
+                    "silhouette_mask", optional=True,
+                    tooltip="Head or body silhouette (white=subject, black=background). "
+                            "When wired, all output masks are clipped to this boundary after matching. "
+                            "Useful for ensuring matched segments don't bleed outside the head/body shape.",
+                ),
+                io.Combo.Input(
+                    "masked_image_bg",
+                    options=["transparent", "white", "black", "checker"],
+                    default="transparent", optional=True,
+                    tooltip="Background for the masked_image output when reference_image is wired.\n"
+                            "  transparent → RGBA output, background is fully transparent\n"
+                            "  white / black → RGB composite over solid colour\n"
+                            "  checker → grey checkerboard (visually indicates transparency)"
+                ),
+                io.Boolean.Input(
+                    "invert_masked_image", default=False, optional=True,
+                    tooltip="When True, masked_image shows everything EXCEPT the matched regions — "
+                            "the inverse composite.\n\n"
+                            "If silhouette_mask is wired: image × (silhouette − union_of_matched) — "
+                            "shows the subject with matched areas cut out (e.g. remove eyes/lips from face).\n"
+                            "If silhouette_mask is not wired: image × (1 − union_of_matched).\n\n"
+                            "Useful for: baking a head mask that has feature holes, or showing the "
+                            "non-feature areas of the subject.",
+                ),
+                io.Boolean.Input(
+                    "combined_mask_invert", default=False, optional=True,
+                    tooltip="When True: combined_mask = silhouette_mask − union (if wired) or 1 − union. "
+                            "Gives you the head-minus-features shape as a mask — same logic as "
+                            "invert_masked_image but as a MASK output for downstream use.",
+                ),
+                io.String.Input(
+                    "combined_mask_exclude", default="", optional=True,
+                    tooltip="Comma-separated labels or 1-based slot indices to EXCLUDE from the "
+                            "combined_mask output (and from the union used in masked_image).\n\n"
+                            "Example: 'skin' or '1' — skin slot is excluded so combined_mask = "
+                            "union of eyes + eyebrows + lips only, not the skin region.\n\n"
+                            "Useful when one slot is a large 'base' mask (skin, clothing) and you want "
+                            "combined_mask to represent just the smaller feature masks.",
+                ),
+                io.String.Input(
+                    "labels", multiline=True,
+                    default="left_brow\nright_brow\nleft_eye\nright_eye\nlips",
+                    optional=True,
+                    tooltip="One label per line, aligned with target_1..target_N slots. "
+                            "Used for the match_info status string and overlay legend.",
+                ),
+                io.String.Input(
+                    "priorities", default="", optional=True,
+                    tooltip=(
+                        "Comma-separated priority values for each slot, aligned with target_1..N. "
+                        "Higher value = matched first in exclusive mode (gets first pick of candidates).\n"
+                        "Example: '2,2,1,1,3' — slot 5 (lips) gets first pick, slots 1-2 (brows) "
+                        "second, slots 3-4 (eyes) last.\n"
+                        "Empty (default) = all slots equal priority, processed in slot order."
+                    ),
+                ),
+                io.Float.Input(
+                    "min_iou", default=0.05, min=0.0, max=1.0, step=0.01,
+                    optional=True,
+                    tooltip="Minimum IoU for a candidate to be accepted as a match. "
+                            "0.05 is permissive (any reasonable overlap counts). Raise to 0.2+ "
+                            "if candidates are bleeding into the wrong target regions.",
+                ),
+                io.Combo.Input(
+                    "mode",
+                    options=["intersect", "replace", "union", "weighted_blend"],
+                    default="intersect",
+                    optional=True,
+                    tooltip=(
+                        "Default combine mode for all slots:\n"
+                        "  intersect — candidate clipped to target region (safest; use for eyes/brows/lips "
+                        "so SAM3 segments stay within MediaPipe hull bounds).\n"
+                        "  replace   — raw SAM3 segment used directly (use for skin — lets SAM3 define "
+                        "the boundary, then subtract_slots removes features).\n"
+                        "  union     — expand target by candidate shape.\n"
+                        "  weighted_blend — smooth blend biased toward confident candidate areas.\n\n"
+                        "Override per slot with slot_modes."
+                    ),
+                ),
+                io.String.Input(
+                    "slot_modes", multiline=True, default="", optional=True,
+                    tooltip=(
+                        "Per-slot mode overrides — one line each: label_or_index: mode\n\n"
+                        "Overrides the global mode setting for specific slots. All others use mode.\n\n"
+                        "Example:\n"
+                        "  skin: replace\n"
+                        "  left_eye: intersect\n\n"
+                        "Typical skin pipeline:\n"
+                        "  skin: replace   ← SAM3 defines the skin boundary (pixel-accurate)\n"
+                        "  (all feature slots stay on intersect — clipped to MediaPipe hull)\n"
+                        "  subtract_slots: skin: eyes, brows, lips  ← then remove features\n\n"
+                        "Valid modes: intersect, replace, union, weighted_blend"
+                    ),
+                ),
+                io.Combo.Input(
+                    "fallback",
+                    options=["original", "blank"],
+                    default="original",
+                    optional=True,
+                    tooltip=(
+                        "What to output for a target slot when no candidate meets min_iou:\n"
+                        "  original — return the unmodified target mask.\n"
+                        "  blank    — return an empty mask (signals 'no confident match')."
+                    ),
+                ),
+                io.Int.Input(
+                    "target_expand", default=0, min=0, max=60, step=1,
+                    optional=True,
+                    tooltip="Pixels to dilate each target mask BEFORE computing IoU. "
+                            "Useful when MediaPipe landmarks produce a tight hull that doesn't "
+                            "fully overlap the actual SAM3 segment. 4–10 px is usually enough.",
+                ),
+                io.Boolean.Input(
+                    "exclusive", default=False,
+                    optional=True,
+                    tooltip="When True each candidate can only be matched to ONE target "
+                            "(assigned in priority order, highest first). "
+                            "When False the same SAM3 segment can match multiple targets "
+                            "(safe for non-overlapping features like left/right brow).",
+                ),
+                io.Float.Input(
+                    "max_target_fill", default=0.95, min=0.0, max=1.0, step=0.01,
+                    optional=True,
+                    tooltip=(
+                        "If a target mask covers MORE than this fraction of the image, treat it as "
+                        "invalid and apply the fallback instead of attempting to match.\n\n"
+                        "Why: BD_SAM3MultiPrompt with invert_negative=True returns a FULL WHITE mask "
+                        "when a prompted item is not found. A full-white target has high IoU with "
+                        "every candidate, causing false matches across the whole image.\n\n"
+                        "0.95 (default) rejects masks covering >95% of pixels. Set to 1.0 to disable. "
+                        "Lower values (e.g. 0.7) also reject partial-failure masks — useful when "
+                        "SAM3 returns an overly broad segment for a missed prompt."
+                    ),
+                ),
+                io.String.Input(
+                    "subtract_slots", multiline=True, default="", optional=True,
+                    tooltip=(
+                        "Post-matching subtraction rules. Each line: target: source1, source2, ...\n\n"
+                        "Tokens can be label names (from the labels field) or 1-based slot numbers.\n"
+                        "After all slots are matched, the listed source refined masks are subtracted "
+                        "from the target refined mask — useful for cutting precise eye/brow/lip regions "
+                        "out of the skin mask.\n\n"
+                        "Example:\n"
+                        "  skin: eyes, brows, lips\n"
+                        "  1: 3, 4, 5\n\n"
+                        "Subtraction clamps to 0 (no negative values). Applied in line order."
+                    ),
+                ),
+                io.Float.Input(
+                    "overlay_alpha", default=0.55, min=0.0, max=1.0, step=0.05,
+                    optional=True,
+                    tooltip="Opacity of the colour overlay on the debug image. "
+                            "0 = overlay invisible, 1 = solid colour. "
+                            "Unmatched/fallback slots show at 40% of this value in grey.",
+                ),
+                *target_inputs,
+            ],
+            outputs=[
+                *[io.Mask.Output(display_name=f"refined_{i}",
+                                 tooltip=f"Refined mask for target slot {i}. "
+                                         f"Blank (zeros) if slot was not wired.")
+                  for i in range(1, _N + 1)],
+                io.Image.Output(
+                    display_name="debug_overlay",
+                    tooltip="Colour-coded debug image: each matched slot in a distinct colour, "
+                            "unmatched slots in dimmed grey. Wire to PreviewImage to inspect results.",
+                ),
+                io.String.Output(display_name="match_info",
+                                 tooltip="Per-slot match summary: label, best candidate index, IoU, mode used."),
+                io.Image.Output(
+                    display_name="masked_image",
+                    tooltip="reference_image composited with the union of all matched slot masks as alpha. "
+                            "With invert_masked_image=True: shows everything EXCEPT the matched regions "
+                            "(clamped to silhouette_mask if wired). "
+                            "Requires reference_image to be wired. Background controlled by masked_image_bg.",
+                ),
+                io.Mask.Output(
+                    display_name="combined_mask",
+                    tooltip="Union of all wired+matched refined slot masks as a single MASK. "
+                            "Clipped to silhouette_mask if wired. "
+                            "Use downstream to treat all matched regions as one shape.",
+                ),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        candidates: torch.Tensor,
+        reference_image: torch.Tensor | None = None,
+        silhouette_mask: torch.Tensor | None = None,
+        masked_image_bg: str = "transparent",
+        invert_masked_image: bool = False,
+        combined_mask_invert: bool = False,
+        combined_mask_exclude: str = "",
+        labels: str = "",
+        priorities: str = "",
+        min_iou: float = 0.05,
+        mode: str = "intersect",
+        slot_modes: str = "",
+        fallback: str = "original",
+        target_expand: int = 0,
+        exclusive: bool = False,
+        max_target_fill: float = 0.95,
+        subtract_slots: str = "",
+        overlay_alpha: float = 0.55,
+        **kwargs,
+    ) -> io.NodeOutput:
+
+        # Parse targets from kwargs
+        targets: list[torch.Tensor | None] = []
+        for i in range(1, _N + 1):
+            targets.append(kwargs.get(f"target_{i}"))
+
+        wired = [(i, t) for i, t in enumerate(targets) if t is not None]
+
+        # Parse labels, priorities, per-slot modes, and subtract pairs
+        label_list = [l.strip() for l in (labels or "").strip().split("\n") if l.strip()]
+        priority_vals = _parse_priorities(priorities, _N)
+        slot_mode_map = _parse_slot_modes(slot_modes, label_list)
+        subtract_pairs = _parse_subtract_pairs(subtract_slots, label_list)
+
+        # Normalise candidates to list of (H, W) float32 arrays
+        cands_t = candidates
+        if cands_t.ndim == 2:
+            cands_t = cands_t.unsqueeze(0)
+        if cands_t.ndim == 3:
+            cands_hw = [_to_hw(cands_t[b:b+1]) for b in range(cands_t.shape[0])]
+        else:
+            cands_hw = []
+
+        blank_shape = None
+        if wired:
+            first = wired[0][1]
+            m = first
+            if m.ndim == 3:
+                m = m[0]
+            blank_shape = (int(m.shape[-2]), int(m.shape[-1]))
+        elif cands_hw:
+            blank_shape = cands_hw[0].shape
+        else:
+            blank_shape = (64, 64)
+
+        H, W = blank_shape
+
+        # Resize candidates to target resolution
+        cands_hw = [_resize_to(c, H, W) for c in cands_hw]
+
+        # Normalise silhouette_mask → (H, W) float32 or None
+        sil_arr: np.ndarray | None = None
+        if silhouette_mask is not None:
+            sil_arr = _resize_to(_to_hw(silhouette_mask), H, W)
+
+        # Prepare reference image for overlay and masked_image (H, W, 3) float32
+        base_rgb = None
+        img_np: np.ndarray | None = None
+        if reference_image is not None:
+            ref = reference_image.detach().cpu().float()
+            if ref.ndim == 4:
+                ref = ref[0]   # take first frame (H, W, C)
+            if ref.shape[-1] == 4:
+                ref = ref[..., :3]
+            ref_np = ref.numpy()
+            if ref_np.shape[:2] != (H, W):
+                ref_np = _resize_to(ref_np[..., 0], H, W)   # fallback L
+                base_rgb = np.stack([ref_np] * 3, axis=-1)
+            else:
+                base_rgb = ref_np.astype(np.float32)
+            img_np = base_rgb
+
+        blank = np.zeros((H, W), dtype=np.float32)
+        out_masks: list[np.ndarray] = [blank.copy() for _ in range(_N)]
+        slot_matched: list[bool] = [False] * _N
+        info_lines: list[str] = []
+        used_cands: set[int] = set()
+
+        if not cands_hw:
+            for slot_i, t in wired:
+                out_masks[slot_i] = _to_hw(t)
+                slot_matched[slot_i] = True
+            match_info = "BD_MaskCorrelate: no candidates provided — targets passed through unchanged."
+        else:
+            # Sort wired slots by priority (descending) so high-priority slots get first pick
+            # in exclusive mode; low priority slots see what's left
+            if exclusive:
+                wired_sorted = sorted(wired, key=lambda x: priority_vals[x[0]], reverse=True)
+            else:
+                wired_sorted = wired
+
+            for slot_i, t_tensor in wired_sorted:
+                label = label_list[slot_i] if slot_i < len(label_list) else f"target_{slot_i+1}"
+                priority = priority_vals[slot_i]
+                t_arr = _resize_to(_to_hw(t_tensor), H, W)
+
+                # Reject near-full-coverage targets (SAM3 "not found" = full white)
+                if max_target_fill < 1.0:
+                    fill = float((t_arr > 0.5).mean())
+                    if fill > max_target_fill:
+                        if fallback == "blank":
+                            out_masks[slot_i] = blank.copy()
+                            info_lines.append(
+                                f"  {label}: SKIPPED (fill={fill:.2%} > max_target_fill={max_target_fill:.2%}) → blank"
+                            )
+                        else:
+                            out_masks[slot_i] = t_arr
+                            info_lines.append(
+                                f"  {label}: SKIPPED (fill={fill:.2%} > max_target_fill={max_target_fill:.2%}) → original"
+                            )
+                        continue
+
+                t_query = _dilate(t_arr, target_expand)
+
+                # Find best candidate
+                best_iou = -1.0
+                best_j = -1
+                for j, c in enumerate(cands_hw):
+                    if exclusive and j in used_cands:
+                        continue
+                    iou = _iou(t_query, c)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_j = j
+
+                if best_j >= 0 and best_iou >= min_iou:
+                    if exclusive:
+                        used_cands.add(best_j)
+                    slot_mode = slot_mode_map.get(slot_i, mode)
+                    refined = _combine(t_arr, cands_hw[best_j], slot_mode)
+                    out_masks[slot_i] = refined.clip(0, 1)
+                    slot_matched[slot_i] = True
+                    priority_note = f" priority={priority:.1f}" if priorities.strip() else ""
+                    mode_note = f" mode={slot_mode}" + (" (override)" if slot_i in slot_mode_map else "")
+                    info_lines.append(
+                        f"  {label}: matched candidate {best_j} (IoU={best_iou:.3f},{mode_note}{priority_note})"
+                    )
+                else:
+                    if fallback == "blank":
+                        out_masks[slot_i] = blank.copy()
+                        info_lines.append(
+                            f"  {label}: no match (best IoU={best_iou:.3f} < {min_iou}) → blank"
+                        )
+                    else:
+                        out_masks[slot_i] = t_arr
+                        slot_matched[slot_i] = False  # show as unmatched in overlay
+                        info_lines.append(
+                            f"  {label}: no match (best IoU={best_iou:.3f} < {min_iou}) → original"
+                        )
+
+            n_matched = sum(1 for l in info_lines if "matched" in l)
+            header = (
+                f"BD_MaskCorrelate: {n_matched}/{len(wired)} slots matched "
+                f"from {len(cands_hw)} candidates (min_iou={min_iou}, mode={mode})"
+            )
+            match_info = header + "\n" + "\n".join(info_lines)
+
+        # Apply subtract_slots: for each rule, subtract source refined masks from target
+        subtract_notes = []
+        for target_idx, source_idxes in subtract_pairs:
+            t_label = label_list[target_idx] if target_idx < len(label_list) else f"slot_{target_idx+1}"
+            s_labels = [label_list[s] if s < len(label_list) else f"slot_{s+1}" for s in source_idxes]
+            subtracted = out_masks[target_idx].copy()
+            for src in source_idxes:
+                subtracted = np.maximum(0.0, subtracted - out_masks[src])
+            out_masks[target_idx] = subtracted
+            subtract_notes.append(f"  subtract: {t_label} − ({', '.join(s_labels)})")
+
+        if subtract_notes:
+            match_info += "\n" + "\n".join(subtract_notes)
+
+        print(f"[BD_MaskCorrelate] {match_info}", flush=True)
+
+        # Apply silhouette clip to all wired output masks
+        if sil_arr is not None:
+            for i in range(_N):
+                out_masks[i] = np.minimum(out_masks[i], sil_arr)
+
+        # Build debug overlay — show all wired slots (matched + unmatched)
+        wired_indices = {slot_i for slot_i, _ in wired}
+        overlay_masks = [
+            out_masks[i] if i in wired_indices else blank
+            for i in range(_N)
+        ]
+        overlay_matched = [
+            slot_matched[i] if i in wired_indices else False
+            for i in range(_N)
+        ]
+        debug_overlay = _build_overlay(base_rgb, overlay_masks, overlay_matched, overlay_alpha, H, W)
+
+        # Build combined_mask: union of wired slots, minus any explicitly excluded
+        exclude_indices = _parse_slot_filter(combined_mask_exclude, label_list)
+        union_mask = np.zeros((H, W), dtype=np.float32)
+        for i in wired_indices:
+            if i not in exclude_indices:
+                union_mask = np.maximum(union_mask, out_masks[i])
+        union_mask = union_mask.clip(0, 1)
+        if combined_mask_invert:
+            base = sil_arr if sil_arr is not None else np.ones((H, W), dtype=np.float32)
+            combined_mask = _to_mask_tensor(np.maximum(0.0, base - union_mask))
+        else:
+            combined_mask = _to_mask_tensor(union_mask)
+
+        if img_np is not None:
+            if invert_masked_image:
+                # Invert: show everything EXCEPT the union, clamped to silhouette
+                base = sil_arr if sil_arr is not None else np.ones((H, W), dtype=np.float32)
+                alpha = np.maximum(0.0, base - union_mask)
+            else:
+                alpha = union_mask
+            masked_image = _composite(img_np, alpha.clip(0, 1), masked_image_bg)
+        else:
+            channels = 4 if masked_image_bg == "transparent" else 3
+            masked_image = torch.zeros((1, H, W, channels), dtype=torch.float32)
+
+        outputs = [_to_mask_tensor(out_masks[i]) for i in range(_N)]
+        return io.NodeOutput(*outputs, debug_overlay, match_info, masked_image, combined_mask)
+
+
+MASK_CORRELATE_V3_NODES = [BD_MaskCorrelate]
+MASK_CORRELATE_NODES = {"BD_MaskCorrelate": BD_MaskCorrelate}
+MASK_CORRELATE_DISPLAY_NAMES = {"BD_MaskCorrelate": "BD Mask Correlate"}

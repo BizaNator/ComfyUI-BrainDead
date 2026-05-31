@@ -69,21 +69,42 @@ class BD_CenterMedianLuma(io.ComfyNode):
                                tooltip="median = robust to outliers (cheek highlights, deep shadows). "
                                        "mean = sensitive to outliers but gives a smoother shift. "
                                        "Median is the right default for V-curve centering."),
+                io.Boolean.Input("calc_from_mask", default=True,
+                                 tooltip="Controls which pixels are used to MEASURE the median.\n\n"
+                                         "ON (default): median is computed from mask pixels only "
+                                         "(where mask > 0.5). Recommended — background doesn't bias.\n"
+                                         "OFF: median is computed from the whole image. Use with "
+                                         "exclude_transparent to skip fully-transparent background "
+                                         "pixels (e.g. when the source already has a body-shape alpha).\n\n"
+                                         "Independent from apply_to_mask_only — you can measure from "
+                                         "the mask but apply the shift to the whole image, or vice versa.\n"
+                                         "Has no effect when no mask is wired."),
                 io.Boolean.Input("apply_to_mask_only", default=True,
-                                 tooltip="ON (default): only pixels WITHIN the mask are shifted; "
-                                         "pixels outside the mask pass through UNCHANGED.\n"
-                                         "OFF: shift is applied to the whole image (mask still controls "
-                                         "the median calculation if wired). Set OFF when the background "
-                                         "is meaningful or to keep the whole frame consistent.\n"
-                                         "If no mask is wired, this setting has no effect."),
+                                 tooltip="Controls WHERE the computed shift is APPLIED.\n\n"
+                                         "ON (default): only pixels WITHIN the mask are shifted; "
+                                         "pixels outside pass through unchanged.\n"
+                                         "OFF: the shift is applied to the whole image.\n\n"
+                                         "Independent from calc_from_mask — common combinations:\n"
+                                         "  calc_from_mask=ON,  apply=mask   → measure+apply in mask only\n"
+                                         "  calc_from_mask=ON,  apply=whole  → measure mask, shift entire image\n"
+                                         "  calc_from_mask=OFF, apply=mask   → measure whole image, apply in mask\n"
+                                         "  calc_from_mask=OFF, apply=whole  → whole-image both (mask irrelevant)\n"
+                                         "Has no effect when no mask is wired."),
+                io.Boolean.Input("exclude_transparent", default=True,
+                                 tooltip="When calc_from_mask is OFF (measuring from whole image), "
+                                         "exclude pixels where the source alpha < 0.5 from the median "
+                                         "calculation. Prevents a fully-transparent background from "
+                                         "biasing the median when the source already has a body/head alpha.\n"
+                                         "Ignored when calc_from_mask is ON, or when the image has no "
+                                         "alpha channel."),
                 io.Boolean.Input("preserve_alpha", default=True,
                                  tooltip="ON: alpha channel passes through unchanged. OFF: alpha is "
                                          "also shifted (rarely what you want)."),
                 io.Mask.Input("mask", optional=True,
-                              tooltip="Optional region mask (e.g. skin mask). Median is computed "
-                                      "over pixels where mask > 0.5 only. STRONGLY RECOMMENDED — "
-                                      "without a mask, background pixels bias the median (a white "
-                                      "BG pushes median up, a black BG pushes it down)."),
+                              tooltip="Optional region mask (e.g. skin mask). Used for calculation "
+                                      "and/or application depending on calc_from_mask / apply_to_mask_only.\n"
+                                      "STRONGLY RECOMMENDED — without a mask, background pixels bias "
+                                      "the median (use exclude_transparent as a fallback)."),
             ],
             outputs=[
                 io.Image.Output(display_name="image",
@@ -99,7 +120,8 @@ class BD_CenterMedianLuma(io.ComfyNode):
 
     @classmethod
     def execute(cls, image, luma_standard="bt709", target_center=0.5,
-                statistic="median", apply_to_mask_only=True, preserve_alpha=True,
+                statistic="median", calc_from_mask=True, apply_to_mask_only=True,
+                exclude_transparent=True, preserve_alpha=True,
                 mask=None) -> io.NodeOutput:
 
         img = image if image.ndim == 4 else image.unsqueeze(0)
@@ -126,11 +148,21 @@ class BD_CenterMedianLuma(io.ComfyNode):
 
         for i in range(b):
             luma_i = luma[i]
-            if roi is not None:
+
+            # ── Pixel selection for median calculation ────────────────────────
+            if roi is not None and calc_from_mask:
+                # Measure from mask pixels only (recommended — no BG bias)
                 valid = luma_i[roi[i] > 0.5]
                 if valid.numel() == 0:
                     valid = luma_i.flatten()
+            elif exclude_transparent and c == 4:
+                # Measure from whole image but exclude transparent BG pixels
+                alpha_i = img[i, ..., 3]
+                valid = luma_i[alpha_i > 0.5]
+                if valid.numel() == 0:
+                    valid = luma_i.flatten()
             else:
+                # Measure from all pixels
                 valid = luma_i.flatten()
 
             if statistic == "mean":
@@ -163,12 +195,17 @@ class BD_CenterMedianLuma(io.ComfyNode):
         avg_median = float(np.mean(measured)) if measured else 0.0
         avg_shift = float(np.mean(shifts)) if shifts else 0.0
 
-        scope = "mask only" if (apply_to_mask_only and mask is not None) else "whole image"
+        if mask is not None:
+            calc_scope = "mask" if calc_from_mask else "whole_image"
+            apply_scope = "mask_only" if apply_to_mask_only else "whole_image"
+        else:
+            xp_note = "+excl_transparent" if (exclude_transparent and c == 4) else ""
+            calc_scope = f"whole_image{xp_note}"
+            apply_scope = "whole_image"
         print(f"[BD_CenterMedianLuma] luma={luma_standard}, stat={statistic}, "
               f"measured={avg_median:.4f} → target={target_center:.4f}, "
               f"shift={avg_shift:+.4f}, "
-              f"mask_active={'yes' if mask is not None else 'no'}, "
-              f"applied_to={scope}")
+              f"calc={calc_scope}, apply={apply_scope}")
 
         return io.NodeOutput(out, avg_median, avg_shift)
 

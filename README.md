@@ -88,6 +88,8 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 | **BD Smart Decimate** | Edge-preserving decimation with pymeshlab |
 | **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ |
 | **BD CuMesh Simplify** | GPU-accelerated mesh simplification with color preservation |
+| **BD CuMesh Quad Remesh** | GPU-accelerated quad remeshing from triangle meshes |
+| **BD MeshLib Fill Holes** | Fill mesh holes and open boundaries via pymeshlab |
 | **BD UV Unwrap** | UV unwrap with xatlas (GPU) or Blender Smart UV |
 | **BD Planar Grouping** | Group faces by normal direction with boundary straightening |
 | **BD Combine Edge Metadata** | Combine edge metadata from multiple sources |
@@ -123,9 +125,11 @@ Advanced mesh processing using Blender's geometry tools (requires Blender 5.0+).
 | Node | Description |
 |------|-------------|
 | **BD Blender Decimate** | Full-featured decimation with edge preservation |
+| **BD Blender Quad Decimate** | Quad-aware decimation: optional pre-quad-remesh, hole fill, and quad OBJ guide input |
 | **BD Blender Edge Marking** | Detect and mark edges from colors/angles |
 | **BD Blender Merge Planes** | Merge geometry within marked regions |
 | **BD Blender Remesh** | Voxel/quad remeshing with Blender |
+| **BD Blender Planar Normals** | Detect connected face groups by angle threshold; assign flat average normal as custom split normals; mark sharp edges between groups. Produces flat-panel stylized look for Unreal/Unity import |
 | **BD Blender Cleanup** | Advanced mesh cleanup and repair |
 | **BD Blender Vertex Colors** | Vertex color operations (bake, transfer) |
 | **BD Blender Normals** | Normal fixing and recalculation |
@@ -210,6 +214,27 @@ Character segmentation, parts pipeline, PBR map derivation, asset prep.
 |------|-------------|
 | **BD Fashn Human Parser** | SegFormer-B4 from fashn-ai (NVIDIA license). 18 FASHN classes. |
 | **BD ATR Human Parser** | mattmdjaga/segformer_b2_clothes (MIT). 18 ATR classes. |
+
+**Face socket / animation textures:**
+
+| Node | Description |
+|------|-------------|
+| **BD Face Socket Infill** | MediaPipe-based one-shot face socket creator for 2D animation flipbook textures. Fills eye, brow, lip, nose zones with flat/surround/inpaint fill. Per-zone independent expand_x/expand_y (elliptical kernel). `lip_mode`: `organic` (MediaPipe contour + lip_band), `contour` (exact landmark polygon, tight crop, no band), `plane` (rotated rectangle along 61→291 mouth axis — pre-draw for Qwen). `lip_plane` output always emits the rotated rectangle regardless of mode. |
+
+**Luma / lighting tools:**
+
+| Node | Description |
+|------|-------------|
+| **BD Luma Stats** | Compute luma statistics for an image: min, max, median, mean, and `recommended_outer_band = (max−min)/2 × 0.9`. Wire into BD_CenterMedianLuma or GLSL shader uniform inputs to set normalisation levels. |
+| **BD Center Median Luma** | Shift image luma so the median lands at 0.5. Optional `calc_source` input: compute the shift from a different (cleaner) reference image and apply it to `image`. Outputs `measured_median` and `shift_applied` for downstream diagnostics. |
+| **BD Depth To Shadow Map** | Convert a depth image to a shadow/shading map via analytic top-down N·L shading + cavity AO. Outputs `shadow_map`, `normal_map`, `cavity_map`, and `measured_max_curvature`. Use as a lighting guide for skin shaders or PBR derivation. |
+
+**Drawing tools:**
+
+| Node | Description |
+|------|-------------|
+| **BD Draw Rect** | Draw a flat-color rectangle with configurable rounded corners and edge feather. Shape source: manual geometry OR mask OR packed-channel extract. Optional alpha composite onto a background image and packed-channel injection. |
+| **BD Draw Ellipse** | Draw an ellipse/circle with flat color. Same shape-source options as BD_DrawRect (manual / mask / packed). Supports anisotropic radii and rotation. |
 
 **Asset prep / game textures:**
 
@@ -363,15 +388,15 @@ output/
 
 ## Node Counts at a Glance
 
-~90 nodes across 9 categories:
+~105 nodes across 9 categories:
 
 - **Cache** — caching, save/load, save-context system (~16)
-- **Mesh** — 3D processing, color sampling, simplification, OVoxel PBR baking (~24)
-- **Blender** — Blender-based geometry tools (~10)
+- **Mesh** — 3D processing, color sampling, simplification, OVoxel PBR baking (~26)
+- **Blender** — Blender-based geometry tools (~12)
 - **TRELLIS2** — TRELLIS2-specific shape/texture nodes (~9)
 - **Character** — Qwen-Image character consistency (~4)
 - **Prompt** — prompt iteration, filename templates, ForEach iteration (~5)
-- **Segmentation** — SAM3 multi-prompt + Parts pipeline (Builder/Refine/BatchEdit/Compose/Export) + MaskResolver + Human parsers (~14)
+- **Segmentation** — SAM3 multi-prompt + Parts pipeline + FaceSocketInfill + LumaStats + CenterMedianLuma + DepthToShadowMap + DrawRect + DrawEllipse + MaskResolver + Human parsers (~22)
 - **Depth** — Lotus-2 (FLUX-based diffusion depth/normal) (~2)
 - **PBR / asset prep** — MaskFlatten, PackChannels, DerivePBR (in Segmentation)
 

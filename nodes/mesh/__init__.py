@@ -13,6 +13,8 @@ Nodes:
 - BD_TransferVertexColors - BVH-based vertex color transfer
 - BD_MeshRepair - Repair mesh topology
 - BD_SmartDecimate - Edge-preserving decimation
+- BD_MeshLibFillHoles - MeshLib curvature-aware hole filler
+- BD_CuMeshQuadRemesh - GPU DC quad remesh + quad OBJ export
 - BD_ExportMeshWithColors - Export mesh with vertex colors
 - BD_CuMeshSimplify - GPU-accelerated simplification with color preservation
 - BD_UVUnwrap - UV unwrap with xatlas (GPU) or Blender Smart UV

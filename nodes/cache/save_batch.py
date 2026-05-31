@@ -36,6 +36,7 @@ from .alpha_save import (
     get_frame_mask,
     apply_alpha_to_frame,
     save_alpha_alongside,
+    alpha_to_rgba_tensor,
 )
 
 
@@ -94,6 +95,21 @@ class BD_SaveBatch(io.ComfyNode):
                                 tooltip="Extra context variables layered over the saved batch. "
                                         "One per line as key=value. Example:\n  subfolder=SR\n  pass=4k"),
                 *ALPHA_SAVE_INPUTS,
+                io.String.Input(
+                    "alpha_slots", default="", optional=True,
+                    tooltip=(
+                        "Comma-separated labels or indices of slots that receive alpha treatment. "
+                        "Same syntax as save_only — label names, 0-based indices, or mixed.\n\n"
+                        "Controls TWO things for each slot:\n"
+                        "  1. alpha_mask baking — only matching slots have the mask baked in.\n"
+                        "  2. save_alpha_separately — only matching slots write a sidecar _alpha.png.\n\n"
+                        "Empty (default) = all saved frames get alpha treatment.\n"
+                        "Example: 'light,image1' — only those two slots save with alpha; "
+                        "the rest save as plain RGB even if alpha_mask is wired.\n\n"
+                        "RGBA images (C=4) always preserve their embedded alpha in the main file "
+                        "regardless — this setting only controls the baking and sidecar steps."
+                    ),
+                ),
             ],
             outputs=[
                 io.Int.Output(display_name="saved_count",
@@ -113,6 +129,14 @@ class BD_SaveBatch(io.ComfyNode):
                                         "downstream preview node in production. Independent from save_only/pass_only."),
                 io.String.Output(display_name="status",
                                  tooltip="Human-readable summary of what was saved/skipped/errored/passed."),
+                io.Image.Output(
+                    display_name="preview_alpha",
+                    tooltip="RGBA IMAGE batch of the alpha channel for each saved frame — white pixels "
+                            "on a transparent background (same format as the _alpha.png on disk). "
+                            "One frame per saved slot, in save order. Wire to PreviewImage to inspect "
+                            "the transparency cutout, or downstream to BD_PackChannels / compositors. "
+                            "Slots without alpha treatment output a fully-transparent (zeros) frame.",
+                ),
             ],
         )
 
@@ -150,7 +174,8 @@ class BD_SaveBatch(io.ComfyNode):
                 custom_vars: str = "",
                 save_alpha_separately: bool = False,
                 alpha_mask: torch.Tensor | None = None,
-                invert_alpha: bool = False) -> io.NodeOutput:
+                invert_alpha: bool = False,
+                alpha_slots: str = "") -> io.NodeOutput:
 
         # Coerce input to (B, H, W, C)
         if images.ndim == 3:
@@ -171,6 +196,11 @@ class BD_SaveBatch(io.ComfyNode):
         # Resolve both filters independently
         indices_to_save = cls._resolve_indices(save_only, label_list, n_frames)
         indices_to_pass = cls._resolve_indices(pass_only, label_list, n_frames)
+        # alpha_slots: None means all; otherwise only the listed indices get alpha baked
+        alpha_indices: set[int] | None = (
+            None if not (alpha_slots or "").strip()
+            else set(cls._resolve_indices(alpha_slots, label_list, n_frames))
+        )
 
         # Resolve context
         effective_ctx_id = context_id
@@ -181,16 +211,18 @@ class BD_SaveBatch(io.ComfyNode):
 
         ctx_resolved = bool(effective_ctx_id and get_context(effective_ctx_id) is not None)
         if not ctx_resolved:
-            return io.NodeOutput(
-                0, "",
-                f"BD_SaveBatch: no usable BD_SaveContext (context_id='{context_id}', auto-pick=None). "
-                f"Add a BD_SaveContext upstream first."
-            )
+            empty_img = torch.zeros((1, images.shape[1], images.shape[2], images.shape[3]),
+                                    dtype=images.dtype, device=images.device)
+            empty_rgba = torch.zeros((1, images.shape[1], images.shape[2], 4), dtype=torch.float32)
+            err = (f"BD_SaveBatch: no usable BD_SaveContext (context_id='{context_id}', "
+                   f"auto-pick=None). Add a BD_SaveContext upstream first.")
+            return io.NodeOutput(0, "", empty_img, "", empty_img, err, empty_rgba)
 
         ext = format if format != "jpg" else "jpg"
 
         saved_paths = []
         status_lines = []
+        alpha_previews: list[torch.Tensor] = []
         skipped = 0
         errors = 0
 
@@ -215,7 +247,9 @@ class BD_SaveBatch(io.ComfyNode):
                 # Slice this frame as its own (1, H, W, C) tensor
                 single = images[i:i+1]
 
-                frame_mask = get_frame_mask(alpha_mask, i, H, W)
+                # Apply alpha only to slots in alpha_slots (or all if not specified)
+                apply_alpha_this_slot = alpha_indices is None or i in alpha_indices
+                frame_mask = get_frame_mask(alpha_mask, i, H, W) if apply_alpha_this_slot else None
                 single_to_save = apply_alpha_to_frame(single, frame_mask, invert_alpha)
 
                 final_path, data_type = BD_SaveFile._detect_type_and_save(single_to_save, filepath)
@@ -223,7 +257,14 @@ class BD_SaveBatch(io.ComfyNode):
                 rel_final = os.path.relpath(final_path).replace("\\", "/")
                 alpha_note = ""
 
-                if save_alpha_separately:
+                # Build preview_alpha frame: white + alpha as RGBA (1, H, W, 4)
+                if apply_alpha_this_slot and single_to_save.shape[-1] == 4:
+                    alpha_ch = single_to_save[0, ..., 3]   # (H, W) float32
+                    alpha_previews.append(alpha_to_rgba_tensor(alpha_ch))
+                else:
+                    alpha_previews.append(torch.zeros((1, H, W, 4), dtype=torch.float32))
+
+                if save_alpha_separately and apply_alpha_this_slot:
                     alpha_path, alpha_note = save_alpha_alongside(
                         single_to_save, frame_mask, invert_alpha,
                         final_path, effective_ctx_id, suffix, custom_vars,
@@ -269,6 +310,12 @@ class BD_SaveBatch(io.ComfyNode):
         # preview_images = unfiltered passthrough of the input batch
         preview_images = images
 
+        # preview_alpha = RGBA batch aligned to saved frames (white + alpha, transparent bg)
+        if alpha_previews:
+            preview_alpha = torch.cat(alpha_previews, dim=0)
+        else:
+            preview_alpha = torch.zeros((1, H, W, 4), dtype=torch.float32)
+
         return io.NodeOutput(
             len(saved_paths) - skipped,
             "\n".join(saved_paths),
@@ -276,6 +323,7 @@ class BD_SaveBatch(io.ComfyNode):
             passed_labels,
             preview_images,
             status,
+            preview_alpha,
         )
 
 

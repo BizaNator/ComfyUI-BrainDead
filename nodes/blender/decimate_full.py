@@ -1429,14 +1429,258 @@ to avoid pre-applying colors which splits faces and breaks topology.""",
                 os.remove(color_field_path)
 
 
+QUAD_DECIMATE_SCRIPT = '''
+import bpy
+import bmesh
+import os
+import sys
+
+def log(msg):
+    print(msg)
+    sys.stdout.flush()
+
+log("[BD QuadDecimate] Starting...")
+
+input_path = os.environ["BLENDER_INPUT_PATH"]
+output_path = os.environ["BLENDER_OUTPUT_PATH"]
+quad_obj_path = os.environ.get("BLENDER_ARG_QUAD_OBJ_PATH", "")
+iterations = int(os.environ.get("BLENDER_ARG_ITERATIONS", "2"))
+fill_holes = os.environ.get("BLENDER_ARG_FILL_HOLES", "True") == "True"
+pre_quad_remesh = os.environ.get("BLENDER_ARG_PRE_QUAD_REMESH", "False") == "True"
+octree_depth = int(os.environ.get("BLENDER_ARG_OCTREE_DEPTH", "7"))
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete()
+
+ext = os.path.splitext(input_path)[1].lower()
+if ext == ".ply":
+    bpy.ops.wm.ply_import(filepath=input_path)
+elif ext == ".obj":
+    bpy.ops.wm.obj_import(filepath=input_path)
+elif ext in (".glb", ".gltf"):
+    bpy.ops.import_scene.gltf(filepath=input_path)
+else:
+    raise ValueError(f"Unsupported format: {ext}")
+
+obj = bpy.context.active_object
+if obj is None:
+    obj = [o for o in bpy.context.scene.objects if o.type == "MESH"][0]
+bpy.context.view_layer.objects.active = obj
+obj.select_set(True)
+
+orig_faces = len(obj.data.polygons)
+log(f"[BD QuadDecimate] Input: {len(obj.data.vertices)} verts, {orig_faces} faces")
+
+if fill_holes:
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.mesh.select_non_manifold(extend=False, use_boundary=True,
+                                      use_wire=False, use_multi_face=False,
+                                      use_non_contiguous=False)
+    try:
+        bpy.ops.mesh.fill_holes(sides=100)
+        log("[BD QuadDecimate] Holes filled")
+    except Exception:
+        pass
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+if pre_quad_remesh:
+    mod = obj.modifiers.new(name="QuadRemesh", type="REMESH")
+    mod.mode = "QUAD"
+    mod.octree_depth = octree_depth
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    log(f"[BD QuadDecimate] Quad remesh (depth={octree_depth}): {len(obj.data.polygons)} faces")
+
+mod = obj.modifiers.new(name="UnSubdiv", type="DECIMATE")
+mod.decimate_type = "UNSUBDIV"
+mod.iterations = iterations
+bpy.ops.object.modifier_apply(modifier=mod.name)
+
+final_faces = len(obj.data.polygons)
+reduction = (1 - final_faces / orig_faces) * 100 if orig_faces > 0 else 0
+log(f"[BD QuadDecimate] Result: {final_faces} faces ({reduction:.1f}% reduction from {orig_faces})")
+
+# Save quad OBJ sidecar (preserves quads, no triangulation)
+if quad_obj_path:
+    bpy.ops.wm.obj_export(filepath=quad_obj_path, export_triangulated_mesh=False)
+    log(f"[BD QuadDecimate] Quad OBJ saved: {quad_obj_path}")
+
+# Pipeline output — PLY (triangulated, for TRIMESH)
+ext_out = os.path.splitext(output_path)[1].lower()
+if ext_out == ".ply":
+    bpy.ops.wm.ply_export(filepath=output_path, export_colors="SRGB", ascii_format=False)
+elif ext_out in (".glb", ".gltf"):
+    bpy.ops.export_scene.gltf(filepath=output_path, export_format="GLB",
+                               export_all_vertex_colors=True)
+
+log(f"[BD QuadDecimate] Done")
+'''
+
+
+class BD_BlenderQuadDecimate(BlenderNodeMixin, io.ComfyNode):
+    """
+    Reduce quad mesh face count using Blender's Un-Subdivide, preserving quad topology.
+
+    Each iteration roughly halves edge loops in both directions (~4x face reduction):
+      1 iteration: /4    2 iterations: /16    3 iterations: /64
+
+    Works best on regular quad grids from BD_CuMeshQuadRemesh or BD_BlenderRemesh QUAD.
+    Use pre_quad_remesh=True to first convert a triangle mesh to quads before decimating.
+    Saves a quad-topology OBJ alongside the TRIMESH pipeline output.
+    """
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_BlenderQuadDecimate",
+            display_name="BD Blender Quad Decimate",
+            category="🧠BrainDead/Blender",
+            description=(
+                "Reduce a quad mesh using Blender's Un-Subdivide modifier. "
+                "Preserves quad topology — no triangulation. "
+                "Each iteration divides face count by ~4. "
+                "Saves a quad OBJ for rigging/animation workflows."
+            ),
+            inputs=[
+                TrimeshInput("mesh"),
+                io.Int.Input(
+                    "iterations",
+                    default=2,
+                    min=1,
+                    max=6,
+                    tooltip="Un-subdivide iterations. Each ~4x reduction: 1=/4, 2=/16, 3=/64, 4=/256",
+                ),
+                io.Boolean.Input(
+                    "fill_holes",
+                    default=True,
+                    optional=True,
+                    tooltip="Fill open boundary edges before processing",
+                ),
+                io.Boolean.Input(
+                    "pre_quad_remesh",
+                    default=False,
+                    optional=True,
+                    tooltip=(
+                        "Apply Blender QUAD remesh first. "
+                        "Enable when input is a triangle mesh — Un-Subdivide requires quad topology."
+                    ),
+                ),
+                io.Int.Input(
+                    "octree_depth",
+                    default=7,
+                    min=3,
+                    max=12,
+                    optional=True,
+                    tooltip="Quad remesh resolution if pre_quad_remesh=True (higher = more quads)",
+                ),
+                io.Int.Input(
+                    "timeout",
+                    default=300,
+                    min=60,
+                    max=1800,
+                    optional=True,
+                    tooltip="Max Blender processing time in seconds",
+                ),
+            ],
+            outputs=[
+                TrimeshOutput(display_name="mesh"),
+                io.String.Output(display_name="quad_obj_path"),
+                io.String.Output(display_name="status"),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        mesh,
+        iterations: int,
+        fill_holes: bool = True,
+        pre_quad_remesh: bool = False,
+        octree_depth: int = 7,
+        timeout: int = 300,
+    ) -> io.NodeOutput:
+        if not HAS_TRIMESH:
+            return io.NodeOutput(mesh, "", "ERROR: trimesh not installed")
+
+        available, msg = cls._check_blender()
+        if not available:
+            return io.NodeOutput(mesh, "", f"ERROR: {msg}")
+
+        if mesh is None:
+            return io.NodeOutput(None, "", "ERROR: No input mesh")
+
+        import datetime
+        import folder_paths
+
+        orig_faces = len(mesh.faces) if hasattr(mesh, "faces") else 0
+
+        input_path = None
+        output_path = None
+        try:
+            input_path = cls._mesh_to_temp_file(mesh, suffix=".ply")
+            fd, output_path = tempfile.mkstemp(suffix=".ply")
+            os.close(fd)
+
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir = folder_paths.get_output_directory()
+            quad_obj_path = os.path.join(out_dir, f"quad_decimate_{ts}.obj")
+
+            success, message, log_lines = cls._run_blender_script(
+                QUAD_DECIMATE_SCRIPT,
+                input_path,
+                output_path,
+                extra_args={
+                    "iterations": iterations,
+                    "fill_holes": fill_holes,
+                    "pre_quad_remesh": pre_quad_remesh,
+                    "octree_depth": octree_depth,
+                    "quad_obj_path": quad_obj_path,
+                },
+                timeout=timeout,
+            )
+
+            if not success:
+                ctx = "\n".join(log_lines[-10:]) if log_lines else ""
+                print(f"[BD QuadDecimate] FAILED: {message}")
+                if ctx:
+                    print(f"[BD QuadDecimate] Log:\n{ctx}")
+                return io.NodeOutput(mesh, "", f"ERROR: {message}")
+
+            result_mesh = cls._load_mesh_from_file(output_path)
+            new_faces = len(result_mesh.faces)
+            reduction = (1 - new_faces / orig_faces) * 100 if orig_faces > 0 else 0
+
+            obj_out = quad_obj_path if os.path.exists(quad_obj_path) else ""
+            status = (
+                f"QuadDecimate: {orig_faces:,} → {new_faces:,} faces "
+                f"({reduction:.1f}% reduction, {iterations} iter)"
+            )
+            if pre_quad_remesh:
+                status += f" | pre-remesh depth={octree_depth}"
+            return io.NodeOutput(result_mesh, obj_out, status)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return io.NodeOutput(mesh, "", f"ERROR: {e}")
+
+        finally:
+            if input_path and os.path.exists(input_path):
+                os.remove(input_path)
+            if output_path and os.path.exists(output_path):
+                os.remove(output_path)
+
+
 # V3 node list
-DECIMATE_FULL_V3_NODES = [BD_BlenderDecimate]
+DECIMATE_FULL_V3_NODES = [BD_BlenderDecimate, BD_BlenderQuadDecimate]
 
 # V1 compatibility
 DECIMATE_FULL_NODES = {
     "BD_BlenderDecimate": BD_BlenderDecimate,
+    "BD_BlenderQuadDecimate": BD_BlenderQuadDecimate,
 }
 
 DECIMATE_FULL_DISPLAY_NAMES = {
     "BD_BlenderDecimate": "BD Blender Decimate",
+    "BD_BlenderQuadDecimate": "BD Blender Quad Decimate",
 }
