@@ -311,8 +311,14 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                                  tooltip="Clean SAM3 noise: keep only the connected component(s) the positive "
                                          "landmark seeds land in (drops stray chunks around eyes/lips)."),
                 io.Boolean.Input("fill_holes", default=True, optional=True,
-                                 tooltip="Fill interior holes during cleanup (e.g. teeth/open mouth → solid lips). "
-                                         "Turn OFF for lip-flesh-only (mouth interior left as a hole)."),
+                                 tooltip="Fill interior holes on NON-lip features (eyes/nose/etc.) so each is solid. "
+                                         "Lips are controlled separately by lips_mode."),
+                io.Combo.Input("lips_mode", options=["mouth", "lips_only"], default="mouth", optional=True,
+                               tooltip="Lips-specific:\n"
+                                       "  mouth     — fill the whole mouth area (lips + teeth + tongue) into the "
+                                       "lips mask (default; what the pipeline wants).\n"
+                                       "  lips_only — lip flesh only; color-aware edge_refine excludes teeth/tongue.\n"
+                                       "Overrides fill_holes for the lips feature."),
                 io.Int.Input("edge_smooth", default=3, min=0, max=15, step=1, optional=True,
                              tooltip="Morphological close+open radius (px @native) to smooth jagged SAM3 edges "
                                      "during cleanup. 0 = no smoothing."),
@@ -376,8 +382,8 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
     @classmethod
     def execute(cls, model, image, angle="front", do_brows=True, do_eyes=True, do_lips=True,
                 do_nose=True, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
-                refine_iterations=1, bleed_guard=48, cleanup=True, fill_holes=True, edge_smooth=3,
-                edge_refine="off", refine_radius=8, refine_eps=1e-4, refine_threshold=0.5,
+                refine_iterations=1, bleed_guard=48, cleanup=True, fill_holes=True, lips_mode="mouth",
+                edge_smooth=3, edge_refine="off", refine_radius=8, refine_eps=1e-4, refine_threshold=0.5,
                 vitmatte_model="small", silhouette_mask=None, head_mask=None) -> io.NodeOutput:
         if image.ndim == 3:
             image = image.unsqueeze(0)
@@ -449,6 +455,9 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             pos_pts = _norm_pts(_subsample(_resolve_idx(pos_src), 8), lm)
             if not pos_pts:
                 return _blank(H, W)
+            # Per-feature hole-fill: lips use lips_mode (mouth=fill, lips_only=no fill);
+            # all other features use the general fill_holes toggle.
+            feat_fill = (lips_mode == "mouth") if out_key == "lips" else fill_holes
             neg_pts = []
             for ns in neg_srcs:
                 c = _centroid(_resolve_idx(ns), lm)
@@ -466,16 +475,29 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             x0, y0, x1, y1 = box
             box_inputs = torch.tensor([[[x0 * _SAM3_SIZE, y0 * _SAM3_SIZE],
                                         [x1 * _SAM3_SIZE, y1 * _SAM3_SIZE]]], dtype=dtype, device=device)
-            # Box + positive points + sibling negatives in one SAM decoder pass.
+            def _logit_to_mask(logit):
+                mm = torch.nn.functional.interpolate(logit, size=(H, W), mode="bilinear", align_corners=False)
+                return (torch.sigmoid(mm[0, 0]) > mask_threshold).detach().cpu().numpy().astype(np.uint8) * 255
+
+            # The SAM-decoder mask_inputs loop sharpens brows/eyes but destabilizes lips
+            # (shrinks toward the lip-flesh and can vanish). Lips always use a single pass.
+            feat_iters = 1 if out_key == "lips" else refine_iterations
             try:
-                ml = sam3.forward_segment(frame, point_inputs=point_inputs, box_inputs=box_inputs)
-                for _ in range(max(0, refine_iterations - 1)):
+                base = sam3.forward_segment(frame, point_inputs=point_inputs, box_inputs=box_inputs)
+                ml = base
+                for _ in range(max(0, feat_iters - 1)):
                     ml = sam3.forward_segment(frame, mask_inputs=ml)
             except Exception as e:
                 print(f"[BD MP SAM3] WARNING: forward_segment failed for {out_key}: {e}", flush=True)
                 return _blank(H, W)
-            m = torch.nn.functional.interpolate(ml, size=(H, W), mode="bilinear", align_corners=False)
-            sam = (torch.sigmoid(m[0, 0]) > mask_threshold).detach().cpu().numpy().astype(np.uint8) * 255
+            sam = _logit_to_mask(ml)
+            # Collapse-guard: if the mask_inputs loop lost most of the base detection on
+            # stylized art, revert to the base (single-pass) mask.
+            if feat_iters > 1:
+                base_m = _logit_to_mask(base)
+                if (sam > 0).sum() < 0.3 * max(1, int((base_m > 0).sum())):
+                    print(f"[BD MP SAM3] {out_key}: refine_iterations collapsed the mask — reverting to base", flush=True)
+                    sam = base_m
 
             # Light bleed-guard: clip SAM3 to the MediaPipe zone dilated by guard_px.
             # Large guard ⇒ SAM3's shape dominates (correct for offset features like brows).
@@ -490,13 +512,19 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 pos_px = [(x * W, y * H) for (x, y) in pos_pts]
                 sam = _clean_feature_mask(sam, pos_px,
                                           smooth_px=max(0, int(round(edge_smooth * scale))),
-                                          fill=fill_holes)
+                                          fill=feat_fill)
             # Edge-snap refinement (guided filter / alpha matting) to follow image color/edges.
             if edge_refine != "off":
                 sam = _refine_feature_mask(sam, np_img, edge_refine,
                                            radius=max(1, int(round(refine_radius * scale))),
                                            eps=refine_eps, threshold=refine_threshold,
                                            vitmatte_variant=vitmatte_model)
+            # Re-fill AFTER refinement: color-aware refine (vitmatte/matting/guided) excludes
+            # teeth/tongue/mouth-interior (different colour from the lip flesh), which would
+            # leave lips-only. With fill_holes on (default) we re-close those interior holes so
+            # the WHOLE mouth area is masked. lips_only / fill off → keep the lip-flesh result.
+            if feat_fill:
+                sam = _fill_holes(sam)
             return sam
 
         # ── Per-feature segmentation ──────────────────────────────────────────

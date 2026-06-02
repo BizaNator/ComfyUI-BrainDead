@@ -27,10 +27,11 @@ Load Diffusion Model (UNETLoader) → sam3.pt → [model]
 | `detection_confidence` | MediaPipe detection confidence (0.3 works for stylized renders). |
 | `min_face_span` | Tiny-detection guard (see **BD MP Face Export**). 0 disables. |
 | `mask_threshold` | SAM3 mask probability cutoff (lower → grow thin masks). |
-| `refine_iterations` | SAM decoder refinement passes. **Default 1** — extra passes SHRINK masks on stylized renders. |
+| `refine_iterations` | SAM decoder refinement passes. Sharpens brows/eyes; **lips always use a single pass** (the loop destabilizes them) and a collapse-guard reverts any feature that the loop over-shrinks. |
 | `bleed_guard` | Dilate the MediaPipe zone by N px, then clip SAM3 to it. **Large = trust SAM3** (needed for offset brows); 0 = clip exactly to MediaPipe. |
 | `cleanup` | Keep only the connected component(s) a positive seed lands in (drops stray SAM3 chunks). |
-| `fill_holes` | Fill interior holes during cleanup (teeth/open mouth → solid lips). Default on; turn off for lip-flesh-only. |
+| `fill_holes` | Fill interior holes on **non-lip** features (eyes/nose/etc.) so each is solid. Lips are controlled by `lips_mode`. |
+| `lips_mode` | Lips-specific: `mouth` (default) fills the whole mouth area (lips + teeth + tongue) into the lips mask; `lips_only` keeps lip flesh only (color-aware `edge_refine` excludes teeth/tongue). |
 | `edge_smooth` | Morphological close+open radius (px @1536) to smooth jagged edges during cleanup. |
 | `edge_refine` | Snap the edge to image color/edges: `off` / `guided` (cv2 guidedFilter, fast) / `matting` (PyMatting closed-form, CPU) / `vitmatte` (VitMatte deep model, best soft/hair edges, GPU). Runs on the feature ROI crop. |
 | `refine_radius` | Guided-filter radius / matting trimap band width (px @1536). |
