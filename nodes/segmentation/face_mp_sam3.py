@@ -110,6 +110,45 @@ def _norm_bbox(idx_list: list[int], lm, pad: float) -> tuple[float, float, float
     return (x0, y0, x1, y1)
 
 
+def _fill_holes(mask_u8: np.ndarray) -> np.ndarray:
+    """Fill interior holes (e.g. the open mouth inside the lip ring) via border floodfill."""
+    h, w = mask_u8.shape
+    ff = mask_u8.copy()
+    cv2.floodFill(ff, np.zeros((h + 2, w + 2), np.uint8), (0, 0), 255)  # flood background from a corner
+    holes = cv2.bitwise_not(ff)                                          # interior pockets the flood couldn't reach
+    return cv2.bitwise_or(mask_u8, holes)
+
+
+def _clean_feature_mask(mask_u8: np.ndarray, pos_px: list[tuple[float, float]],
+                        smooth_px: int = 3, fill: bool = True) -> np.ndarray:
+    """Remove SAM3 noise: keep only the connected component(s) a positive seed point
+    lands in (drops stray non-contiguous chunks around the feature), smooth the edge,
+    and optionally fill interior holes (solid lips).
+    """
+    m = (mask_u8 > 0).astype(np.uint8)
+    if m.sum() == 0:
+        return mask_u8
+    n, lbl, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    if n <= 1:
+        return mask_u8
+    keep = set()
+    H, W = lbl.shape
+    for (px, py) in pos_px:
+        xi, yi = int(round(px)), int(round(py))
+        if 0 <= yi < H and 0 <= xi < W and lbl[yi, xi] > 0:
+            keep.add(int(lbl[yi, xi]))
+    if not keep:  # no seed landed on a component — fall back to the largest
+        keep = {1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))}
+    out = (np.isin(lbl, list(keep))).astype(np.uint8) * 255
+    if smooth_px > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * smooth_px + 1, 2 * smooth_px + 1))
+        out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, k)   # seal small gaps / jagged edge
+        out = cv2.morphologyEx(out, cv2.MORPH_OPEN, k)    # shave specks
+    if fill:
+        out = _fill_holes(out)
+    return out
+
+
 class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
     """
     MediaPipe-guided SAM3 face feature segmentation.
@@ -161,6 +200,13 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                              tooltip="Dilate the MediaPipe feature zone by this many px (at native res), then clip "
                                      "SAM3's mask to it. LARGE = trust SAM3's shape (correct for offset brows); "
                                      "small = hug the MediaPipe zone. 0 = clip exactly to MediaPipe."),
+                io.Boolean.Input("cleanup", default=True, optional=True,
+                                 tooltip="Clean SAM3 noise: keep only the connected component(s) the positive "
+                                         "landmark seeds land in (drops stray chunks around eyes/lips) and fill "
+                                         "interior holes (solid lips)."),
+                io.Int.Input("edge_smooth", default=3, min=0, max=15, step=1, optional=True,
+                             tooltip="Morphological close+open radius (px @native) to smooth jagged SAM3 edges "
+                                     "during cleanup. 0 = no smoothing."),
             ],
             outputs=[
                 io.Image.Output(display_name="rgba",
@@ -183,7 +229,7 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
     @classmethod
     def execute(cls, model, image, angle="front", do_brows=True, do_eyes=True, do_lips=True,
                 do_nose=True, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
-                refine_iterations=1, bleed_guard=48) -> io.NodeOutput:
+                refine_iterations=1, bleed_guard=48, cleanup=True, edge_smooth=3) -> io.NodeOutput:
         if image.ndim == 3:
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
@@ -270,6 +316,13 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 sam = np.minimum(sam, cv2.dilate(mp_zone, kernel))
             elif mp_zone is not None and guard_px == 0:
                 sam = np.minimum(sam, mp_zone)
+
+            # Cleanup: drop stray non-contiguous chunks (keep seeded component) + fill holes.
+            if cleanup:
+                pos_px = [(x * W, y * H) for (x, y) in pos_pts]
+                sam = _clean_feature_mask(sam, pos_px,
+                                          smooth_px=max(0, int(round(edge_smooth * scale))),
+                                          fill=True)
             return sam
 
         # ── Per-feature segmentation ──────────────────────────────────────────
