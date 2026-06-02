@@ -36,14 +36,24 @@ Load Diffusion Model (UNETLoader) → sam3.pt → [model]
 | `refine_radius` | Guided-filter radius / matting trimap band width (px @1536). |
 | `refine_eps` | Guided-filter edge sensitivity (smaller hugs edges harder). Ignored by matting/vitmatte. |
 | `refine_threshold` | Binarize the refined alpha at this level. |
+| `vitmatte_model` | `small` / `base` — **auto-downloaded from the HF hub** (`hustvl/vitmatte-{small,base}-composition-1k`) on first use. Standalone; no other node pack required. |
+| `silhouette_mask` | Optional head silhouette (e.g. SAM3 head). When wired, **all outputs are clipped to it**, it becomes `head_mask`, and `masked_skin` = skin within it. |
+| `head_mask` | Optional inner head/face-plate mask used as the skin base (`skin = head_mask − eyes − brows − lips`). Falls back to `face_oval`; echoed to the `head_mask` output. |
 
 ## Outputs
+
+Full uniform region set — **identical names to BD MP Face Mask**, and a drop-in for the inputs of **BD MP Save Face Data**:
 
 | Output | Description |
 |--------|-------------|
 | `rgba` | RGBA zone map: **R=lips, G=brows, B=eyes, A=face_oval**. |
-| `face_oval`, `skin`, `left_eye`, `right_eye`, `eyes`, `left_brow`, `right_brow`, `brows`, `lips`, `nose`, `irises` | Individual region masks (same names as **BD MP Face Mask**). |
+| `face_oval`, `skin`, `left_eye`, `right_eye`, `eyes`, `left_brow`, `right_brow`, `brows`, `left_iris`, `right_iris`, `irises`, `lips`, `nose`, `left_ear`, `right_ear`, `ears`, `forehead`, `hair` | Region masks. SAM3-segmented: eyes, brows, lips, nose. MediaPipe-only (no SAM3): iris, ears, forehead, hair. |
+| `head_mask` | Resolved head mask (silhouette/head_mask input, else face_oval). |
+| `masked_skin` | Skin clipped to the silhouette — wire to **BD MP Save Face Data** `masked_skin`. |
+| `debug_overlay` | Render with feature masks tinted (lips=R, brows=G, eyes=B, nose=Y). |
 | `status` | Run summary. |
+
+> **Consolidation:** with the full region set + `silhouette_mask`/`head_mask` inputs + `debug_overlay`, this node covers the guided-SAM3 path on its own and feeds **BD MP Save Face Data** directly. **BD MP Face Mask** stays as the no-SAM3-model (fast, landmark-only) option; **BD MP Face Refine** stays for the text-prompt SAM3-batch + IoU workflow.
 
 ## Where it fits
 

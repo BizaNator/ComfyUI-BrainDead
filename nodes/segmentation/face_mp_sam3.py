@@ -58,27 +58,34 @@ from .face_mp_shared import (
 
 _MODEL_PATH = "/srv/AI_Stuff/models/mediapipe/face_landmarker.task"
 _SAM3_SIZE = 1008  # SAM3 works in a 1008×1008 preprocessed space
-_VITMATTE_PATH = "/opt/comfyui/stable/models/vitmatte"  # hustvl vitmatte-small-composition-1k
+# Standalone VitMatte: load straight from the HF repo id — transformers auto-downloads
+# to the HF cache (HF_HOME) if absent. No dependency on any other custom-node pack's
+# model dir, so this node stands alone.
+_VITMATTE_REPOS = {
+    "small": "hustvl/vitmatte-small-composition-1k",
+    "base":  "hustvl/vitmatte-base-composition-1k",
+}
+_VITMATTE = {}  # cache by variant: {variant: (model, proc, device)}
 
-_VITMATTE = {}  # cache: {"model":..., "proc":..., "device":...}
 
-
-def _load_vitmatte():
-    """Lazy-load + cache the VitMatte matting model (transformers)."""
-    if _VITMATTE:
-        return _VITMATTE.get("model"), _VITMATTE.get("proc")
+def _load_vitmatte(variant: str = "small"):
+    """Lazy-load + cache VitMatte (transformers), auto-downloading from the HF hub on
+    first use. Returns (model, proc, device); (None, None, None) on failure."""
+    if variant in _VITMATTE:
+        return _VITMATTE[variant]
     try:
         import torch as _t
         from transformers import VitMatteForImageMatting, VitMatteImageProcessor
+        repo = _VITMATTE_REPOS.get(variant, _VITMATTE_REPOS["small"])
         dev = "cuda" if _t.cuda.is_available() else "cpu"
-        proc = VitMatteImageProcessor.from_pretrained(_VITMATTE_PATH)
-        model = VitMatteForImageMatting.from_pretrained(_VITMATTE_PATH).to(dev).eval()
-        _VITMATTE.update({"model": model, "proc": proc, "device": dev})
-        return model, proc
+        print(f"[BD MP SAM3] loading VitMatte '{variant}' ({repo}) — downloads to HF cache if missing", flush=True)
+        proc = VitMatteImageProcessor.from_pretrained(repo)
+        model = VitMatteForImageMatting.from_pretrained(repo).to(dev).eval()
+        _VITMATTE[variant] = (model, proc, dev)
     except Exception as e:
         print(f"[BD MP SAM3] VitMatte load failed ({e})", flush=True)
-        _VITMATTE.update({"model": None, "proc": None})
-        return None, None
+        _VITMATTE[variant] = (None, None, None)
+    return _VITMATTE[variant]
 
 
 # ── Feature → (positive landmark source, sibling-negative sources) ──────────────
@@ -141,7 +148,8 @@ def _fill_holes(mask_u8: np.ndarray) -> np.ndarray:
 
 
 def _refine_feature_mask(mask_u8: np.ndarray, rgb_u8: np.ndarray, mode: str,
-                         radius: int, eps: float, threshold: float) -> np.ndarray:
+                         radius: int, eps: float, threshold: float,
+                         vitmatte_variant: str = "small") -> np.ndarray:
     """Snap the mask boundary to image color/edge transitions.
 
     mode='guided'  : cv2.ximgproc.guidedFilter — the RGB render guides an edge-aware
@@ -192,7 +200,7 @@ def _refine_feature_mask(mask_u8: np.ndarray, rgb_u8: np.ndarray, mode: str,
     elif mode == "vitmatte":
         import torch as _t
         from PIL import Image as _PIL
-        model, proc = _load_vitmatte()
+        model, proc, dev = _load_vitmatte(vitmatte_variant)
         if model is None:
             return mask_u8
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
@@ -202,7 +210,7 @@ def _refine_feature_mask(mask_u8: np.ndarray, rgb_u8: np.ndarray, mode: str,
         tri[bg == 0] = 0                         # sure background
         try:
             inputs = proc(images=_PIL.fromarray(g), trimaps=_PIL.fromarray(tri), return_tensors="pt")
-            inputs = {kk: vv.to(_VITMATTE["device"]) for kk, vv in inputs.items()}
+            inputs = {kk: vv.to(dev) for kk, vv in inputs.items()}
             with _t.no_grad():
                 alpha = model(**inputs).alphas[0, 0].float().cpu().numpy()
             alpha = alpha[:m.shape[0], :m.shape[1]]   # processor pads to /32 — crop back
@@ -324,6 +332,17 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                                        "Ignored by matting."),
                 io.Float.Input("refine_threshold", default=0.5, min=0.05, max=0.95, step=0.05, optional=True,
                                tooltip="Binarize the refined alpha at this level."),
+                io.Combo.Input("vitmatte_model", options=["small", "base"], default="small", optional=True,
+                               tooltip="VitMatte variant for edge_refine='vitmatte'. Auto-downloaded from the HF "
+                                       "hub (hustvl/vitmatte-{small,base}-composition-1k) on first use — standalone, "
+                                       "no other node pack required. base = higher quality, larger."),
+                io.Mask.Input("silhouette_mask", optional=True,
+                              tooltip="Optional head silhouette (white=head). When wired, ALL outputs are clipped "
+                                      "to it and it becomes head_mask; masked_skin = skin within it. Use a SAM3 "
+                                      "head mask (BD SAM3 Multi-Prompt)."),
+                io.Mask.Input("head_mask", optional=True,
+                              tooltip="Optional inner head/face-plate mask used as the skin base (skin = head_mask "
+                                      "− eyes − brows − lips). Falls back to face_oval. Echoed to the head_mask output."),
             ],
             outputs=[
                 io.Image.Output(display_name="rgba",
@@ -336,9 +355,20 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 io.Mask.Output(display_name="left_brow"),
                 io.Mask.Output(display_name="right_brow"),
                 io.Mask.Output(display_name="brows"),
+                io.Mask.Output(display_name="left_iris"),
+                io.Mask.Output(display_name="right_iris"),
+                io.Mask.Output(display_name="irises"),
                 io.Mask.Output(display_name="lips"),
                 io.Mask.Output(display_name="nose"),
-                io.Mask.Output(display_name="irises"),
+                io.Mask.Output(display_name="left_ear"),
+                io.Mask.Output(display_name="right_ear"),
+                io.Mask.Output(display_name="ears"),
+                io.Mask.Output(display_name="forehead"),
+                io.Mask.Output(display_name="hair"),
+                io.Mask.Output(display_name="head_mask"),
+                io.Mask.Output(display_name="masked_skin"),
+                io.Image.Output(display_name="debug_overlay",
+                                tooltip="Render with feature masks tinted (lips=R, brows=G, eyes=B, nose=Y)."),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -347,8 +377,8 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
     def execute(cls, model, image, angle="front", do_brows=True, do_eyes=True, do_lips=True,
                 do_nose=True, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
                 refine_iterations=1, bleed_guard=48, cleanup=True, fill_holes=True, edge_smooth=3,
-                edge_refine="off", refine_radius=8, refine_eps=1e-4,
-                refine_threshold=0.5) -> io.NodeOutput:
+                edge_refine="off", refine_radius=8, refine_eps=1e-4, refine_threshold=0.5,
+                vitmatte_model="small", silhouette_mask=None, head_mask=None) -> io.NodeOutput:
         if image.ndim == 3:
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
@@ -356,10 +386,29 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         def _m(np_u8):
             return torch.from_numpy(np_u8.astype(np.float32) / 255.0)
 
+        def _img(np_u8_or_f):
+            arr = np_u8_or_f.astype(np.float32)
+            if arr.max() > 1.0:
+                arr = arr / 255.0
+            return torch.from_numpy(arr).unsqueeze(0)
+
+        def _mask_in(t):
+            """MASK tensor → np uint8 (H,W), resized to (H,W) if needed."""
+            if t is None:
+                return None
+            a = t.detach().cpu().float().numpy()
+            if a.ndim == 3:
+                a = a[0]
+            u = (a > 0.5).astype(np.uint8) * 255
+            if u.shape != (H, W):
+                u = cv2.resize(u, (W, H), interpolation=cv2.INTER_NEAREST)
+            return u
+
         def _bail(status):
             z = _blank(H, W)
             rgba = torch.from_numpy(np.zeros((H, W, 4), np.float32)).unsqueeze(0)
-            return io.NodeOutput(rgba, *([_m(z)] * 11), status)
+            dbg = torch.from_numpy(np.zeros((H, W, 3), np.float32)).unsqueeze(0)
+            return io.NodeOutput(rgba, *([_m(z)] * 20), dbg, status)
 
         if not HAS_MEDIAPIPE or not HAS_CV2:
             return _bail("missing mediapipe/opencv — no segmentation")
@@ -446,7 +495,8 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             if edge_refine != "off":
                 sam = _refine_feature_mask(sam, np_img, edge_refine,
                                            radius=max(1, int(round(refine_radius * scale))),
-                                           eps=refine_eps, threshold=refine_threshold)
+                                           eps=refine_eps, threshold=refine_threshold,
+                                           vitmatte_variant=vitmatte_model)
             return sam
 
         # ── Per-feature segmentation ──────────────────────────────────────────
@@ -471,21 +521,66 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         eyes  = _union(left_eye, right_eye)
         brows = _union(left_brow, right_brow)
         face_oval = mp_masks["face_oval"]
-        irises = mp_masks["irises"]
-        skin = _subtract(face_oval, eyes, brows, lips)
+        # MediaPipe-only regions (not SAM3-segmented) — kept for a uniform region set
+        # matching BD MP Face Mask / Save Face Data.
+        left_iris  = mp_masks["left_iris"]
+        right_iris = mp_masks["right_iris"]
+        irises     = mp_masks["irises"]
+        left_ear   = mp_masks["left_ear"]
+        right_ear  = mp_masks["right_ear"]
+        ears       = mp_masks["ears"]
+        forehead   = mp_masks["forehead"]
+        hair       = mp_masks["hair"]
 
-        rgba_np = np.stack([lips, brows, eyes, face_oval], axis=-1).astype(np.float32) / 255.0
+        # head_mask: explicit input > silhouette > face_oval. Used as the skin base.
+        sil = _mask_in(silhouette_mask)
+        hm_in = _mask_in(head_mask)
+        head_out = hm_in if hm_in is not None else (sil if sil is not None else face_oval)
+        skin = _subtract(head_out, eyes, brows, lips)
+
+        # Optional silhouette clip on every output.
+        all_keys = ["face_oval", "skin", "left_eye", "right_eye", "eyes", "left_brow", "right_brow",
+                    "brows", "left_iris", "right_iris", "irises", "lips", "nose", "left_ear",
+                    "right_ear", "ears", "forehead", "hair"]
+        local = dict(face_oval=face_oval, skin=skin, left_eye=left_eye, right_eye=right_eye, eyes=eyes,
+                     left_brow=left_brow, right_brow=right_brow, brows=brows, left_iris=left_iris,
+                     right_iris=right_iris, irises=irises, lips=lips, nose=nose, left_ear=left_ear,
+                     right_ear=right_ear, ears=ears, forehead=forehead, hair=hair)
+        if sil is not None:
+            for k in all_keys:
+                local[k] = np.minimum(local[k], sil)
+            head_out = sil
+        masked_skin = local["skin"]
+
+        rgba_np = np.stack([local["lips"], local["brows"], local["eyes"], local["face_oval"]],
+                           axis=-1).astype(np.float32) / 255.0
         rgba = torch.from_numpy(rgba_np).unsqueeze(0)
+
+        # Debug overlay: feature masks tinted over the render.
+        ov = np_img.astype(np.float32).copy()
+        for msk, col in [(local["lips"], (255, 0, 0)), (local["brows"], (0, 255, 0)),
+                         (local["eyes"], (0, 80, 255)), (local["nose"], (255, 255, 0))]:
+            sel = msk > 0
+            for ch in range(3):
+                ov[..., ch][sel] = 0.5 * ov[..., ch][sel] + 0.5 * col[ch]
+        debug_overlay = _img(ov.clip(0, 255))
 
         feats = [k for k, on in
                  [("brows", do_brows), ("eyes", do_eyes), ("lips", do_lips), ("nose", do_nose)] if on]
         status = (f"SAM3-guided: {', '.join(feats) or 'none'} | det {det.get('quality')} "
-                  f"span={det.get('span')} | bleed_guard={guard_px}px")
+                  f"span={det.get('span')} | bleed_guard={guard_px}px"
+                  f"{' | silhouette-clipped' if sil is not None else ''}"
+                  f"{' | refine=' + edge_refine if edge_refine != 'off' else ''}")
         print(f"[BD MP SAM3 Face Segment] {status}", flush=True)
 
         return io.NodeOutput(
-            rgba, _m(face_oval), _m(skin), _m(left_eye), _m(right_eye), _m(eyes),
-            _m(left_brow), _m(right_brow), _m(brows), _m(lips), _m(nose), _m(irises), status,
+            rgba, _m(local["face_oval"]), _m(local["skin"]), _m(local["left_eye"]),
+            _m(local["right_eye"]), _m(local["eyes"]), _m(local["left_brow"]),
+            _m(local["right_brow"]), _m(local["brows"]), _m(local["left_iris"]),
+            _m(local["right_iris"]), _m(local["irises"]), _m(local["lips"]), _m(local["nose"]),
+            _m(local["left_ear"]), _m(local["right_ear"]), _m(local["ears"]),
+            _m(local["forehead"]), _m(local["hair"]), _m(head_out), _m(masked_skin),
+            debug_overlay, status,
         )
 
 
