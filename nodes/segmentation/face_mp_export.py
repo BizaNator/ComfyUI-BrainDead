@@ -120,19 +120,21 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
                                 tooltip="BD_SaveContext context_id. When set, output_dir and filename_stem "
                                         "are resolved from the context template. angle becomes the suffix."),
                 io.String.Input("output_dir",
-                                default="/mnt/tank/Studio/Brains/Characters",
+                                default="",
                                 optional=True,
-                                tooltip="Absolute path to output directory (ignored when context_id is set). "
+                                tooltip="Fallback absolute path when no context is registered. "
+                                        "Ignored when context_id resolves. "
                                         "NAS B: → /mnt/tank/Studio/Brains/ on this server."),
                 io.String.Input("filename_stem",
-                                default="char_head_v1_mp",
+                                default="",
                                 optional=True,
-                                tooltip="Base filename without extension (ignored when context_id is set). "
-                                        "Convention: <char>_head_<ver>_mp (angle is appended automatically)."),
-                io.String.Input("model_path",
+                                tooltip="Fallback filename stem (no extension) when no context is registered. "
+                                        "angle is appended automatically: <stem>_mp_front.json"),
+                io.String.Input("_model_path_deprecated",
                                 default=_MODEL_PATH,
                                 optional=True,
-                                tooltip="Path to face_landmarker.task model file."),
+                                tooltip="Deprecated — model path is now fixed internally. This input is kept for "
+                                        "workflow backward-compatibility only and is ignored."),
                 io.Float.Input("detection_confidence",
                                default=0.3, min=0.1, max=1.0, step=0.05,
                                optional=True,
@@ -154,9 +156,9 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
         image: torch.Tensor,
         angle: str = "front",
         context_id: str = "",
-        output_dir: str = "/mnt/tank/Studio/Brains/Characters",
-        filename_stem: str = "char_head_v1_mp",
-        model_path: str = _MODEL_PATH,
+        output_dir: str = "",
+        filename_stem: str = "",
+        _model_path_deprecated: str = "",  # kept for workflow compat — value ignored
         detection_confidence: float = 0.3,
     ) -> io.NodeOutput:
 
@@ -169,31 +171,34 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
             print(f"[BD MP FaceExport] WARNING: missing {missing} — passthrough only, no export")
             return _pass(0, "")
 
-        model_path = model_path.strip() or _MODEL_PATH
-        if not os.path.exists(model_path):
-            print(f"[BD MP FaceExport] WARNING: model not found: {model_path} — passthrough only")
+        if not os.path.exists(_MODEL_PATH):
+            print(f"[BD MP FaceExport] WARNING: model not found: {_MODEL_PATH} — passthrough only")
             return _pass(0, "")
 
-        # Resolve output paths — context_id takes priority over explicit output_dir/filename_stem
+        # ── Context resolution (same pattern as BD_SaveBatch) ─────────────────
+        from ..cache.save_context import resolve_context_path, get_context, auto_pick_context
+
+        effective_cid = (context_id or "").strip()
+        if not effective_cid:
+            effective_cid = auto_pick_context() or ""
+
         json_path = mask_path = ""
-        cid = (context_id or "").strip()
-        if cid:
+        if effective_cid and get_context(effective_cid) is not None:
             try:
-                from ..cache.save_context import resolve_context_path
                 suffix = f"_mp_{angle}"
-                full_path, _ = resolve_context_path(cid, suffix, "json")
+                full_path, _ = resolve_context_path(effective_cid, suffix, "json")
                 json_path = full_path
                 mask_path = full_path.replace(".json", "_mask.png")
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                print(f"[BD MP FaceExport] context_id='{cid}' → {full_path}")
+                print(f"[BD MP FaceExport] context '{effective_cid}' → {full_path}")
             except Exception as e:
-                print(f"[BD MP FaceExport] WARNING: context_id '{cid}' lookup failed: {e} — using manual path")
+                print(f"[BD MP FaceExport] WARNING: context resolve failed: {e}")
 
         if not json_path:
-            # Manual mode fallback
+            # Manual fallback: output_dir + filename_stem
             out_dir = (output_dir or "").strip()
             if not out_dir:
-                print(f"[BD MP FaceExport] WARNING: no output_dir — passthrough only")
+                print(f"[BD MP FaceExport] WARNING: no context registered and no output_dir set — passthrough only")
                 return _pass(0, "")
             try:
                 os.makedirs(out_dir, exist_ok=True)
@@ -201,7 +206,6 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
                 print(f"[BD MP FaceExport] WARNING: cannot create output_dir {out_dir!r}: {e}")
                 return _pass(0, "")
             stem = (filename_stem or "face_mp").strip()
-            # Append angle if not already in stem
             if angle not in stem:
                 stem = f"{stem}_{angle}"
             json_path = os.path.join(out_dir, f"{stem}.json")
@@ -217,7 +221,7 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
         # Run MediaPipe
         _init_mp_idx()  # populate shared landmark index dicts
 
-        base_opts = _mpt.BaseOptions(model_asset_path=model_path)
+        base_opts = _mpt.BaseOptions(model_asset_path=_MODEL_PATH)
         opts = _mpv.FaceLandmarkerOptions(
             base_options=base_opts,
             running_mode=_mpv.RunningMode.IMAGE,

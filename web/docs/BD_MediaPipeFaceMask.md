@@ -1,6 +1,8 @@
-# BD Face Mask (MediaPipe)
+# BD MP Face Mask
 
 Extracts per-region face masks using MediaPipe Face Mesh landmarks. Deterministic, CPU-only, ~5 ms per frame. No SAM3 prompts, no sampling noise.
+
+All mask generation is shared with **BD MP Face Export** and **BD MP Face Infill** via `face_mp_shared.py` — masks from all three nodes are pixel-identical for the same landmarks.
 
 ## Why MediaPipe instead of SAM3?
 
@@ -28,81 +30,66 @@ Extracts per-region face masks using MediaPipe Face Mesh landmarks. Deterministi
 | `left_brow` | `FACEMESH_LEFT_EYEBROW` | |
 | `right_brow` | `FACEMESH_RIGHT_EYEBROW` | |
 | `brows` | Union of both | |
+| `left_iris` | `FACEMESH_LEFT_IRIS` | Requires 478-point model. |
+| `right_iris` | `FACEMESH_RIGHT_IRIS` | |
+| `irises` | Union of both | |
 | `lips` | `FACEMESH_LIPS` | Full lip area: outer + inner contour, both lips. |
-| `nose` | Custom landmark set | Bridge (168→5→4), tip (1, 19, 94), left/right ala (48, 115, 102… / 278, 344, 331…). MediaPipe does not ship a named nose region. |
-| `left_ear` | Face oval lateral slice near lm 234 | Preauricular/temporal region visible in front/3-quarter views. Not the full pinna — MediaPipe face mesh does not cover ear cartilage. |
+| `nose` | Custom landmark set | Bridge (168→5→4), tip (1, 19, 94), left/right ala. MediaPipe has no named nose region. |
+| `left_ear` | Face oval lateral slice near lm 234 | Preauricular region visible in front/3-quarter views. |
 | `right_ear` | Face oval lateral slice near lm 454 | |
 | `ears` | Union of both | |
 | `forehead` | Top 40% of face_oval minus brows | Between brow line and hairline. |
-| `hair` | Above face_oval, to image top edge | Bounded laterally by face oval width. Use with `BD_ColorExtract` for hair colour analysis. |
+| `hair` | Above face_oval, to image top edge | Bounded laterally by face oval width. |
 
 ## Inputs
 
 | Input | Default | Description |
 |-------|---------|-------------|
 | `image` | — | IMAGE batch. Each frame processed independently. |
-| `detection_confidence` | 0.5 | MediaPipe detection threshold. Lower catches harder angles. |
-| `face_expand` | 0 | Pixels to expand (+) or contract (−) the face oval boundary. +4 helps catch jaw-edge hair strands. |
-| `feature_expand` | 4 | Pixels to expand eye/brow/lip masks before subtracting from skin. Covers lash shadow and lip border. |
-| `subtract_nose` | False | When True, nose is also excluded from `skin`. Use when nose gets a separate shader pass. |
+| `head_mask` | — | Optional external head silhouette (e.g. SAM3). When wired, used as the `skin` base instead of `face_oval`. |
+| `detection_confidence` | 0.5 | MediaPipe detection threshold. |
+| `face_expand` | 0 | Pixels to expand (+) or contract (−) the face oval. |
+| `feature_expand` | 4 | Pixels to expand eye/brow/lip masks before subtracting from skin. |
+| `iris_expand` | 4 | Pixels to expand iris ring outward to fill the coloured disc. |
+| `subtract_nose` | False | When True, nose is also excluded from `skin`. |
 | `ear_expand` | 25 | Pixels to expand ear region outward from the face oval edge. |
 | `hair_expand` | 20 | Pixels to expand hair region downward into the hairline transition. |
+| `bbox_feature` | none | Emit a bounding box JSON string for this region. |
+| `bbox_frame` | 0 | Which batch frame to extract the bbox from. |
 
 ## Outputs
 
-All 15 region outputs are `MASK` tensors `(B, H, W)` in `[0, 1]`.
+All 18 region outputs are `MASK` tensors `(B, H, W)` in `[0, 1]`. Plus `status` (STRING) and `bbox_json` (STRING).
 
-| Output | Use |
-|--------|-----|
-| `face_oval` | Source-of-truth head silhouette |
-| `skin` | Wire to GLSL skin shader as the paintable skin region |
-| `left_eye` / `right_eye` / `eyes` | Eye-socket exclusion, or separate eye-white/iris tinting |
-| `left_brow` / `right_brow` / `brows` | Brow exclusion or separate brow tinting pass |
-| `lips` | Lip exclusion or lip colour pass |
-| `nose` | Nose exclusion or nose specularity |
-| `left_ear` / `right_ear` / `ears` | Ear region for separate skin tone (ears can differ from face) |
-| `forehead` | Forehead highlight / specularity separation |
-| `hair` | Hair-colour sampling region (feed to `BD_ColorExtract`) |
-| `status` | Detection summary — face count, any failed frames |
+## Saving Masks for Reuse
+
+If downstream nodes will process a modified image (mouth closed, eyes removed, delighted, albedo prepped), save the masks before modification using **BD MP Save Face Data**. Reload later with **BD MP Load Face Data** — no MediaPipe re-run needed.
 
 ## Skin Pipeline Wiring
 
 ```
-character render ──→ BD_MediaPipeFaceMask
+character render ──→ BD MP Face Mask
                           │
-                     face_oval ────────────────────→ BD_GLSLBatch u_mask0 (face boundary)
-                     skin ──────────────────────────→ BD_GLSLBatch u_mask1 (paintable skin)
-                     eyes ──────────────────────────→ BD_GLSLBatch u_mask2 (eye socket)
-                     lips ──────────────────────────→ BD_GLSLBatch u_mask3 (lips)
-                     brows + nose (optional)
+                     face_oval ──→ BD_GLSLBatch u_mask0 (face boundary)
+                     skin ──────→ BD_GLSLBatch u_mask1 (paintable skin)
+                     eyes ──────→ BD_GLSLBatch u_mask2 (eye socket)
+                     lips ──────→ BD_GLSLBatch u_mask3 (lips)
 ```
 
 ## Left / Right Convention
 
-MediaPipe uses the **subject's perspective**:
-- `left_eye` = the subject's left eye = **right side of the image** in a standard front-facing render
-- `right_eye` = the subject's right eye = **left side of the image**
-
-This matches anatomy convention (not camera convention). Use the combined `eyes` output if you just want "both eyes excluded from skin" and don't care which side is which.
-
-## Angle Limits
-
-- **Works well**: front-facing, ±30° yaw, ±20° pitch
-- **Degrades**: ±30–45° yaw (ear regions on occluded side become unreliable)
-- **Fails**: >45° yaw (profile views — use SAM3 instead)
-
-The `face_oval` stays accurate to ~45° yaw. The `left_ear` / `right_ear` on the far side of a 3/4 view will be empty or small — expected behaviour.
+MediaPipe uses the **subject's perspective**: `left_eye` is the subject's left eye, which appears on the **right side** of a standard front-facing image.
 
 ## Notes
 
-- All regions are rasterised via convex hull fill except `face_oval`, which uses the exact ordered MediaPipe polygon path (jaw-shaped, non-convex).
-- `feature_expand` dilates BEFORE subtraction, so `skin` automatically gains a clean edge buffer around eye sockets and lips without needing separate erode/dilate nodes.
-- `hair` extends to the image top edge — clip it with `face_oval` if you want hair restricted to inside the character silhouette.
-- Processing is CPU-bound, not GPU. On a 1K image: ~5 ms. On a 4K image: ~20 ms.
+- All regions use convex hull fill except `face_oval`, which uses the exact ordered MediaPipe polygon path (jaw-shaped, non-convex).
+- `feature_expand` dilates before subtraction — `skin` gets a clean edge buffer automatically.
+- Processing is CPU-bound: ~5 ms at 1K, ~20 ms at 4K.
 
 ## Pairs With
 
-- **BD_GLSLBatch** — primary consumer: pass `skin`, `eyes`, `lips` as u_mask inputs to the 4-tone skin shader.
-- **BD_ColorExtract** — wire `hair` mask to extract dominant hair colour for downstream tint matching.
-- **BD_LuminanceMask** — combine skin mask with luminance thresholding for shadow/highlight separation within the skin region.
-- **BD_SAM3MultiPrompt** — fallback for profile views where MediaPipe fails.
+- **BD MP Save Face Data** — persist masks for use on modified images
+- **BD MP Face Infill** — fill eye/brow/lip sockets; accepts saved face data via `face_data_path`
+- **BD MP Face Refine** — refine masks with SAM3 for pixel-accurate boundaries
+- **BD MP Face Export** — export landmark JSON + zone mask PNG for Blender UV calibration
+- **BD_GLSLBatch** — primary consumer for skin shader
