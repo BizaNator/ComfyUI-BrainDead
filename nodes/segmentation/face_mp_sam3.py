@@ -119,6 +119,63 @@ def _fill_holes(mask_u8: np.ndarray) -> np.ndarray:
     return cv2.bitwise_or(mask_u8, holes)
 
 
+def _refine_feature_mask(mask_u8: np.ndarray, rgb_u8: np.ndarray, mode: str,
+                         radius: int, eps: float, threshold: float) -> np.ndarray:
+    """Snap the mask boundary to image color/edge transitions.
+
+    mode='guided'  : cv2.ximgproc.guidedFilter — the RGB render guides an edge-aware
+                     smoothing of the mask alpha, so the boundary follows real edges.
+    mode='matting' : PyMatting closed-form alpha matting from an auto-trimap
+                     (eroded mask = sure-fg, outside dilated mask = sure-bg, band =
+                     unknown). Higher quality on soft/hair edges (eyebrows).
+
+    Runs on the feature's ROI crop (bbox + margin) for speed; pastes back. Returns a
+    re-binarized mask snapped to the refined alpha.
+    """
+    if mode == "off" or mask_u8.max() == 0:
+        return mask_u8
+    ys, xs = np.where(mask_u8 > 0)
+    pad = max(radius * 3, 24)
+    H, W = mask_u8.shape
+    y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + pad + 1)
+    x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + pad + 1)
+    m = mask_u8[y0:y1, x0:x1]
+    g = np.ascontiguousarray(rgb_u8[y0:y1, x0:x1, :3])
+
+    if mode == "guided":
+        if not hasattr(cv2, "ximgproc"):
+            print("[BD MP SAM3] guided refine unavailable (no cv2.ximgproc) — skipping", flush=True)
+            return mask_u8
+        guide = g.astype(np.float32) / 255.0
+        src = (m.astype(np.float32) / 255.0)
+        alpha = cv2.ximgproc.guidedFilter(guide, src, max(1, radius), float(eps))
+        ref = (alpha > threshold).astype(np.uint8) * 255
+    elif mode == "matting":
+        try:
+            from pymatting import estimate_alpha_cf
+        except Exception as e:
+            print(f"[BD MP SAM3] matting unavailable ({e}) — skipping", flush=True)
+            return mask_u8
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+        fg = cv2.erode(m, k)
+        bg = cv2.dilate(m, k)
+        trimap = np.full(m.shape, 0.5, dtype=np.float64)
+        trimap[fg > 0] = 1.0
+        trimap[bg == 0] = 0.0
+        try:
+            alpha = estimate_alpha_cf(g.astype(np.float64) / 255.0, trimap)
+        except Exception as e:
+            print(f"[BD MP SAM3] matting failed ({e}) — skipping", flush=True)
+            return mask_u8
+        ref = (alpha > threshold).astype(np.uint8) * 255
+    else:
+        return mask_u8
+
+    out = mask_u8.copy()
+    out[y0:y1, x0:x1] = ref
+    return out
+
+
 def _clean_feature_mask(mask_u8: np.ndarray, pos_px: list[tuple[float, float]],
                         smooth_px: int = 3, fill: bool = True) -> np.ndarray:
     """Remove SAM3 noise: keep only the connected component(s) a positive seed point
@@ -207,6 +264,21 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 io.Int.Input("edge_smooth", default=3, min=0, max=15, step=1, optional=True,
                              tooltip="Morphological close+open radius (px @native) to smooth jagged SAM3 edges "
                                      "during cleanup. 0 = no smoothing."),
+                io.Combo.Input("edge_refine", options=["off", "guided", "matting"], default="off",
+                               optional=True,
+                               tooltip="Snap the mask edge to image color/edges after cleanup.\n"
+                                       "  off     — no refinement\n"
+                                       "  guided  — guided filter (fast, edge-aware; good general snap)\n"
+                                       "  matting — PyMatting closed-form alpha matting (higher quality on "
+                                       "soft/hair edges like eyebrows; slower)."),
+                io.Int.Input("refine_radius", default=8, min=1, max=40, step=1, optional=True,
+                             tooltip="Guided-filter radius / matting trimap band width (px @native). Larger = "
+                                     "looks further for an edge / wider uncertain band."),
+                io.Float.Input("refine_eps", default=1e-4, min=1e-6, max=1e-1, step=1e-4, optional=True,
+                               tooltip="Guided-filter edge sensitivity (smaller = sharper, hugs edges harder). "
+                                       "Ignored by matting."),
+                io.Float.Input("refine_threshold", default=0.5, min=0.05, max=0.95, step=0.05, optional=True,
+                               tooltip="Binarize the refined alpha at this level."),
             ],
             outputs=[
                 io.Image.Output(display_name="rgba",
@@ -229,7 +301,9 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
     @classmethod
     def execute(cls, model, image, angle="front", do_brows=True, do_eyes=True, do_lips=True,
                 do_nose=True, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
-                refine_iterations=1, bleed_guard=48, cleanup=True, edge_smooth=3) -> io.NodeOutput:
+                refine_iterations=1, bleed_guard=48, cleanup=True, edge_smooth=3,
+                edge_refine="off", refine_radius=8, refine_eps=1e-4,
+                refine_threshold=0.5) -> io.NodeOutput:
         if image.ndim == 3:
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
@@ -323,6 +397,11 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 sam = _clean_feature_mask(sam, pos_px,
                                           smooth_px=max(0, int(round(edge_smooth * scale))),
                                           fill=True)
+            # Edge-snap refinement (guided filter / alpha matting) to follow image color/edges.
+            if edge_refine != "off":
+                sam = _refine_feature_mask(sam, np_img, edge_refine,
+                                           radius=max(1, int(round(refine_radius * scale))),
+                                           eps=refine_eps, threshold=refine_threshold)
             return sam
 
         # ── Per-feature segmentation ──────────────────────────────────────────
