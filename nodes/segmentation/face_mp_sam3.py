@@ -58,6 +58,27 @@ from .face_mp_shared import (
 
 _MODEL_PATH = "/srv/AI_Stuff/models/mediapipe/face_landmarker.task"
 _SAM3_SIZE = 1008  # SAM3 works in a 1008×1008 preprocessed space
+_VITMATTE_PATH = "/opt/comfyui/stable/models/vitmatte"  # hustvl vitmatte-small-composition-1k
+
+_VITMATTE = {}  # cache: {"model":..., "proc":..., "device":...}
+
+
+def _load_vitmatte():
+    """Lazy-load + cache the VitMatte matting model (transformers)."""
+    if _VITMATTE:
+        return _VITMATTE.get("model"), _VITMATTE.get("proc")
+    try:
+        import torch as _t
+        from transformers import VitMatteForImageMatting, VitMatteImageProcessor
+        dev = "cuda" if _t.cuda.is_available() else "cpu"
+        proc = VitMatteImageProcessor.from_pretrained(_VITMATTE_PATH)
+        model = VitMatteForImageMatting.from_pretrained(_VITMATTE_PATH).to(dev).eval()
+        _VITMATTE.update({"model": model, "proc": proc, "device": dev})
+        return model, proc
+    except Exception as e:
+        print(f"[BD MP SAM3] VitMatte load failed ({e})", flush=True)
+        _VITMATTE.update({"model": None, "proc": None})
+        return None, None
 
 
 # ── Feature → (positive landmark source, sibling-negative sources) ──────────────
@@ -168,6 +189,27 @@ def _refine_feature_mask(mask_u8: np.ndarray, rgb_u8: np.ndarray, mode: str,
             print(f"[BD MP SAM3] matting failed ({e}) — skipping", flush=True)
             return mask_u8
         ref = (alpha > threshold).astype(np.uint8) * 255
+    elif mode == "vitmatte":
+        import torch as _t
+        from PIL import Image as _PIL
+        model, proc = _load_vitmatte()
+        if model is None:
+            return mask_u8
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+        fg = cv2.erode(m, k); bg = cv2.dilate(m, k)
+        tri = np.full(m.shape, 128, np.uint8)   # unknown band
+        tri[fg > 0] = 255                        # sure foreground
+        tri[bg == 0] = 0                         # sure background
+        try:
+            inputs = proc(images=_PIL.fromarray(g), trimaps=_PIL.fromarray(tri), return_tensors="pt")
+            inputs = {kk: vv.to(_VITMATTE["device"]) for kk, vv in inputs.items()}
+            with _t.no_grad():
+                alpha = model(**inputs).alphas[0, 0].float().cpu().numpy()
+            alpha = alpha[:m.shape[0], :m.shape[1]]   # processor pads to /32 — crop back
+        except Exception as e:
+            print(f"[BD MP SAM3] vitmatte failed ({e}) — skipping", flush=True)
+            return mask_u8
+        ref = (alpha > threshold).astype(np.uint8) * 255
     else:
         return mask_u8
 
@@ -259,18 +301,21 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                                      "small = hug the MediaPipe zone. 0 = clip exactly to MediaPipe."),
                 io.Boolean.Input("cleanup", default=True, optional=True,
                                  tooltip="Clean SAM3 noise: keep only the connected component(s) the positive "
-                                         "landmark seeds land in (drops stray chunks around eyes/lips) and fill "
-                                         "interior holes (solid lips)."),
+                                         "landmark seeds land in (drops stray chunks around eyes/lips)."),
+                io.Boolean.Input("fill_holes", default=True, optional=True,
+                                 tooltip="Fill interior holes during cleanup (e.g. teeth/open mouth → solid lips). "
+                                         "Turn OFF for lip-flesh-only (mouth interior left as a hole)."),
                 io.Int.Input("edge_smooth", default=3, min=0, max=15, step=1, optional=True,
                              tooltip="Morphological close+open radius (px @native) to smooth jagged SAM3 edges "
                                      "during cleanup. 0 = no smoothing."),
-                io.Combo.Input("edge_refine", options=["off", "guided", "matting"], default="off",
+                io.Combo.Input("edge_refine", options=["off", "guided", "matting", "vitmatte"], default="off",
                                optional=True,
                                tooltip="Snap the mask edge to image color/edges after cleanup.\n"
-                                       "  off     — no refinement\n"
-                                       "  guided  — guided filter (fast, edge-aware; good general snap)\n"
-                                       "  matting — PyMatting closed-form alpha matting (higher quality on "
-                                       "soft/hair edges like eyebrows; slower)."),
+                                       "  off      — no refinement\n"
+                                       "  guided   — guided filter (fast, edge-aware; good general snap)\n"
+                                       "  matting  — PyMatting closed-form alpha matting (CPU, no model)\n"
+                                       "  vitmatte — VitMatte deep matting model (best on soft/hair edges; "
+                                       "GPU; loads hustvl vitmatte-small). All run on the feature ROI crop."),
                 io.Int.Input("refine_radius", default=8, min=1, max=40, step=1, optional=True,
                              tooltip="Guided-filter radius / matting trimap band width (px @native). Larger = "
                                      "looks further for an edge / wider uncertain band."),
@@ -301,7 +346,7 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
     @classmethod
     def execute(cls, model, image, angle="front", do_brows=True, do_eyes=True, do_lips=True,
                 do_nose=True, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
-                refine_iterations=1, bleed_guard=48, cleanup=True, edge_smooth=3,
+                refine_iterations=1, bleed_guard=48, cleanup=True, fill_holes=True, edge_smooth=3,
                 edge_refine="off", refine_radius=8, refine_eps=1e-4,
                 refine_threshold=0.5) -> io.NodeOutput:
         if image.ndim == 3:
@@ -396,7 +441,7 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 pos_px = [(x * W, y * H) for (x, y) in pos_pts]
                 sam = _clean_feature_mask(sam, pos_px,
                                           smooth_px=max(0, int(round(edge_smooth * scale))),
-                                          fill=True)
+                                          fill=fill_holes)
             # Edge-snap refinement (guided filter / alpha matting) to follow image color/edges.
             if edge_refine != "off":
                 sam = _refine_feature_mask(sam, np_img, edge_refine,

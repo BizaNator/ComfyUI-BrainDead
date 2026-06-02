@@ -215,6 +215,16 @@ Character segmentation, parts pipeline, PBR map derivation, asset prep.
 | **BD Fashn Human Parser** | SegFormer-B4 from fashn-ai (NVIDIA license). 18 FASHN classes. |
 | **BD ATR Human Parser** | mattmdjaga/segformer_b2_clothes (MIT). 18 ATR classes. |
 
+**MediaPipe face masks & guided SAM3:**
+
+| Node | Description |
+|------|-------------|
+| **BD MP Face Mask** | Landmark-precise face region masks (face_oval, skin, eyes, brows, lips, nose, irises, ears, forehead, hair) from MediaPipe FaceLandmarker. Shared tight drawing: envelope brows, eroded-eyelid eyes, organic lips. |
+| **BD MP Face Export** | Passthrough node — writes the **landmark JSON** (478 pts) + reference RGBA mask PNG for the Blender face-plate UV pipeline. Tiny-detection guard (retry + padded fallback). |
+| **BD MP Save / Load Face Data** | Persist all region masks + head_mask + image to `.mpface.npz`/`.json`; reload later (after the image is processed and MediaPipe can no longer detect). |
+| **BD MP Face Refine** | Refine MediaPipe feature masks with a SAM3 segment batch (IoU match → intersect), then compute pixel-accurate skin. |
+| **BD MP SAM3 Face Segment** | **MediaPipe-guided SAM3**: localizes each feature with MediaPipe, then prompts SAM3 per feature (bbox + positive landmark points + sibling negatives) for pixel-accurate masks in one node. Solves the stylized-brow offset (point seed → SAM3 grows to the whole eyebrow). Outputs match BD MP Face Mask. Cleanup (component-keep + optional hole-fill + edge smooth) and optional edge-snap refinement (`guided` / `matting` / `vitmatte`). Wire a comfy-core SAM3 `MODEL`. |
+
 **Face socket / animation textures:**
 
 | Node | Description |
