@@ -427,6 +427,56 @@ def _inpaint_zone(
     return inpainted, inpaint_mask
 
 
+# ── Face data NPZ → mask dict ─────────────────────────────────────────────────
+
+# Maps _MASK_KEYS to the zone they belong to (for expand lookup)
+_KEY_TO_ZONE = {
+    'left_eye': 'eyes', 'right_eye': 'eyes', 'eyes': 'eyes',
+    'left_brow': 'brows', 'right_brow': 'brows', 'brows': 'brows',
+    'lips': 'lips', 'nose': 'nose',
+    'face_oval': None, 'lip_plane': None,
+}
+
+
+def _masks_from_npz(
+    npz_data,
+    H: int,
+    W: int,
+    zone_expand: dict[str, tuple[int, int]],
+) -> dict[str, np.ndarray]:
+    """Load NPZ face data masks and apply zone_expand dilation.
+
+    Returned dict has same keys as _process_frame so downstream code
+    is identical in both MediaPipe and face-data modes.
+    lip_plane is blank (requires raw landmarks to compute).
+    """
+    blank = np.zeros((H, W), dtype=np.uint8)
+
+    def _load(key: str) -> np.ndarray:
+        if key not in npz_data.files:
+            return blank.copy()
+        arr = npz_data[key]
+        if arr.ndim != 2:
+            return blank.copy()
+        if arr.shape[:2] != (H, W):
+            arr = cv2.resize(arr, (W, H), interpolation=cv2.INTER_NEAREST)
+        zone = _KEY_TO_ZONE.get(key)
+        if zone and zone in zone_expand:
+            ex, ey = zone_expand[zone]
+            if ex > 0 or ey > 0:
+                arr = cv2.dilate(arr, _ellipse_k_xy(max(1, ex), max(1, ey)))
+        return arr
+
+    masks: dict[str, np.ndarray] = {k: _load(k) for k in _MASK_KEYS if k != 'lip_plane'}
+
+    # Recompute unions from individual masks (consistent with _process_frame)
+    masks['eyes']  = np.maximum(masks['left_eye'],  masks['right_eye'])
+    masks['brows'] = np.maximum(masks['left_brow'], masks['right_brow'])
+    masks['lip_plane'] = blank.copy()  # requires landmarks — not available from NPZ
+
+    return masks
+
+
 # ── Node ─────────────────────────────────────────────────────────────────────
 
 _FILL_MODES = ["flat", "surround", "inpaint"]
@@ -448,7 +498,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="BD_FaceSocketInfill",
-            display_name="BD Face Socket Infill",
+            display_name="BD MP Face Infill",
             category="🧠BrainDead/Segmentation",
             description=(
                 "Fills face feature sockets for 2D animation flipbook textures.\n\n"
@@ -464,7 +514,9 @@ class BD_FaceSocketInfill(io.ComfyNode):
                     "image",
                     tooltip="Detection guide — MediaPipe runs on this to locate feature zones. "
                             "Use your cleanest, most representative image (e.g. neutral pose, "
-                            "good lighting). Does NOT need to be the image you want to fill."),
+                            "good lighting). Does NOT need to be the image you want to fill.\n\n"
+                            "If face_data_path is wired, MediaPipe is skipped entirely and this "
+                            "image is used ONLY as the fill target (same as image1 behaviour)."),
                 io.Image.Input(
                     "image1", optional=True,
                     tooltip="Fill target (optional). The image that actually gets infilled. "
@@ -472,8 +524,19 @@ class BD_FaceSocketInfill(io.ComfyNode):
                             "Leave unconnected to fill 'image' itself (original behaviour).\n\n"
                             "Typical use: image = ILM / line-art guide, image1 = albedo / skin layer.\n"
                             "Resolution should match 'image'; if different it is resized to match."),
+                io.String.Input(
+                    "face_data_path", default="", optional=True,
+                    tooltip="Path to a .mpface.npz file saved by BD MP Save Face Data. "
+                            "When wired (connect npz_path output), MediaPipe is bypassed — "
+                            "the saved eye/brow/lip/nose/oval masks are used directly. "
+                            "Enables infilling on modified images where MediaPipe would fail "
+                            "(closed mouth, removed eyes, delighted, albedo-prepped, etc.).\n\n"
+                            "NOTE: masks in the NPZ already include the expand from BD MP Face Mask. "
+                            "Set expand_x=0, expand_y=0 here to avoid double-expansion, "
+                            "or leave as-is to add extra dilation on top."),
                 io.Float.Input("detection_confidence", default=0.5, min=0.1, max=1.0,
-                               step=0.05, optional=True),
+                               step=0.05, optional=True,
+                               tooltip="Face detection confidence (ignored when face_data_path is set)."),
 
                 # ── Zone toggles ─────────────────────────────────────────────
                 io.Boolean.Input("eyes",  default=True,  optional=True),
@@ -616,6 +679,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         cls,
         image: torch.Tensor,
         image1: torch.Tensor | None = None,
+        face_data_path: str = "",
         detection_confidence: float = 0.5,
         eyes: bool = True,
         brows: bool = True,
@@ -657,13 +721,35 @@ class BD_FaceSocketInfill(io.ComfyNode):
             return io.NodeOutput(_blank_img, _blank_rgba, _blank1,
                                  *([_blank1] * len(_MASK_KEYS)), msg)
 
-        if not HAS_MEDIAPIPE or not HAS_CV2:
-            missing = [p for p, h in [("mediapipe", HAS_MEDIAPIPE), ("opencv-python", HAS_CV2)] if not h]
-            return _fail(f"BD_FaceSocketInfill: missing — {', '.join(missing)}")
-        if not os.path.exists(_MODEL_PATH):
-            return _fail(f"BD_FaceSocketInfill: model not found at {_MODEL_PATH}")
+        # ── Face data bypass — skip MediaPipe when NPZ is provided ───────────
+        _face_data_npz = None
+        _npz_path = (face_data_path or "").strip()
+        if _npz_path:
+            # Accept .json companion path too
+            if _npz_path.endswith(".mpface.json"):
+                _npz_path = _npz_path.replace(".mpface.json", ".mpface.npz")
+            if os.path.exists(_npz_path):
+                try:
+                    _face_data_npz = np.load(_npz_path, allow_pickle=False)
+                    print(f"[BD MP FaceInfill] Using face data: {os.path.basename(_npz_path)}")
+                except Exception as e:
+                    print(f"[BD MP FaceInfill] face_data_path load failed ({e}), falling back to MediaPipe")
+            else:
+                print(f"[BD MP FaceInfill] face_data_path not found: {_npz_path}, falling back to MediaPipe")
 
-        _init_mp_idx()
+        _use_face_data = _face_data_npz is not None
+
+        if not _use_face_data:
+            if not HAS_MEDIAPIPE or not HAS_CV2:
+                missing = [p for p, h in [("mediapipe", HAS_MEDIAPIPE), ("opencv-python", HAS_CV2)] if not h]
+                return _fail(f"BD_FaceSocketInfill: missing — {', '.join(missing)}")
+            if not os.path.exists(_MODEL_PATH):
+                return _fail(f"BD_FaceSocketInfill: model not found at {_MODEL_PATH}")
+        elif not HAS_CV2:
+            return _fail("BD_FaceSocketInfill: opencv-python missing (needed even in face-data mode)")
+
+        if not _use_face_data:
+            _init_mp_idx()
 
         if image.ndim == 3:
             image = image.unsqueeze(0)
@@ -699,26 +785,32 @@ class BD_FaceSocketInfill(io.ComfyNode):
         alpha_images:  list[torch.Tensor] = []
         statuses:      list[str] = []
 
-        base_opts = _mpt.BaseOptions(model_asset_path=_MODEL_PATH)
-        opts = _mpv.FaceLandmarkerOptions(
-            base_options=base_opts,
-            running_mode=_mpv.RunningMode.IMAGE,
-            num_faces=1,
-            min_face_detection_confidence=detection_confidence,
-            min_face_presence_confidence=detection_confidence,
-            min_tracking_confidence=detection_confidence,
-        )
+        # ── Build MediaPipe landmarker (only when not using face data) ────────
+        from contextlib import nullcontext
+        if not _use_face_data:
+            base_opts = _mpt.BaseOptions(model_asset_path=_MODEL_PATH)
+            _mp_opts = _mpv.FaceLandmarkerOptions(
+                base_options=base_opts,
+                running_mode=_mpv.RunningMode.IMAGE,
+                num_faces=1,
+                min_face_detection_confidence=detection_confidence,
+                min_face_presence_confidence=detection_confidence,
+                min_tracking_confidence=detection_confidence,
+            )
+            _landmarker_ctx = _mpv.FaceLandmarker.create_from_options(_mp_opts)
+        else:
+            _landmarker_ctx = nullcontext(None)
 
-        with _mpv.FaceLandmarker.create_from_options(opts) as landmarker:
+        with _landmarker_ctx as landmarker:
             for b in range(B):
-                # ── Detection frame (image0) — MediaPipe runs on this ─────────
+                # ── Detection frame ──────────────────────────────────────────
                 detect_f  = image[b].cpu().numpy()
                 detect_u8 = (detect_f * 255.0).clip(0, 255).astype(np.uint8)
                 if C == 4:
                     detect_u8 = detect_u8[..., :3]
                 detect_rgb_u8 = detect_u8.copy()
 
-                # ── Fill frame (image1 if provided, else image0) ──────────────
+                # ── Fill frame (image1 if provided, else image0) ─────────────
                 if image1 is not None:
                     b1 = min(b, image1.shape[0] - 1)
                     fill_f  = image1[b1].cpu().numpy()
@@ -727,22 +819,27 @@ class BD_FaceSocketInfill(io.ComfyNode):
                         fill_u8 = fill_u8[..., :3]
                     if fill_u8.shape[:2] != (H, W):
                         fill_u8 = cv2.resize(fill_u8, (W, H), interpolation=cv2.INTER_LINEAR)
-                    fill_rgb_u8 = fill_u8.copy()
+                    fill_rgb_u8  = fill_u8.copy()
                     fill_frame_f = fill_f[..., :3].astype(np.float32)
                     if fill_frame_f.shape[:2] != (H, W):
                         fill_frame_f = cv2.resize(fill_frame_f, (W, H), interpolation=cv2.INTER_LINEAR)
                 else:
                     fill_rgb_u8  = detect_rgb_u8
                     fill_frame_f = detect_f[..., :3].astype(np.float32)
-                frame_rgb_u8 = detect_rgb_u8  # alias for _process_frame call below
 
                 brow_band_px = max(2, round(brow_band * scale))
                 lip_band_px  = max(0, round(lip_band  * scale))
                 eye_inset_px = max(0, round(eye_inset  * scale))
-                masks, status = _process_frame(
-                    frame_rgb_u8, landmarker, zone_expand,
-                    eye_mode, brow_band_px, eye_inset_px, lip_band_px, lip_mode,
-                )
+
+                # ── Masks: from face data NPZ or MediaPipe ───────────────────
+                if _use_face_data:
+                    masks = _masks_from_npz(_face_data_npz, H, W, zone_expand)
+                    status = f"ok (face data: {os.path.basename(_npz_path)})"
+                else:
+                    masks, status = _process_frame(
+                        detect_rgb_u8, landmarker, zone_expand,
+                        eye_mode, brow_band_px, eye_inset_px, lip_band_px, lip_mode,
+                    )
                 statuses.append(status)
 
                 # Per-zone feather applied to individual mask outputs so they
@@ -854,4 +951,4 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
 FACE_SOCKET_INFILL_V3_NODES      = [BD_FaceSocketInfill]
 FACE_SOCKET_INFILL_NODES         = {"BD_FaceSocketInfill": BD_FaceSocketInfill}
-FACE_SOCKET_INFILL_DISPLAY_NAMES = {"BD_FaceSocketInfill": "BD Face Socket Infill"}
+FACE_SOCKET_INFILL_DISPLAY_NAMES = {"BD_FaceSocketInfill": "BD MP Face Infill"}

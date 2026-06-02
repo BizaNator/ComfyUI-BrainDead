@@ -12,7 +12,10 @@ Use BD_BlenderDecimate with color_field for edge-preserving decimation with colo
 """
 
 import gc
+import os
 import time
+from glob import glob
+
 import numpy as np
 
 from comfy_api.latest import io

@@ -319,6 +319,15 @@ Use after: BD_CuMeshSimplify → BD_UVUnwrap → THIS NODE""",
                 ),
             )
 
+            # Pass through vertex_attributes from input mesh (e.g. COLOR_0 from UV Unwrap /
+            # Trellis vertex colors). OvoxelTextureBake bakes colours to a UV texture but the
+            # original per-vertex colours are still the canonical hard-body vertex colour source.
+            # Downstream nodes (BD_PackBundle → BD_BlenderExportMesh) read vertex_attributes
+            # using the safe COLOR_0 path rather than accessing TextureVisuals.vertex_colors.
+            if hasattr(mesh, 'vertex_attributes'):
+                for _k, _v in mesh.vertex_attributes.items():
+                    result_mesh.vertex_attributes[_k] = _v
+
             # Cleanup
             del mesh_verts, mesh_faces, mesh_uvs, orig_vertices, orig_faces, attr_volume, coords
             gc.collect()

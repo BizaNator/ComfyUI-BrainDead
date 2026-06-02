@@ -264,18 +264,80 @@ class BlenderNodeMixin:
 
         file_type = suffix[1:]  # Remove leading dot
 
-        # Check for vertex colors (visual or metadata)
+        # Check for vertex colors — do NOT access TextureVisuals.vertex_colors, which
+        # is a computed property (texture rasterization) that triggers face-expansion.
         has_colors = False
         if hasattr(mesh, 'visual') and mesh.visual is not None:
-            if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
-                colors = mesh.visual.vertex_colors
-                if colors is not None and len(colors) > 0:
-                    has_colors = True
-                    print(f"[BD Blender] Mesh has {len(colors)} vertex colors")
+            try:
+                import trimesh.visual as _tv_colors
+                if isinstance(mesh.visual, _tv_colors.TextureVisuals):
+                    # Colors may live in vertex_attributes instead of visual for TV meshes
+                    if hasattr(mesh, 'vertex_attributes') and len(mesh.vertex_attributes) > 0:
+                        has_colors = True
+                        print(f"[BD Blender] TextureVisuals mesh: colors in vertex_attributes")
+                elif hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                    colors = mesh.visual.vertex_colors
+                    if colors is not None and len(colors) > 0:
+                        has_colors = True
+                        print(f"[BD Blender] Mesh has {len(colors)} vertex colors")
+            except Exception:
+                pass
+
+        # For GLB export with TextureVisuals: rebuild as UV-only TextureVisuals (no image).
+        # TextureVisuals with a texture image causes trimesh's GLB writer to rasterize the
+        # image into per-face-corner vertex colors → full face-expansion (ratio 3.0).
+        # Stripping the image while keeping UV preserves TEXCOORD_0 without face-expansion.
+        # IMPORTANT: never access mesh.visual.vertex_colors on a TextureVisuals mesh —
+        # it is a computed rasterization property that mutates internal state and
+        # causes trimesh to write a face-expanded (n_faces×3 verts) primitive.
+        mesh_to_export = mesh
+        if file_type == 'glb' and HAS_TRIMESH:
+            try:
+                import trimesh.visual as _tv
+                import numpy as _np
+                if isinstance(mesh.visual, _tv.TextureVisuals):
+                    # Extract UV coordinates only (do NOT touch vertex_colors)
+                    uv = None
+                    try:
+                        if mesh.visual.uv is not None and len(mesh.visual.uv) == len(mesh.vertices):
+                            uv = _np.array(mesh.visual.uv, dtype=_np.float32)
+                    except Exception:
+                        pass
+
+                    # Build clean mesh: geometry + UV-only TextureVisuals.
+                    # trimesh only writes TEXCOORD_0 to GLB when a material references it.
+                    # Add a 1×1 white placeholder texture so TEXCOORD_0 is present in the GLB
+                    # (Blender needs it to recreate the UV layer on import).
+                    clean = trimesh.Trimesh(
+                        vertices=mesh.vertices.copy(),
+                        faces=mesh.faces.copy(),
+                        process=False,
+                    )
+                    if uv is not None:
+                        try:
+                            import PIL.Image as _PILImage
+                            from trimesh.visual.material import PBRMaterial as _PBR
+                            _dummy_img = _PILImage.new('RGBA', (1, 1), (255, 255, 255, 255))
+                            _dummy_mat = _PBR(baseColorTexture=_dummy_img)
+                            clean.visual = _tv.TextureVisuals(uv=uv, material=_dummy_mat)
+                            print(f"[BD Blender] TextureVisuals with 1×1 placeholder — TEXCOORD_0 will be written")
+                        except Exception as _pe:
+                            clean.visual = _tv.TextureVisuals(uv=uv)
+                            print(f"[BD Blender] TextureVisuals UV-only (PIL unavailable: {_pe})")
+
+                    # Do NOT copy vertex_attributes (incl. COLOR_0) into the temp GLB.
+                    # Blender's GLB importer crashes when COLOR_0 (VEC4) and TEXCOORD_0
+                    # are both present. Vertex colors go via BLENDER_ARG_VCOL_PATH instead.
+
+                    mesh_to_export = clean
+                    uv_info = f"{len(uv)} UV coords" if uv is not None else "no UV"
+                    print(f"[BD Blender] Rebuilt TextureVisuals for GLB ({uv_info})")
+            except Exception as _e:
+                print(f"[BD Blender] Note: GLB normalise failed ({_e}), using original mesh")
 
         # Export - try requested format first, fall back to PLY if it fails
         try:
-            mesh.export(path, file_type=file_type)
+            mesh_to_export.export(path, file_type=file_type)
             file_size = os.path.getsize(path)
 
             # Verify export worked (file should have content)
@@ -503,25 +565,48 @@ class BlenderNodeMixin:
             else:
                 print(f"[BD Blender] UV count mismatch after concat: {len(extracted_uvs)} vs {num_verts} verts")
 
-        # Apply extracted colors (may need to re-apply after TextureVisuals)
+        # Apply extracted colors — store in vertex_attributes['COLOR_0'] rather than
+        # setting vertex_colors on a TextureVisuals mesh. Setting vertex_colors on
+        # TextureVisuals creates inconsistent state that causes face-expansion on next export.
         has_colors = False
         if hasattr(mesh, 'visual') and mesh.visual is not None:
-            if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
-                colors = mesh.visual.vertex_colors
-                if colors is not None and len(colors) > 0:
-                    has_colors = True
-                    print(f"[BD Blender] Output mesh has {len(colors)} vertex colors")
+            try:
+                from trimesh.visual import TextureVisuals as _TV
+                if not isinstance(mesh.visual, _TV):
+                    # Only safely read vertex_colors from non-TextureVisuals
+                    if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                        colors = mesh.visual.vertex_colors
+                        if colors is not None and len(colors) > 0:
+                            has_colors = True
+                            print(f"[BD Blender] Output mesh has {len(colors)} vertex colors")
+            except Exception:
+                pass
+        # Also check vertex_attributes
+        if not has_colors and hasattr(mesh, 'vertex_attributes') and len(mesh.vertex_attributes) > 0:
+            has_colors = True
+            print(f"[BD Blender] Output mesh has vertex colors in vertex_attributes")
 
         if not has_colors and extracted_colors is not None:
             if len(extracted_colors) == num_verts:
-                # If we have TextureVisuals, we can still set vertex_colors
+                # Store colors in vertex_attributes to avoid TextureVisuals inconsistency
                 if hasattr(mesh, 'visual'):
-                    mesh.visual.vertex_colors = extracted_colors
+                    from trimesh.visual import TextureVisuals as _TV2
+                    if isinstance(mesh.visual, _TV2):
+                        # TextureVisuals: use vertex_attributes to avoid computed-property side-effects
+                        mesh.vertex_attributes['COLOR_0'] = np.array(extracted_colors)
+                        has_colors = True
+                        print(f"[BD Blender] Applied {len(extracted_colors)} colors to vertex_attributes['COLOR_0']")
+                    else:
+                        # ColorVisuals or other visual — directly set vertex_colors
+                        mesh.visual.vertex_colors = extracted_colors
+                        has_colors = True
+                        print(f"[BD Blender] Applied {len(extracted_colors)} extracted vertex colors")
                 else:
+                    # No visual at all — create ColorVisuals
                     from trimesh.visual import ColorVisuals
                     mesh.visual = ColorVisuals(vertex_colors=extracted_colors)
-                has_colors = True
-                print(f"[BD Blender] Applied {len(extracted_colors)} extracted vertex colors")
+                    has_colors = True
+                    print(f"[BD Blender] Applied {len(extracted_colors)} extracted vertex colors")
 
         if not has_colors:
             print("[BD Blender] WARNING: Output mesh has NO vertex colors!")

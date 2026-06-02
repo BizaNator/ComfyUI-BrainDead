@@ -7,11 +7,13 @@ BD_ExportMeshWithColors - Export mesh with vertex colors to GLB/PLY/OBJ
 import os
 from glob import glob
 
+import numpy as np
 from comfy_api.latest import io
 
 # Check for optional trimesh support
 try:
     import trimesh
+    import trimesh.visual
     HAS_TRIMESH = True
 except ImportError:
     HAS_TRIMESH = False
@@ -103,19 +105,57 @@ class BD_ExportMeshWithColors(io.ComfyNode):
         file_path = os.path.join(output_dir, final_filename)
 
         try:
-            # Check if mesh has vertex colors
-            has_colors = hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors')
+            # Extract vertex colors — check vertex_attributes first (safe for TextureVisuals meshes).
+            # Accessing TextureVisuals.vertex_colors triggers rasterization and can silently
+            # convert the visual to ColorVisuals, destroying UV on the mesh object.
+            vc = None
             color_info = ""
-            if has_colors and mesh.visual.vertex_colors is not None:
-                color_info = f" with {len(mesh.visual.vertex_colors)} vertex colors"
-            elif hasattr(mesh, 'vertex_colors') and mesh.vertex_colors is not None:
-                color_info = f" with {len(mesh.vertex_colors)} vertex colors"
+            if hasattr(mesh, 'vertex_attributes') and 'COLOR_0' in mesh.vertex_attributes:
+                raw = np.array(mesh.vertex_attributes['COLOR_0'])
+                if len(raw) == len(mesh.vertices):
+                    vc = raw
+                    color_info = f" with {len(vc)} vertex colors (vertex_attributes)"
+            if vc is None and hasattr(mesh, 'visual') and mesh.visual is not None:
+                try:
+                    import trimesh.visual as _tv_ex
+                    if not isinstance(mesh.visual, _tv_ex.TextureVisuals):
+                        raw = mesh.visual.vertex_colors
+                        if raw is not None and len(raw) == len(mesh.vertices):
+                            vc = np.array(raw)
+                            color_info = f" with {len(vc)} vertex colors"
+                except Exception:
+                    pass
 
             print(f"[BD Export Mesh] Exporting to {file_path}{color_info}...")
 
             # Export based on format
             if format == "glb":
-                mesh.export(file_path, file_type='glb')
+                # Export with both TEXCOORD_0 (UV) and COLOR_0 (vertex colors).
+                # DO NOT use ColorVisuals — it destroys UV. Use vertex_attributes instead.
+                export_mesh = trimesh.Trimesh(
+                    vertices=mesh.vertices.copy(),
+                    faces=mesh.faces.copy(),
+                    process=False,
+                )
+                import trimesh.visual as _tv_ex2
+                if hasattr(mesh, "visual") and isinstance(mesh.visual, _tv_ex2.TextureVisuals):
+                    try:
+                        _uv = mesh.visual.uv
+                        if _uv is not None and len(_uv) == len(export_mesh.vertices):
+                            import trimesh.visual.material as _mat_ex
+                            import io as _io_ex
+                            from PIL import Image as _PILex
+                            _buf = _io_ex.BytesIO()
+                            _PILex.new("RGBA", (1, 1), (255, 255, 255, 255)).save(_buf, format="PNG")
+                            _buf.seek(0)
+                            _mat = _mat_ex.PBRMaterial(baseColorTexture=_PILex.open(_buf))
+                            export_mesh.visual = _tv_ex2.TextureVisuals(uv=_uv.copy(), material=_mat)
+                            print("[BD Export Mesh] TextureVisuals with 1x1 placeholder — TEXCOORD_0 will be written")
+                    except Exception as _e:
+                        print("[BD Export Mesh] UV copy failed: " + str(_e))
+                if vc is not None:
+                    export_mesh.vertex_attributes["COLOR_0"] = vc
+                export_mesh.export(file_path, file_type='glb')
             elif format == "ply":
                 mesh.export(file_path, file_type='ply')
             elif format == "obj":

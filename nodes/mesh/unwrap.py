@@ -86,6 +86,11 @@ obj.select_set(True)
 
 log(f"[BD UV Unwrap] Mesh: {len(obj.data.vertices)} verts, {len(obj.data.polygons)} faces")
 
+# Force smooth shading — PLY input has no stored normals so Blender computes smooth
+# by default, but be explicit. Without this, any flat-shaded mesh would cause
+# Blender's GLTF exporter to write one vertex per face-corner (3.0 boundary/face ratio).
+bpy.ops.object.shade_smooth()
+
 # Check for vertex colors
 has_colors = len(obj.data.color_attributes) > 0
 if has_colors:
@@ -183,27 +188,61 @@ if not obj.data.materials:
     obj.data.materials.append(mat)
     log("[BD UV Unwrap] Added material with vertex color input")
 
-# Export - GLB handles coordinate conversion automatically
-# GLB import converts Y-up to Z-up, export with export_yup=True converts back
+# Save UV sidecar BEFORE removing UV layers from the mesh
+import numpy as np
+uv_sidecar_path = OUTPUT_PATH + '.uvs.npy'
+uv_layers = obj.data.uv_layers
+if uv_layers and uv_layers.active:
+    uv_data = uv_layers.active.data
+    uvs_np = np.array([d.uv[:] for d in uv_data], dtype=np.float32)
+    np.save(uv_sidecar_path, uvs_np)
+    log(f"[BD UV Unwrap] Saved UV sidecar: {len(uvs_np)} UVs → {uv_sidecar_path}")
+else:
+    log("[BD UV Unwrap] WARNING: No UV data to save in sidecar")
+
+# Remove UV layers from mesh before PLY export.
+# UV data is stored as CORNER (per-loop) domain in Blender. Even though PLY
+# doesn't carry UV coordinates, the CORNER-domain attribute forces Blender's
+# PLY exporter to split vertices at UV seam boundaries (2,442 → 7,249).
+# The UV is already saved to the sidecar, so remove it here.
+for layer in list(obj.data.uv_layers):
+    obj.data.uv_layers.remove(layer)
+log("[BD UV Unwrap] UV layers removed before PLY export (UV in sidecar)")
+
+# Clear custom split normals — these are stored per-loop and would also force
+# vertex splitting in any format that serialises normals (GLB, FBX, etc.)
+try:
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    log("[BD UV Unwrap] Cleared custom split normals")
+except Exception as e:
+    log(f"[BD UV Unwrap] Note: {e}")
+    try:
+        bpy.ops.object.mode_set(mode='OBJECT')
+    except Exception:
+        pass
+
+# Export mesh — PLY carries geometry + vertex colors, no UV (UV is in sidecar)
 ext_out = os.path.splitext(OUTPUT_PATH)[1].lower()
 log(f"[BD UV Unwrap] Exporting to {ext_out}...")
 
 if ext_out == '.ply':
-    bpy.ops.wm.ply_export(filepath=OUTPUT_PATH, export_colors='SRGB', ascii_format=True)
+    bpy.ops.wm.ply_export(filepath=OUTPUT_PATH, export_colors='SRGB', ascii_format=False)
 elif ext_out == '.obj':
     bpy.ops.wm.obj_export(filepath=OUTPUT_PATH, export_uv=True, export_colors=True)
 elif ext_out in ['.glb', '.gltf']:
-    # Ensure UVs are exported - use explicit parameters
     bpy.ops.export_scene.gltf(
         filepath=OUTPUT_PATH,
         export_format='GLB',
-        export_attributes=True,  # Vertex colors
-        export_texcoords=True,   # UVs (TEXCOORD_0)
-        export_normals=True,     # Normals
-        export_materials='EXPORT',  # Export materials (needed for trimesh to load UVs!)
-        export_yup=True,         # Convert Z-up (Blender) back to Y-up (GLTF standard)
+        export_attributes=True,
+        export_texcoords=True,
+        export_normals=True,
+        export_materials='EXPORT',
+        export_yup=True,
     )
-    log(f"[BD UV Unwrap] GLB exported with material + texcoords")
+    log(f"[BD UV Unwrap] GLB exported with texcoords + normals")
 
 log(f"[BD UV Unwrap] Saved to {OUTPUT_PATH}")
 log("[BD UV Unwrap] COMPLETE")
@@ -351,6 +390,22 @@ Methods:
         else:
             return cls._unwrap_blender(mesh, seams_from_sharp, angle_limit, island_margin, timeout)
 
+    @staticmethod
+    def _loop_uv_to_per_vertex(uvs_loop: np.ndarray, faces: np.ndarray, n_verts: int) -> np.ndarray:
+        """
+        Convert per-loop (face-corner) UV array to per-vertex UV without splitting geometry.
+
+        uvs_loop: (n_faces*3, 2) — one UV per face-corner, ordered by face then corner
+        faces:    (n_faces, 3)   — vertex indices
+        returns:  (n_verts, 2)   — per-vertex UV (first-wins at seam boundaries)
+        """
+        uvs_flat = uvs_loop.reshape(-1, 2)
+        corners = faces.reshape(-1)          # (n_faces*3,) — vert index per loop
+        _, first_idx = np.unique(corners, return_index=True)
+        per_vert = np.zeros((n_verts, 2), dtype=np.float32)
+        per_vert[corners[first_idx]] = uvs_flat[first_idx]
+        return per_vert
+
     @classmethod
     def _unwrap_xatlas(cls, mesh, island_margin: float) -> io.NodeOutput:
         """GPU-accelerated UV unwrap using CuMesh/xatlas."""
@@ -363,19 +418,16 @@ Methods:
         print("[BD UV Unwrap] Using xatlas GPU unwrap (cumesh)...")
 
         try:
-            # Convert to tensors (int32 for faces, as CuMesh expects)
             vertices = torch.tensor(mesh.vertices, dtype=torch.float32).cuda()
             faces = torch.tensor(mesh.faces, dtype=torch.int32).cuda()
 
-            # Initialize CuMesh
-            cumesh = CuMesh.CuMesh()
-            cumesh.init(vertices, faces)
+            cumesh_obj = CuMesh.CuMesh()
+            cumesh_obj.init(vertices, faces)
 
-            # Run xatlas UV unwrap
             print("[BD UV Unwrap] Running xatlas unwrap...")
-            out_vertices, out_faces, out_uvs, out_vmaps = cumesh.uv_unwrap(
+            out_vertices, out_faces, out_uvs, out_vmaps = cumesh_obj.uv_unwrap(
                 compute_charts_kwargs={
-                    'threshold_cone_half_angle_rad': 1.57,  # ~90 degrees
+                    'threshold_cone_half_angle_rad': 1.57,
                     'refine_iterations': 0,
                     'global_iterations': 1,
                     'smooth_strength': 1,
@@ -384,47 +436,48 @@ Methods:
                 verbose=True,
             )
 
-            # Convert to numpy
-            out_vertices_np = out_vertices.cpu().numpy()
             out_faces_np = out_faces.cpu().numpy()
             out_uvs_np = out_uvs.cpu().numpy()
+            out_uvs_np[:, 1] = 1 - out_uvs_np[:, 1]  # Flip V for OpenGL
 
-            # Flip V coordinate for OpenGL compatibility
-            out_uvs_np[:, 1] = 1 - out_uvs_np[:, 1]
+            # Face-corner UVs for the original face ordering (face count unchanged)
+            face_uv = out_uvs_np[out_faces_np]  # (n_faces, 3, 2)
 
-            # Create new mesh with UVs
-            # Note: UV unwrap may change topology (split vertices at seams)
+            # Return ORIGINAL mesh geometry — no vertex splitting
             result = trimesh.Trimesh(
-                vertices=out_vertices_np,
-                faces=out_faces_np,
+                vertices=mesh.vertices.copy(),
+                faces=mesh.faces.copy(),
                 process=False,
             )
 
-            # Transfer vertex colors if present (using vmap to handle split vertices)
-            if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors'):
-                if mesh.visual.vertex_colors is not None:
-                    orig_colors = mesh.visual.vertex_colors
-                    # Map original colors to new vertices via vmap
-                    vmaps_np = out_vmaps.cpu().numpy()
-                    new_colors = orig_colors[vmaps_np]
-                    result.visual.vertex_colors = new_colors
-
-            # Attach UVs as TextureVisuals
+            # Extract vertex colors from incoming mesh — don't touch TextureVisuals.vertex_colors
+            # (it's a computed rasterization property; its setter replaces visual with ColorVisuals)
             from trimesh.visual import TextureVisuals
-            result.visual = TextureVisuals(uv=out_uvs_np)
+            vc_to_transfer = None
+            if hasattr(mesh, 'vertex_attributes') and 'COLOR_0' in mesh.vertex_attributes:
+                vc_to_transfer = np.array(mesh.vertex_attributes['COLOR_0'])
+            elif hasattr(mesh, 'visual') and mesh.visual is not None and not isinstance(mesh.visual, TextureVisuals):
+                vc = mesh.visual.vertex_colors
+                if vc is not None and len(vc) > 0:
+                    vc_to_transfer = np.array(vc)
 
-            # Re-attach vertex colors after setting TextureVisuals
-            if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors'):
-                if mesh.visual.vertex_colors is not None:
-                    orig_colors = mesh.visual.vertex_colors
-                    vmaps_np = out_vmaps.cpu().numpy()
-                    result.visual.vertex_colors = orig_colors[vmaps_np]
+            # Per-vertex UV via first-wins (no splits)
+            per_vert_uv = cls._loop_uv_to_per_vertex(
+                face_uv.reshape(-1, 2), mesh.faces, len(mesh.vertices)
+            )
+            result.visual = TextureVisuals(uv=per_vert_uv)
+            # Store colors in vertex_attributes — NOT visual.vertex_colors (that setter kills UV)
+            if vc_to_transfer is not None:
+                result.vertex_attributes['COLOR_0'] = vc_to_transfer
 
-            status = f"UV unwrapped (xatlas): {len(result.vertices):,} verts, {len(out_uvs_np)} UVs"
+            # Store face-corner UV in metadata for downstream baking nodes
+            result.metadata['face_uv'] = face_uv.astype(np.float32)
+
+            status = (f"UV unwrapped (xatlas): {len(mesh.vertices):,} verts (no split) "
+                      f"| {len(out_faces_np):,} faces | {len(per_vert_uv)} UVs")
             print(f"[BD UV Unwrap] {status}")
 
-            # Cleanup
-            del vertices, faces, cumesh, out_vertices, out_faces, out_uvs, out_vmaps
+            del vertices, faces, cumesh_obj, out_vertices, out_faces, out_uvs, out_vmaps
             import gc
             gc.collect()
             torch.cuda.empty_cache()
@@ -482,41 +535,44 @@ Methods:
                 verbose=True,
             )
 
-            # Convert to numpy
-            out_vertices_np = out_vertices.cpu().numpy()
             out_faces_np = out_faces.cpu().numpy()
             out_uvs_np = out_uvs.cpu().numpy()
-            out_vmaps_np = out_vmaps.cpu().numpy()
+            out_uvs_np[:, 1] = 1 - out_uvs_np[:, 1]  # Flip V for glTF
 
-            # Flip V coordinate for glTF convention
-            out_uvs_np[:, 1] = 1 - out_uvs_np[:, 1]
+            # Face-corner UVs for the original face ordering
+            face_uv = out_uvs_np[out_faces_np]  # (n_faces, 3, 2)
 
-            # Create result mesh with UVs
+            # Return ORIGINAL mesh geometry — no vertex splitting
             result = trimesh.Trimesh(
-                vertices=out_vertices_np,
-                faces=out_faces_np,
+                vertices=mesh.vertices.copy(),
+                faces=mesh.faces.copy(),
                 process=False,
             )
 
-            # Transfer vertex colors if present
-            if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors'):
-                if mesh.visual.vertex_colors is not None:
-                    orig_colors = mesh.visual.vertex_colors
-                    new_colors = orig_colors[out_vmaps_np]
-                    result.visual.vertex_colors = new_colors
-
-            # Attach UVs
+            # Extract vertex colors from incoming mesh — don't touch TextureVisuals.vertex_colors
             from trimesh.visual import TextureVisuals
-            result.visual = TextureVisuals(uv=out_uvs_np)
+            vc_to_transfer = None
+            if hasattr(mesh, 'vertex_attributes') and 'COLOR_0' in mesh.vertex_attributes:
+                vc_to_transfer = np.array(mesh.vertex_attributes['COLOR_0'])
+            elif hasattr(mesh, 'visual') and mesh.visual is not None and not isinstance(mesh.visual, TextureVisuals):
+                vc = mesh.visual.vertex_colors
+                if vc is not None and len(vc) > 0:
+                    vc_to_transfer = np.array(vc)
 
-            # Transfer normals if present
-            if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
-                result.vertex_normals = np.array(mesh.vertex_normals)[out_vmaps_np]
+            # Per-vertex UV via first-wins (no splits)
+            per_vert_uv = cls._loop_uv_to_per_vertex(
+                face_uv.reshape(-1, 2), mesh.faces, len(mesh.vertices)
+            )
+            result.visual = TextureVisuals(uv=per_vert_uv)
+            if vc_to_transfer is not None:
+                result.vertex_attributes['COLOR_0'] = vc_to_transfer
 
-            status = f"UV unwrapped (CuMesh): {len(result.vertices):,} verts, {len(out_uvs_np)} UVs | refine={refine_iterations}, global={global_iterations}"
+            result.metadata['face_uv'] = face_uv.astype(np.float32)
+
+            status = (f"UV unwrapped (CuMesh): {len(mesh.vertices):,} verts (no split) "
+                      f"| {len(out_faces_np):,} faces | refine={refine_iterations}, global={global_iterations}")
             print(f"[BD UV Unwrap] {status}")
 
-            # Cleanup
             del vertices, faces, cu, out_vertices, out_faces, out_uvs, out_vmaps
             import gc
             gc.collect()
@@ -546,17 +602,25 @@ Methods:
         input_path = None
         output_path = None
 
-        # Store original vertex colors for re-transfer if needed
+        # Store original vertex colors for re-transfer if needed.
+        # Don't access TextureVisuals.vertex_colors — check vertex_attributes first.
         orig_colors = None
-        if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors'):
-            if mesh.visual.vertex_colors is not None:
-                orig_colors = mesh.visual.vertex_colors.copy()
+        from trimesh.visual import TextureVisuals as _TV
+        if hasattr(mesh, 'vertex_attributes') and 'COLOR_0' in mesh.vertex_attributes:
+            orig_colors = np.array(mesh.vertex_attributes['COLOR_0'])
+            print(f"[BD UV Unwrap] Stored {len(orig_colors)} vertex colors (from vertex_attributes)")
+        elif hasattr(mesh, 'visual') and mesh.visual is not None and not isinstance(mesh.visual, _TV):
+            vc = mesh.visual.vertex_colors
+            if vc is not None and len(vc) > 0:
+                orig_colors = np.array(vc)
                 print(f"[BD UV Unwrap] Stored {len(orig_colors)} vertex colors for re-transfer")
 
         try:
-            # Use GLB for input/output - supports UVs natively
-            input_path = cls._mesh_to_temp_file(mesh, suffix='.glb')
-            fd, output_path = tempfile.mkstemp(suffix='.glb')
+            # Both input and output are PLY — PLY has no stored normals so Blender
+            # computes smooth normals by default, and PLY export writes geometry only
+            # (no UV seam vertex splits). UVs travel separately as a numpy sidecar.
+            input_path = cls._mesh_to_temp_file(mesh, suffix='.ply')
+            fd, output_path = tempfile.mkstemp(suffix='.ply')
             os.close(fd)
 
             print(f"[BD UV Unwrap] Running Blender Smart UV Project...")
@@ -582,47 +646,80 @@ Methods:
                     print(f"[BD UV Unwrap] Log tail:\n{error_context}")
                 return io.NodeOutput(mesh, f"ERROR: {message}")
 
-            # Load result (GLB preserves UVs)
+            # Load result — PLY preserves vertex count (no UV-seam vertex splits)
             result_mesh = cls._load_mesh_from_file(output_path)
 
-            # Check if UVs were created
+            n_result_verts = len(result_mesh.vertices)
+            n_result_faces = len(result_mesh.faces)
+
+            # Load UV sidecar (per-loop, shape (n_faces*3, 2))
+            uv_sidecar = output_path + '.uvs.npy'
             has_uvs = False
-            if hasattr(result_mesh, 'visual') and hasattr(result_mesh.visual, 'uv'):
-                if result_mesh.visual.uv is not None and len(result_mesh.visual.uv) > 0:
-                    has_uvs = True
+            uvs_loop = None
+            if os.path.exists(uv_sidecar):
+                try:
+                    uvs_loop = np.load(uv_sidecar)
+                    expected = n_result_faces * 3
+                    if len(uvs_loop) == expected:
+                        # Convert per-loop → per-vertex without splitting geometry
+                        face_uv = uvs_loop.reshape(n_result_faces, 3, 2).astype(np.float32)
+                        per_vert_uv = cls._loop_uv_to_per_vertex(
+                            uvs_loop, result_mesh.faces, n_result_verts
+                        )
+                        from trimesh.visual import TextureVisuals
+                        # Extract colors before replacing visual — don't access TextureVisuals.vertex_colors
+                        existing_vc = None
+                        if hasattr(result_mesh, 'vertex_attributes') and 'COLOR_0' in result_mesh.vertex_attributes:
+                            existing_vc = np.array(result_mesh.vertex_attributes['COLOR_0'])
+                        elif (hasattr(result_mesh.visual, 'vertex_colors') and
+                              not isinstance(result_mesh.visual, TextureVisuals)):
+                            vc = result_mesh.visual.vertex_colors
+                            if vc is not None and len(vc) > 0:
+                                existing_vc = np.array(vc)
+                        result_mesh.visual = TextureVisuals(uv=per_vert_uv)
+                        # Store colors in vertex_attributes — visual.vertex_colors setter kills UV
+                        if existing_vc is not None:
+                            result_mesh.vertex_attributes['COLOR_0'] = existing_vc
+                        result_mesh.metadata['face_uv'] = face_uv
+                        has_uvs = True
+                        print(f"[BD UV Unwrap] UVs loaded: {len(uvs_loop)} loops → {n_result_verts} per-vertex (no split)")
+                    else:
+                        print(f"[BD UV Unwrap] UV sidecar size mismatch: {len(uvs_loop)} vs expected {expected}")
+                except Exception as e:
+                    print(f"[BD UV Unwrap] UV sidecar load failed: {e}")
+                finally:
+                    if os.path.exists(uv_sidecar):
+                        os.remove(uv_sidecar)
 
-            # Check if vertex colors survived
-            has_colors = False
-            if hasattr(result_mesh, 'visual') and hasattr(result_mesh.visual, 'vertex_colors'):
-                if result_mesh.visual.vertex_colors is not None:
-                    has_colors = True
-
-            # Re-transfer vertex colors from original if lost
+            # Restore vertex colors if lost during PLY roundtrip.
+            # After UV assignment, visual is TextureVisuals — use vertex_attributes for colors.
+            has_colors = (
+                (hasattr(result_mesh, 'vertex_attributes') and 'COLOR_0' in result_mesh.vertex_attributes) or
+                (hasattr(result_mesh, 'visual') and result_mesh.visual is not None and
+                 not isinstance(result_mesh.visual, TextureVisuals) and
+                 hasattr(result_mesh.visual, 'vertex_colors') and result_mesh.visual.vertex_colors is not None)
+            )
             colors_transferred = False
             if not has_colors and orig_colors is not None:
-                print("[BD UV Unwrap] Vertex colors lost - re-transferring from original...")
-                # If vertex count matches, direct copy
                 if len(result_mesh.vertices) == len(orig_colors):
-                    result_mesh.visual.vertex_colors = orig_colors
+                    result_mesh.vertex_attributes['COLOR_0'] = orig_colors
                     colors_transferred = True
-                    print(f"[BD UV Unwrap] Direct color transfer: {len(orig_colors)} colors")
                 else:
-                    # Vertex count changed (UV seams split vertices) - use nearest neighbor
                     try:
                         from scipy.spatial import cKDTree
                         tree = cKDTree(mesh.vertices)
                         _, indices = tree.query(result_mesh.vertices, k=1)
-                        result_mesh.visual.vertex_colors = orig_colors[indices]
+                        result_mesh.vertex_attributes['COLOR_0'] = orig_colors[indices]
                         colors_transferred = True
-                        print(f"[BD UV Unwrap] Nearest-neighbor color transfer: {len(result_mesh.vertices)} verts")
                     except ImportError:
-                        print("[BD UV Unwrap] Warning: scipy not available for color transfer")
+                        print("[BD UV Unwrap] Warning: scipy not available for color restore")
 
-            status = f"UV unwrapped (Blender): {len(result_mesh.vertices):,} verts"
-            if has_uvs:
-                status += f" | {len(result_mesh.visual.uv)} UVs"
+            status = (f"UV unwrapped (Blender): {n_result_verts:,} verts (no split) "
+                      f"| {n_result_faces:,} faces")
+            if has_uvs and uvs_loop is not None:
+                status += f" | {len(uvs_loop)} UV loops"
             if has_colors or colors_transferred:
-                status += " | colors preserved" if has_colors else " | colors re-transferred"
+                status += " | colors ok"
             if seams_from_sharp:
                 status += " | seams from sharp"
 

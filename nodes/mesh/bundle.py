@@ -157,12 +157,26 @@ Textures are extracted from mesh material if not provided explicitly.""",
         if mesh is None:
             return io.NodeOutput(None, "ERROR: No input mesh")
 
-        # Extract vertex colors from native mesh.visual.vertex_colors
+        # Extract vertex colors — do NOT access TextureVisuals.vertex_colors directly.
+        # On a TextureVisuals mesh (e.g. output of OvoxelTextureBake), that property
+        # is a computed rasterization that mutates mesh.visual to ColorVisuals in-place,
+        # destroying the UV layer for all downstream nodes.
+        # Safe access order: vertex_attributes[COLOR_0] first, then visual.vertex_colors
+        # only when visual is NOT TextureVisuals.
         vertex_colors = None
-        if hasattr(mesh, 'visual') and hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
-            vc = mesh.visual.vertex_colors
-            if isinstance(vc, np.ndarray) and len(vc) > 0:
-                vertex_colors = vc if vc.dtype == np.uint8 else (vc * 255).clip(0, 255).astype(np.uint8)
+        try:
+            import trimesh.visual as _tv_bundle
+            if hasattr(mesh, 'vertex_attributes') and 'COLOR_0' in mesh.vertex_attributes:
+                raw = np.array(mesh.vertex_attributes['COLOR_0'])
+                if len(raw) > 0:
+                    vertex_colors = raw if raw.dtype == np.uint8 else (raw * 255).clip(0, 255).astype(np.uint8)
+            elif (hasattr(mesh, 'visual') and mesh.visual is not None
+                    and not isinstance(mesh.visual, _tv_bundle.TextureVisuals)):
+                vc = mesh.visual.vertex_colors
+                if vc is not None and isinstance(vc, np.ndarray) and len(vc) > 0:
+                    vertex_colors = vc if vc.dtype == np.uint8 else (vc * 255).clip(0, 255).astype(np.uint8)
+        except Exception:
+            pass
 
         # Convert explicit texture inputs
         tex_diffuse = _image_tensor_to_numpy(diffuse)

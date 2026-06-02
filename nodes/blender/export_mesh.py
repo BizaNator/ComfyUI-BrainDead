@@ -62,10 +62,59 @@ if obj is None or obj.type != 'MESH' or obj.data is None:
 bpy.context.view_layer.objects.active = obj
 obj.select_set(True)
 
+# Log vert count immediately after import so we can tell whether the split
+# is coming from the input GLB (trimesh wrote it already expanded) or from export.
+n_verts_imported = len(obj.data.vertices)
+n_faces_imported = len(obj.data.polygons)
+log(f"[BD ExportMesh] Imported: {n_verts_imported} verts, {n_faces_imported} faces "
+    f"(ratio {n_verts_imported / max(n_faces_imported, 1):.3f})")
+log(f"[BD ExportMesh] has_custom_normals={obj.data.has_custom_normals}")
+
+# Force smooth shading so vertices can be shared on GLTF export.
+# flat_shading=True below will override this intentionally.
+bpy.ops.object.shade_smooth()
+
+# Clear custom split normals (e.g., from Pixal3D / trimesh GLB with per-face normals).
+# Per-loop custom normals override smooth shading in Blender's GLTF exporter and
+# force one vertex per face-corner (ratio = 3.0) regardless of shading mode.
+# free_normals_split() was removed in Blender 5.0 — fall back to edit-mode operator.
+# Clear custom split normals — three methods, covering old and new Blender APIs.
+# Blender 5.x stores them as a CORNER/INT16_2D attribute named 'custom_normal';
+# free_normals_split() and the edit-mode operator both target the old structure only.
+mesh_data = obj.data
+
+# Method 1: Blender 5.x — direct attribute removal
+if 'custom_normal' in mesh_data.attributes:
+    mesh_data.attributes.remove(mesh_data.attributes['custom_normal'])
+    log(f"[BD ExportMesh] Removed custom_normal attribute (Blender 5.x path)")
+
+# Method 2: old API — free_normals_split() (Blender 4.x)
+if mesh_data.has_custom_normals:
+    try:
+        mesh_data.free_normals_split()
+        log(f"[BD ExportMesh] Cleared via free_normals_split()")
+    except AttributeError:
+        pass  # Removed in Blender 5.x — handled above
+
+# Method 3: edit-mode operator belt-and-suspenders
+try:
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    log(f"[BD ExportMesh] Cleared via edit-mode operator")
+except Exception as _e:
+    try:
+        bpy.ops.object.mode_set(mode='OBJECT')
+    except Exception:
+        pass
+
+log(f"[BD ExportMesh] has_custom_normals after clear: {mesh_data.has_custom_normals}")
+
 n_verts = len(obj.data.vertices)
 n_loops = len(obj.data.loops)
 n_faces = len(obj.data.polygons)
-log(f"[BD ExportMesh] Mesh: {n_verts} verts, {n_faces} faces, {n_loops} loops")
+log(f"[BD ExportMesh] After normal clear: {n_verts} verts, {n_faces} faces, {n_loops} loops")
 log(f"[BD ExportMesh] Materials: {len(obj.data.materials)}")
 
 # Determine color source: pre-computed vertex colors (.npy) or color_field (.npz)
@@ -384,9 +433,16 @@ export_kwargs = {
     'export_format': 'GLB',
     'export_attributes': True,
     'export_yup': True,
+    # export_normals=False: Blender 5.x GLTF exporter writes explicit normals as a
+    # CORNER/INT16_2D 'custom_normal' attribute. trimesh reads per-loop normals and
+    # expands the mesh to 3× vertices (ratio 3.0). Skipping normals lets the engine
+    # compute them at runtime — correct for stylized meshes and avoids the expansion.
+    'export_normals': False,
+    # export_texcoords=True: ensure TEXCOORD_0 is written if a UV layer exists.
+    'export_texcoords': True,
 }
 
-# Try Blender 5.0+ export params
+# Try Blender 5.0+ export params (vertex color modes vary by Blender version)
 export_attempts = [
     {'export_vertex_color': 'ACTIVE'},
     {'export_vertex_color': 'MATERIAL'},

@@ -174,7 +174,7 @@ class BD_FaceSkinRefine(io.ComfyNode):
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="BD_FaceSkinRefine",
-            display_name="BD Face Skin Refine",
+            display_name="BD MP Face Refine",
             category="🧠BrainDead/Segmentation",
             description=(
                 "Refine MediaPipe face feature masks using SAM3 segments, then compute "
@@ -509,4 +509,4 @@ class BD_FaceSkinRefine(io.ComfyNode):
 
 FACE_SKIN_REFINE_V3_NODES = [BD_FaceSkinRefine]
 FACE_SKIN_REFINE_NODES = {"BD_FaceSkinRefine": BD_FaceSkinRefine}
-FACE_SKIN_REFINE_DISPLAY_NAMES = {"BD_FaceSkinRefine": "BD Face Skin Refine"}
+FACE_SKIN_REFINE_DISPLAY_NAMES = {"BD_FaceSkinRefine": "BD MP Face Refine"}

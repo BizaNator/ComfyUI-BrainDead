@@ -253,10 +253,19 @@ Modes:
                     process=False
                 )
 
-                new_mesh.visual = trimesh.visual.ColorVisuals(
-                    mesh=new_mesh,
-                    vertex_colors=vertex_colors_uint8
-                )
+
+                # Preserve UV from input mesh if it has TextureVisuals.
+                # Setting ColorVisuals here would destroy any UV layer set by BD_UVUnwrap
+                # upstream, making OvoxelTextureBake (and TEXCOORD_0 in export) impossible.
+                import trimesh.visual as _tv_s
+                if hasattr(mesh, 'visual') and isinstance(mesh.visual, _tv_s.TextureVisuals):
+                    try:
+                        _uv = mesh.visual.uv
+                        if _uv is not None and len(_uv) == len(new_mesh.vertices):
+                            new_mesh.visual = _tv_s.TextureVisuals(uv=_uv.copy())
+                    except Exception:
+                        pass
+                new_mesh.vertex_attributes['COLOR_0'] = vertex_colors_uint8
 
                 if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
                     new_mesh.vertex_normals = mesh.vertex_normals.copy()
@@ -552,10 +561,19 @@ Modes:
                     process=False
                 )
 
-                new_mesh.visual = trimesh.visual.ColorVisuals(
-                    mesh=new_mesh,
-                    vertex_colors=vertex_colors_uint8
-                )
+
+                # Preserve UV from input mesh if it has TextureVisuals.
+                # Setting ColorVisuals here would destroy any UV layer set by BD_UVUnwrap
+                # upstream, making OvoxelTextureBake (and TEXCOORD_0 in export) impossible.
+                import trimesh.visual as _tv_s
+                if hasattr(mesh, 'visual') and isinstance(mesh.visual, _tv_s.TextureVisuals):
+                    try:
+                        _uv = mesh.visual.uv
+                        if _uv is not None and len(_uv) == len(new_mesh.vertices):
+                            new_mesh.visual = _tv_s.TextureVisuals(uv=_uv.copy())
+                    except Exception:
+                        pass
+                new_mesh.vertex_attributes['COLOR_0'] = vertex_colors_uint8
 
                 if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
                     new_mesh.vertex_normals = mesh.vertex_normals.copy()
