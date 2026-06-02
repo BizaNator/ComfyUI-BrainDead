@@ -49,9 +49,10 @@ try:
 except ImportError:
     HAS_MEDIAPIPE = False
 
-# Shared mask generation — same code as BD MP Face Mask
+# Shared mask generation + robust detection — same code as BD MP Face Mask
 from .face_mp_shared import (
     _init_mp_idx, _masks_from_landmarks,
+    detect_landmarks_robust,
     _NOSE_INDICES,
 )
 
@@ -139,6 +140,13 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
                                default=0.3, min=0.1, max=1.0, step=0.05,
                                optional=True,
                                tooltip="Minimum face detection confidence. 0.3 works for stylized renders."),
+                io.Float.Input("min_face_span",
+                               default=0.35, min=0.0, max=1.0, step=0.05,
+                               optional=True,
+                               tooltip="Sanity guard: minimum plausible face span (fraction of frame, larger of "
+                                       "x/y). MediaPipe occasionally returns a degenerate tiny detection on a "
+                                       "frame-filling head; below this the node retries with a fresh landmarker "
+                                       "and padded copies before accepting. Set 0 to disable the guard."),
             ],
             outputs=[
                 io.Image.Output(display_name="image",
@@ -160,6 +168,7 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
         filename_stem: str = "",
         _model_path_deprecated: str = "",  # kept for workflow compat — value ignored
         detection_confidence: float = 0.3,
+        min_face_span: float = 0.35,
     ) -> io.NodeOutput:
 
         # Passthrough is always valid regardless of detection
@@ -218,29 +227,21 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
         H, W = frame.shape[:2]
         np_img = (frame[..., :3] * 255.0).clip(0, 255).astype(np.uint8)
 
-        # Run MediaPipe
+        # Run MediaPipe with the tiny-detection guard (retry + padded fallback).
+        # Coords come back normalized to THIS image regardless of which attempt won.
         _init_mp_idx()  # populate shared landmark index dicts
 
-        base_opts = _mpt.BaseOptions(model_asset_path=_MODEL_PATH)
-        opts = _mpv.FaceLandmarkerOptions(
-            base_options=base_opts,
-            running_mode=_mpv.RunningMode.IMAGE,
-            num_faces=1,
-            min_face_detection_confidence=detection_confidence,
-            min_face_presence_confidence=detection_confidence,
-            output_face_blendshapes=False,
-            output_facial_transformation_matrixes=False,
-        )
-
         try:
-            mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=np_img)
-            with _mpv.FaceLandmarker.create_from_options(opts) as landmarker:
-                result = landmarker.detect(mp_img)
+            lm, det_meta = detect_landmarks_robust(
+                np_img, _MODEL_PATH,
+                min_conf=detection_confidence,
+                min_span=min_face_span,
+            )
         except Exception as e:
             print(f"[BD MP FaceExport] WARNING: MediaPipe error: {e}")
             return _pass(0, "")
 
-        if not result.face_landmarks:
+        if lm is None:
             # No face — write minimal JSON + image (no mask PNG)
             img_path = json_path.replace(".json", "_image.png")
             try:
@@ -257,13 +258,25 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
                 "face_bbox": None,
                 "regions": _region_index_map(),
                 "image_file": os.path.basename(img_path),
+                "detection": det_meta,
             }
             with open(json_path, 'w') as f:
                 json.dump(no_face_data, f, indent=2)
             print(f"[BD MP FaceExport] WARNING: no face detected — wrote {json_path}, image saved")
             return _pass(0, json_path)
 
-        lm = result.face_landmarks[0]
+        if det_meta.get("quality") == "degraded":
+            # Every attempt stayed below min_face_span — the result is suspect.
+            # Write it anyway (so the run isn't lost) but make the failure LOUD.
+            print(f"[BD MP FaceExport] ERROR: degenerate detection — face span "
+                  f"{det_meta.get('span')} < min_face_span {min_face_span} after "
+                  f"{det_meta.get('attempts')} attempts. Mask will be UNDERSIZED. "
+                  f"Check that a full-color, full-resolution face is wired in. "
+                  f"({json_path})")
+        else:
+            print(f"[BD MP FaceExport] detection ok: span={det_meta.get('span')} "
+                  f"via {det_meta.get('method')} ({det_meta.get('attempts')} attempt(s))")
+
         n_lm = len(lm)
         # Landmarks: normalized [x, y], Z omitted
         landmarks_xy = [[round(p.x, 6), round(p.y, 6)] for p in lm]
@@ -287,6 +300,7 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
             "landmarks": landmarks_xy,
             "face_bbox": face_bbox,
             "regions": _region_index_map(),
+            "detection": det_meta,
         }
         with open(json_path, 'w') as f:
             json.dump(export_data, f, indent=2)

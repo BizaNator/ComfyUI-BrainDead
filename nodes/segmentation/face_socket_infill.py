@@ -51,6 +51,13 @@ except ImportError:
     HAS_MEDIAPIPE = False
     _FLC = None
 
+# Canonical feature-drawing helpers live in face_mp_shared so every BD MP node
+# (Export, Face Mask, Face Refine, Infill) draws identical tight zones. These were
+# originally defined here; the shared copies are byte-identical.
+from .face_mp_shared import (
+    _ellipse_k_xy, _fill_brow_envelope, _fill_lip_shape,
+)
+
 
 # ── Landmark index sets ───────────────────────────────────────────────────────
 
@@ -106,13 +113,6 @@ def _pts(indices: list[int], lm, H: int, W: int) -> np.ndarray:
     return np.array([[int(lm[i].x * W), int(lm[i].y * H)] for i in indices], dtype=np.int32)
 
 
-def _ellipse_k_xy(rx: int, ry: int) -> np.ndarray:
-    """Elliptical structuring element with independent x/y radii."""
-    rx = max(1, rx)
-    ry = max(1, ry)
-    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * rx + 1, 2 * ry + 1))
-
-
 def _fill_convex(pts: np.ndarray, H: int, W: int,
                  expand_x: int = 0, expand_y: int = 0) -> np.ndarray:
     out = np.zeros((H, W), dtype=np.uint8)
@@ -121,54 +121,6 @@ def _fill_convex(pts: np.ndarray, H: int, W: int,
         cv2.fillConvexPoly(out, hull, 255)
         if expand_x > 0 or expand_y > 0:
             out = cv2.dilate(out, _ellipse_k_xy(max(1, expand_x), max(1, expand_y)))
-    return out
-
-
-def _smooth_1d(arr: np.ndarray, window: int = 5) -> np.ndarray:
-    """Moving-average smooth of a 1-D float array.  Pads with edge values."""
-    if len(arr) < window:
-        return arr.copy()
-    kernel = np.ones(window, dtype=np.float32) / window
-    padded = np.pad(arr.astype(np.float32), window // 2, mode='edge')
-    return np.convolve(padded, kernel, mode='valid')[:len(arr)]
-
-
-def _fill_arch_band(pts: np.ndarray, H: int, W: int,
-                    expand_x: int = 0, expand_y: int = 0,
-                    band_half: int = 12) -> np.ndarray:
-    """
-    Fill a smooth arch band through sorted brow landmarks.
-
-    Two fixes vs. convex hull:
-    1. Arch shape — upper/lower edges follow the landmark curve instead of
-       bridging across the arch with a straight baseline.
-    2. Smooth Y — MediaPipe brow points have per-point Y jitter; a moving
-       average over the sorted sequence removes the squiggle.
-
-    band_half  — base half-height of the band in pixels (already scaled to
-                 native resolution by the caller).  expand_y adds on top.
-    """
-    out = np.zeros((H, W), dtype=np.uint8)
-    if len(pts) < 2:
-        return out
-
-    pts_sorted = pts[np.argsort(pts[:, 0])].astype(np.float32)
-
-    # Smooth Y to remove point-to-point jitter along the arch
-    window = min(len(pts_sorted), 5)
-    pts_sorted[:, 1] = _smooth_1d(pts_sorted[:, 1], window)
-
-    if expand_x > 0:
-        left  = pts_sorted[0].copy();  left[0]  = max(0.0, left[0] - expand_x)
-        right = pts_sorted[-1].copy(); right[0] = min(float(W - 1), right[0] + expand_x)
-        pts_sorted = np.vstack([left, pts_sorted, right])
-
-    half_h = max(band_half, expand_y)
-    upper  = pts_sorted.copy(); upper[:, 1] = np.clip(upper[:, 1] - half_h, 0, H - 1)
-    lower  = pts_sorted.copy(); lower[:, 1] = np.clip(lower[:, 1] + half_h, 0, H - 1)
-
-    band_poly = np.vstack([upper, lower[::-1]]).astype(np.int32).reshape((-1, 1, 2))
-    cv2.fillPoly(out, [band_poly], 255)
     return out
 
 
@@ -223,49 +175,6 @@ def _fill_lip_plane(lm, H: int, W: int,
 
     box = cv2.boxPoints(((cx, cy), (width, height), angle_deg)).astype(np.int32)
     cv2.fillConvexPoly(out, box, 255)
-    return out
-
-
-def _fill_lip_shape(pts: np.ndarray, H: int, W: int,
-                    expand_x: int = 0, expand_y: int = 0,
-                    lip_band: int = 6) -> np.ndarray:
-    """
-    Fill lip polygon from ordered outer lip contour landmarks.
-
-    pts must arrive in perimeter winding order via _OUTER_LIP_IDX — NOT
-    sorted by angle or index.  The outer contour naturally carries the
-    cupid's bow; inner contour indices are excluded, fixing the previous
-    double-cupid and box issues.
-
-    Expansion pushes each point outward from the centroid using sign(delta):
-      corners      → expand_x sideways (tapers naturally along corner edge)
-      top-centre   → expand_y upward
-      bottom-centre → expand_y downward
-
-    lip_band — minimum half-height from centroid (native px).
-    """
-    out = np.zeros((H, W), dtype=np.uint8)
-    if len(pts) < 6:
-        return out
-
-    pts_f = pts.astype(np.float32).copy()
-    cx = float(pts_f[:, 0].mean())
-    cy = float(pts_f[:, 1].mean())
-
-    if expand_x > 0 or expand_y > 0:
-        dx = pts_f[:, 0] - cx
-        dy = pts_f[:, 1] - cy
-        pts_f[:, 0] = np.clip(pts_f[:, 0] + np.sign(dx) * expand_x, 0, W - 1)
-        pts_f[:, 1] = np.clip(pts_f[:, 1] + np.sign(dy) * expand_y, 0, H - 1)
-
-    if lip_band > 0:
-        above = pts_f[:, 1] < cy
-        below = pts_f[:, 1] > cy
-        pts_f[above, 1] = np.minimum(pts_f[above, 1], cy - lip_band)
-        pts_f[below, 1] = np.maximum(pts_f[below, 1], cy + lip_band)
-        np.clip(pts_f[:, 1], 0, H - 1, out=pts_f[:, 1])
-
-    cv2.fillPoly(out, [pts_f.astype(np.int32).reshape(-1, 1, 2)], 255)
     return out
 
 
@@ -346,8 +255,10 @@ def _process_frame(
 
     def _brow_zone(feat_key: str) -> np.ndarray:
         ex, ey = zone_expand['brows']
-        return _fill_arch_band(_pts(_MP_IDX[feat_key], lm, H, W), H, W,
-                               expand_x=ex, expand_y=ey, band_half=brow_band)
+        # Envelope band fitted to the actual brow landmark edges (auto-thickness),
+        # floored at brow_band. Shared with Export / Face Mask so all nodes match.
+        return _fill_brow_envelope(_pts(_MP_IDX[feat_key], lm, H, W), H, W,
+                                   expand_x=ex, expand_y=ey, band_floor=brow_band)
 
     def _eye_zone(iris_key: str, eyelid_key: str) -> np.ndarray:
         ex, ey = zone_expand['eyes']
