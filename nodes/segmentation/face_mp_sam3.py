@@ -510,9 +510,12 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             # Cleanup: drop stray non-contiguous chunks (keep seeded component) + fill holes.
             if cleanup:
                 pos_px = [(x * W, y * H) for (x, y) in pos_pts]
+                # NB: fill=False here. Hole-fill must happen AFTER edge_refine, never before —
+                # refining a pre-filled solid blob bulges its outer edge onto the skin. We snap
+                # the tight outer lip edge first, then fill the enclosed interior.
                 sam = _clean_feature_mask(sam, pos_px,
                                           smooth_px=max(0, int(round(edge_smooth * scale))),
-                                          fill=feat_fill)
+                                          fill=False)
             # Edge-snap refinement (guided filter / alpha matting) to follow image color/edges.
             if edge_refine != "off":
                 sam = _refine_feature_mask(sam, np_img, edge_refine,
