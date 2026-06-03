@@ -45,7 +45,7 @@ class BD_FashnHumanParser(io.ComfyNode):
                 ),
                 io.String.Input(
                     "cache_dir", default="", optional=True,
-                    tooltip="Override HF cache dir. Blank → /srv/AI_Stuff/models/huggingface (if present), else HF default."
+                    tooltip="Override HF cache dir. Blank → HF_HOME env var, or ComfyUI models/huggingface/, or HF default."
                 ),
             ],
             outputs=[

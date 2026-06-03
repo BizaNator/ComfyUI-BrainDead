@@ -22,7 +22,7 @@ are unchanged. FLAME is a full head (face + scalp + neck), so it covers
 far more than the canonical face shell.
 
 Requires the converted model: tools/convert_flame.py → flame2023_facewrap.npz
-(default /srv/AI_Stuff/models/flame/) plus the official
+(default: ComfyUI models/flame/) plus the official
 mediapipe_landmark_embedding.npz alongside it.
 """
 
@@ -30,14 +30,16 @@ import os
 
 import numpy as np
 
+import folder_paths as _folder_paths
 from comfy_api.latest import io
 
 from .types import LandmarksBatchOutput  # noqa: F401  (kept for parity)
 from .types import FaceFitOutput, LandmarksBatchInput
 
 
-DEFAULT_FLAME_NPZ = "/srv/AI_Stuff/models/flame/flame2023_facewrap.npz"
-DEFAULT_EMBEDDING_NPZ = "/srv/AI_Stuff/models/flame/mediapipe_landmark_embedding.npz"
+_FLAME_DIR = os.path.join(_folder_paths.models_dir, "flame")
+DEFAULT_FLAME_NPZ = os.path.join(_FLAME_DIR, "flame2023_facewrap.npz")
+DEFAULT_EMBEDDING_NPZ = os.path.join(_FLAME_DIR, "mediapipe_landmark_embedding.npz")
 
 # FLAME 2023 shapedirs is 400 components: 300 shape + 100 expression.
 _N_SHAPE_TOTAL = 300

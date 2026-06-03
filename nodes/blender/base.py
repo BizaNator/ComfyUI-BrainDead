@@ -11,22 +11,29 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-# Find Blender executable - check common locations
-# Prefer newer Blender versions first
-BLENDER_PATHS = [
-    # BrainDead bundled Blender 5.0.1 (preferred - stable first)
-    "/opt/comfyui/stable/custom_nodes/ComfyUI-BrainDead/lib/blender/blender-5.0.1-linux-x64/blender",
-    "/opt/comfyui/dev/custom_nodes/ComfyUI-BrainDead/lib/blender/blender-5.0.1-linux-x64/blender",
-    # GeometryPack bundled Blender 4.2.3
-    "/opt/comfyui/stable/custom_nodes/ComfyUI-GeometryPack/_blender/blender-4.2.3-linux-x64/blender",
-    "/opt/comfyui/dev/custom_nodes/ComfyUI-GeometryPack/_blender/blender-4.2.3-linux-x64/blender",
-    # UniRig bundled Blender 4.2.3
-    "/opt/comfyui/stable/custom_nodes/ComfyUI-UniRig/lib/blender/blender-4.2.3-linux-x64/blender",
-    "/opt/comfyui/dev/custom_nodes/ComfyUI-UniRig/lib/blender/blender-4.2.3-linux-x64/blender",
-    # System Blender
-    "/usr/bin/blender",
-    "/usr/local/bin/blender",
+# ── Blender discovery — resolved relative to this file, never hardcoded ───────
+_THIS_DIR = Path(__file__).resolve().parent       # nodes/blender/
+_PACK_ROOT = _THIS_DIR.parent.parent              # ComfyUI-BrainDead/
+_CUSTOM_NODES_DIR = _PACK_ROOT.parent             # ComfyUI/custom_nodes/
+
+# Blenders bundled within this custom node package (preferred — newest first)
+_BUNDLED_BLENDER_PATTERNS = [
+    _PACK_ROOT / "lib" / "blender" / "blender-5.0.1-linux-x64" / "blender",
+    _PACK_ROOT / "lib" / "blender" / "blender-4.2.3-linux-x64" / "blender",
 ]
+
+# Blenders bundled in sibling custom node packages
+_SIBLING_PATTERNS = [
+    _CUSTOM_NODES_DIR / "ComfyUI-GeometryPack" / "_blender" / "blender-4.2.3-linux-x64" / "blender",
+    _CUSTOM_NODES_DIR / "ComfyUI-UniRig" / "lib" / "blender" / "blender-4.2.3-linux-x64" / "blender",
+]
+
+# Find Blender executable — check common locations, prefer newer versions first
+BLENDER_PATHS = (
+    [str(p) for p in _BUNDLED_BLENDER_PATTERNS if p.exists()]
+    + [str(p) for p in _SIBLING_PATTERNS if p.exists()]
+    + ["/usr/bin/blender", "/usr/local/bin/blender"]
+)
 
 def find_blender() -> Optional[str]:
     """Find a working Blender executable."""

@@ -32,6 +32,7 @@ save nodes (BD_SaveBatch / BD MP Save Face Data).
 
 from __future__ import annotations
 
+import os
 import numpy as np
 import torch
 from comfy_api.latest import io
@@ -50,13 +51,25 @@ except ImportError:
 
 import comfy.model_management
 import comfy.utils
+import folder_paths as _folder_paths
 
 from .face_mp_shared import (
     _init_mp_idx, detect_landmarks_robust, _masks_from_landmarks,
     _MP_IDX, _OUTER_LIP_IDX, _NOSE_INDICES, _subtract, _union, _blank,
 )
 
-_MODEL_PATH = "/srv/AI_Stuff/models/mediapipe/face_landmarker.task"
+
+def _find_mediapipe_model() -> str:
+    """Find face_landmarker.task in ComfyUI model directories, or return default path."""
+    filename = "face_landmarker.task"
+    for base_dir in _folder_paths.get_folder_paths("models"):
+        candidate = os.path.join(base_dir, "mediapipe", filename)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(_folder_paths.models_dir, "mediapipe", filename)
+
+
+_MODEL_PATH = _find_mediapipe_model()
 _SAM3_SIZE = 1008  # SAM3 works in a 1008×1008 preprocessed space
 # Standalone VitMatte: load straight from the HF repo id — transformers auto-downloads
 # to the HF cache (HF_HOME) if absent. No dependency on any other custom-node pack's

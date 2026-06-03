@@ -162,7 +162,7 @@ class BD_GLSLBatch(io.ComfyNode):
                                         "its contents are used instead of the fragment_shader text field. "
                                         "Lets you edit the shader externally and have BD_GLSLBatch pick up "
                                         "the latest version on each workflow execution. "
-                                        "Example: /mnt/tank/Studio/Brains/Workflows/ComfyUI_GLSL_Shaders/skin_shader.glsl"),
+                                        "Example: /path/to/shaders/skin_shader.glsl"),
 
                 # Image inputs (u_image0..u_image4) — all optional, mirror GLSLShader
                 io.Image.Input("u_image0", optional=True, tooltip="Bound to sampler2D u_image0."),

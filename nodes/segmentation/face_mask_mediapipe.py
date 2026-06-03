@@ -2,7 +2,7 @@
 BD_MediaPipeFaceMask — landmark-precise face region masks via MediaPipe Face Mesh.
 
 Uses the MediaPipe Tasks API (mediapipe >= 0.10). Requires the face_landmarker.task
-model file, stored at /srv/AI_Stuff/models/mediapipe/face_landmarker.task.
+model file, searched in ComfyUI model directories under mediapipe/face_landmarker.task.
 
 Deterministic, CPU-only, ~5 ms per frame. No SAM3 prompts, no sampling noise.
 All masks returned as ComfyUI MASK tensors (B, H, W) in [0, 1].
@@ -52,7 +52,20 @@ import numpy as np
 import torch
 from comfy_api.latest import io
 
-_MODEL_PATH = "/srv/AI_Stuff/models/mediapipe/face_landmarker.task"
+import folder_paths as _folder_paths
+
+
+def _find_mediapipe_model() -> str:
+    """Find face_landmarker.task in ComfyUI model directories, or return default path."""
+    filename = "face_landmarker.task"
+    for base_dir in _folder_paths.get_folder_paths("models"):
+        candidate = os.path.join(base_dir, "mediapipe", filename)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(_folder_paths.models_dir, "mediapipe", filename)
+
+
+_MODEL_PATH = _find_mediapipe_model()
 
 try:
     import cv2

@@ -5,8 +5,8 @@ Both fashn-ai/fashn-human-parser and mattmdjaga/segformer_b2_clothes are
 SegFormer semantic segmentation checkpoints with the same call shape, so
 the loader and runner are factored here.
 
-Default cache_dir is /srv/AI_Stuff/models/huggingface (shared model storage
-on this host) when present; otherwise HF's own resolution is used.
+Default cache_dir honours HF_HOME env var first, then falls back to
+ComfyUI's models/huggingface directory, then HF's own default resolution.
 """
 
 import os
@@ -15,8 +15,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+import folder_paths as _folder_paths
 
-_DEFAULT_CACHE = "/srv/AI_Stuff/models/huggingface"
+_DEFAULT_CACHE = os.environ.get(
+    "HF_HOME",
+    os.path.join(_folder_paths.models_dir, "huggingface"),
+)
 _MODEL_CACHE: dict[str, tuple] = {}
 
 

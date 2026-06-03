@@ -10,8 +10,9 @@ Rear / failed-detection views are passed through with `detected=False`
 so downstream nodes can still see them in the batch (the texture-bake
 step uses them with a pose derived from camera baselines).
 
-Model: MediaPipe FaceLandmarker task bundle (~3.6MB), auto-downloaded
-       to /srv/AI_Stuff/models/mediapipe/face_landmarker.task on first use.
+Model: MediaPipe FaceLandmarker task bundle (~3.6MB), searched in ComfyUI
+       model directories under mediapipe/face_landmarker.task; auto-downloaded
+       to that location on first use if not found.
 """
 
 import os
@@ -20,16 +21,29 @@ from pathlib import Path
 import numpy as np
 import torch
 
+import folder_paths as _folder_paths
 from comfy_api.latest import io
 
 from .types import LandmarksBatchOutput
 
 
-DEFAULT_MODEL_PATH = "/srv/AI_Stuff/models/mediapipe/face_landmarker.task"
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
     "face_landmarker/float16/1/face_landmarker.task"
 )
+
+
+def _find_mediapipe_model() -> str:
+    """Find face_landmarker.task in ComfyUI model directories, or return default path."""
+    filename = "face_landmarker.task"
+    for base_dir in _folder_paths.get_folder_paths("models"):
+        candidate = os.path.join(base_dir, "mediapipe", filename)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(_folder_paths.models_dir, "mediapipe", filename)
+
+
+DEFAULT_MODEL_PATH = _find_mediapipe_model()
 
 
 def _resolve_model_path(override: str | None = None) -> str:
@@ -116,8 +130,8 @@ class BD_FaceLandmarks(io.ComfyNode):
                 "- Debug overlay image with landmarks + view label per view.\n\n"
                 "Failed detections (rear / extreme profile) stay in the batch\n"
                 "with detected=False so view ordering is preserved.\n\n"
-                "Model bundle (~3.6MB) auto-downloads to\n"
-                "/srv/AI_Stuff/models/mediapipe/face_landmarker.task on first use."
+                "Model bundle (~3.6MB) is searched in ComfyUI model directories\n"
+                "under mediapipe/face_landmarker.task; auto-downloaded on first use."
             ),
             inputs=[
                 io.Image.Input(
@@ -146,8 +160,9 @@ class BD_FaceLandmarks(io.ComfyNode):
                     "model_path",
                     default="",
                     optional=True,
-                    tooltip=f"Override path to face_landmarker.task. Empty = "
-                            f"use {DEFAULT_MODEL_PATH} (auto-download if missing).",
+                    tooltip="Override path to face_landmarker.task. Empty = "
+                            "search ComfyUI model dirs for mediapipe/face_landmarker.task "
+                            "(auto-download if missing).",
                 ),
             ],
             outputs=[

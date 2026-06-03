@@ -10,12 +10,12 @@ Upstream: https://github.com/EnVision-Research/Lotus-2 (Apache-2.0)
 Pipeline + LCM module + LoRA loader code in this file is adapted from upstream.
 
 Weights layout (default — auto-downloaded if missing):
-  /srv/AI_Stuff/models/lotus2/{depth,normal}/
+  <ComfyUI models dir>/lotus2/{depth,normal}/
     lotus-2_core_predictor_{task}.safetensors
     lotus-2_detail_sharpener_{task}.safetensors
     lotus-2_lcm_{task}.safetensors
 
-FLUX.1-dev base loaded from HF cache (HF_HOME=/srv/AI_Stuff/models/huggingface).
+FLUX.1-dev base loaded from HF cache (HF_HOME env or ComfyUI models/huggingface/).
 """
 
 import os
@@ -26,6 +26,7 @@ import numpy as np
 import torch
 from torch import nn
 
+import folder_paths as _folder_paths
 from comfy_api.latest import io
 
 
@@ -33,7 +34,7 @@ LOTUS2_MODEL = "LOTUS2_MODEL"
 
 DEFAULT_LOTUS2_REPO = "jingheya/Lotus-2"
 DEFAULT_FLUX_REPO = "black-forest-labs/FLUX.1-dev"
-DEFAULT_LOTUS2_ROOT = "/srv/AI_Stuff/models/lotus2"
+DEFAULT_LOTUS2_ROOT = os.path.join(_folder_paths.models_dir, "lotus2")
 
 CORE_PREDICTOR_FILENAME = {
     "depth":  "lotus-2_core_predictor_depth.safetensors",
@@ -389,7 +390,7 @@ class BD_Lotus2ModelLoader(io.ComfyNode):
                 "estimation. Diffusion-based, SOTA-quality monocular geometry prediction. "
                 "FLUX.1-dev is loaded from HF cache (~24 GB). Lotus-2 weights "
                 "(~1.5 GB depth or ~2.9 GB normal core+sharpener) auto-download to "
-                "/srv/AI_Stuff/models/lotus2/{task}/ if missing.\n\n"
+                "ComfyUI models/lotus2/{task}/ if missing.\n\n"
                 "Reuse the loaded model across multiple Predict calls — first load is slow, "
                 "subsequent same-task calls hit the in-memory cache."
             ),
@@ -408,7 +409,7 @@ class BD_Lotus2ModelLoader(io.ComfyNode):
                 io.String.Input(
                     "lotus2_weights_dir", default="", optional=True,
                     tooltip="Override directory containing the three Lotus-2 weight files. "
-                            f"Default: {DEFAULT_LOTUS2_ROOT}/{{task}}/",
+                            "Default: <ComfyUI models dir>/lotus2/{task}/",
                 ),
                 io.Boolean.Input(
                     "cpu_offload", default=False, optional=True,

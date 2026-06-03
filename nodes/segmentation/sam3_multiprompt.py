@@ -10,6 +10,7 @@ The only thing that changes is UI and one-shot batched execution.
 """
 
 import sys
+from pathlib import Path as _Path
 
 import numpy as np
 import torch
@@ -18,11 +19,24 @@ from comfy_api.latest import io
 from .mask_resolver import _rgb_to_lab, _adaptive_skin_likelihood
 
 
-_RMBG_PATH = "/opt/comfyui/dev/custom_nodes/comfyui-rmbg"
+# Resolve the comfyui-rmbg custom node directory relative to this file's
+# location (custom_nodes/<pack>/nodes/segmentation/ → custom_nodes/)
+_CUSTOM_NODES_DIR = _Path(__file__).resolve().parent.parent.parent
+_RMBG_CANDIDATES = [
+    _CUSTOM_NODES_DIR / "comfyui-rmbg",
+    _CUSTOM_NODES_DIR / "ComfyUI-rmbg",
+    _CUSTOM_NODES_DIR / "comfyui_rmbg",
+]
+_RMBG_PATH = next((str(p) for p in _RMBG_CANDIDATES if p.exists()), None)
 
 
 def _import_sam3_segment():
     """Lazy import — folder_paths only available when ComfyUI is running."""
+    if _RMBG_PATH is None:
+        raise ImportError(
+            "comfyui-rmbg not found in custom_nodes/. "
+            "Install it alongside ComfyUI-BrainDead."
+        )
     if _RMBG_PATH not in sys.path:
         sys.path.insert(0, _RMBG_PATH)
     from AILab_SAM3Segment import SAM3Segment
