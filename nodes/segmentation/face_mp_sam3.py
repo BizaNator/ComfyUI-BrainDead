@@ -479,8 +479,9 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             z = _blank(H, W)
             rgba = torch.from_numpy(np.zeros((H, W, 4), np.float32)).unsqueeze(0)
             dbg = torch.from_numpy(np.zeros((H, W, 3), np.float32)).unsqueeze(0)
-            blank_rgba = torch.from_numpy(np.zeros((H, W, 4), np.float32)).unsqueeze(0)
-            return io.NodeOutput(rgba, *([_m(z)] * 21), dbg, status, blank_rgba, blank_rgba)
+            ch = 4 if cutout_bg == "transparent" else 3
+            blank_cut = torch.from_numpy(np.zeros((H, W, ch), np.float32)).unsqueeze(0)
+            return io.NodeOutput(rgba, *([_m(z)] * 21), dbg, status, blank_cut, blank_cut)
 
         if not HAS_MEDIAPIPE or not HAS_CV2:
             return _bail("missing mediapipe/opencv — no segmentation")
@@ -821,12 +822,11 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         def _compose(mask_u8):
             a = (mask_u8 > 0).astype(np.float32)[..., None]
             if cutout_bg == "transparent":
-                rgba = np.concatenate([_rgb01, a], axis=-1)            # straight alpha
+                out = np.concatenate([_rgb01, a], axis=-1)            # 4ch RGBA (straight alpha)
             else:
-                bgv = 0.0 if cutout_bg == "black" else 1.0
-                comp = _rgb01 * a + bgv * (1.0 - a)
-                rgba = np.concatenate([comp, np.ones_like(a)], axis=-1)
-            return torch.from_numpy(rgba).unsqueeze(0)
+                bgv = 0.0 if cutout_bg == "black" else 1.0           # 3ch RGB, bg baked in (no alpha)
+                out = _rgb01 * a + bgv * (1.0 - a)
+            return torch.from_numpy(np.ascontiguousarray(out)).unsqueeze(0)
 
         head_cutout = _compose(silhouette_out)
         clean = (silhouette_out > 0)
