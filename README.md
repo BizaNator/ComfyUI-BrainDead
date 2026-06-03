@@ -237,6 +237,7 @@ Character segmentation, parts pipeline, PBR map derivation, asset prep.
 |------|-------------|
 | **BD Luma Stats** | Compute luma statistics for an image: min, max, median, mean, and `recommended_outer_band = (max−min)/2 × 0.9`. Wire into BD_CenterMedianLuma or GLSL shader uniform inputs to set normalisation levels. |
 | **BD Center Median Luma** | Shift image luma so the median lands at 0.5. Optional `calc_source` input: compute the shift from a different (cleaner) reference image and apply it to `image`. Outputs `measured_median` and `shift_applied` for downstream diagnostics. |
+| **BD Normalize Luma** | Auto-rescale image luminance to a target range. Range-fit mode (default) remaps [src_min, src_max] → [target_min, target_max]. Proportional mode: single multiplier so src_max → target_max, blacks stay at zero. Mask-aware percentile clipping via `np.percentile`. |
 | **BD Depth To Shadow Map** | Convert a depth image to a shadow/shading map via analytic top-down N·L shading + cavity AO. Outputs `shadow_map`, `normal_map`, `cavity_map`, and `measured_max_curvature`. Use as a lighting guide for skin shaders or PBR derivation. |
 
 **Drawing tools:**
@@ -245,6 +246,14 @@ Character segmentation, parts pipeline, PBR map derivation, asset prep.
 |------|-------------|
 | **BD Draw Rect** | Draw a flat-color rectangle with configurable rounded corners and edge feather. Shape source: manual geometry OR mask OR packed-channel extract. Optional alpha composite onto a background image and packed-channel injection. |
 | **BD Draw Ellipse** | Draw an ellipse/circle with flat color. Same shape-source options as BD_DrawRect (manual / mask / packed). Supports anisotropic radii and rotation. |
+
+**Mask manipulation:**
+
+| Node | Description |
+|------|-------------|
+| **BD Mask Correlate** | IoU-based matching of SAM3 candidate masks to up to 8 named target slots (e.g. MediaPipe hulls). Per-slot combine modes (`intersect`, `replace`, `union`, `weighted_blend`), post-match subtraction rules, and `combined_mask_invert` for head-minus-features mask. |
+| **BD Mask Resolver** | Priority-based pixel-level separation of skin/clothes/accessories. Python port of the GLSL Mask Resolver shader. Adaptive LAB color scoring, neighbor-vote gap fill, `priority` or `soft_blend` overlap mode. |
+| **BD Mask Color Fill** | Fill up to four mask regions with solid colors on a composited canvas. Per-slot expand/feather, optional background image, union mask output. |
 
 **Asset prep / game textures:**
 
@@ -295,6 +304,25 @@ ALL into BD Derive PBR Maps with metallic_zone_mask=accessories_mask
        BD_PartsExport
          composite_size=4096 (or whatever), save_psd=true, save_masks=true
          → per-tag PNGs + composite PNG + layered PSD with optional mask layers
+```
+
+### Pixal3D Nodes (`BrainDead/Pixal3D`)
+Image-to-3D generation using Pixal3D (TencentARC/Pixal3D, Trellis2-based). Downloads ~10GB model weights on first run to `/srv/AI_Stuff/models/huggingface/`.
+
+| Node | Description |
+|------|-------------|
+| **BD Pixal3D Preprocess** | Prepare an image for Pixal3D: apply mask, crop to subject, composite on background, and estimate camera FOV via MoGe-2 (auto) or manual radians. Outputs PIXAL3D_INPUT bundle + 512×512 preview. |
+| **BD Pixal3D Image to 3D** | Generate 3D from a PIXAL3D_INPUT. Three-stage pipeline: sparse structure → shape latent → texture latent. Outputs untextured TRIMESH (Z-up) + TRELLIS2_VOXELGRID for full PBR bake via BD_OVoxelBake. |
+
+**Pixal3D pipeline:**
+```
+[Source image + mask]
+  ↓
+BD Pixal3D Preprocess  (fov_mode=auto_moge)
+  ↓ pixal3d_input
+BD Pixal3D Image to 3D  (pipeline_type=1024_cascade)
+  ↓ mesh              ↓ voxelgrid
+BD CuMesh Simplify    BD OVoxelBake → albedo, normal, roughness, metallic
 ```
 
 ### Depth Nodes (`BrainDead/Depth`)
@@ -398,15 +426,16 @@ output/
 
 ## Node Counts at a Glance
 
-~105 nodes across 9 categories:
+~110 nodes across 10 categories:
 
 - **Cache** — caching, save/load, save-context system (~16)
 - **Mesh** — 3D processing, color sampling, simplification, OVoxel PBR baking (~26)
 - **Blender** — Blender-based geometry tools (~12)
 - **TRELLIS2** — TRELLIS2-specific shape/texture nodes (~9)
+- **Pixal3D** — image-to-3D generation (Pixal3D + MoGe FOV estimation) (~2)
 - **Character** — Qwen-Image character consistency (~4)
 - **Prompt** — prompt iteration, filename templates, ForEach iteration (~5)
-- **Segmentation** — SAM3 multi-prompt + Parts pipeline + FaceSocketInfill + LumaStats + CenterMedianLuma + DepthToShadowMap + DrawRect + DrawEllipse + MaskResolver + Human parsers (~22)
+- **Segmentation** — SAM3 multi-prompt + Parts pipeline + FaceSocketInfill + LumaStats + NormalizeLuma + CenterMedianLuma + DepthToShadowMap + DrawRect + DrawEllipse + MaskResolver + MaskCorrelate + Human parsers (~25)
 - **Depth** — Lotus-2 (FLUX-based diffusion depth/normal) (~2)
 - **PBR / asset prep** — MaskFlatten, PackChannels, DerivePBR (in Segmentation)
 
@@ -418,6 +447,7 @@ BrainDead/
 ├── Mesh/          # 3D mesh processing and color tools
 ├── Blender/       # Blender-based mesh operations
 ├── TRELLIS2/      # TRELLIS2-specific caching
+├── Pixal3D/       # Pixal3D image-to-3D generation
 ├── Character/     # Qwen-Image character consistency
 ├── Prompt/        # Prompt iteration tools
 ├── Segmentation/  # SAM3 + Parts pipeline + asset prep
