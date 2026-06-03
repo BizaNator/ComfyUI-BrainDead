@@ -55,7 +55,10 @@ from comfy_api.latest import io
 import folder_paths as _folder_paths
 
 
-from .face_mp_shared import find_mediapipe_model as _find_mediapipe_model
+from .face_mp_shared import (
+    find_mediapipe_model as _find_mediapipe_model,
+    ensure_mediapipe_model as _ensure_mediapipe_model,
+)
 
 _MODEL_PATH = _find_mediapipe_model()
 
@@ -284,10 +287,15 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
                 _empty_bbox_json,
             )
 
-        if not os.path.exists(_MODEL_PATH):
+        try:
+            model_path = _ensure_mediapipe_model()      # auto-download if missing
+        except Exception as e:
+            model_path = _MODEL_PATH
+            print(f"[BD MP Face Mask] model auto-download failed: {e}", flush=True)
+        if not os.path.exists(model_path):
             return io.NodeOutput(
                 *([_blank1] * n_out),
-                f"BD_MediaPipeFaceMask: model not found at {_MODEL_PATH}",
+                f"BD_MediaPipeFaceMask: model not found at {model_path}",
                 _empty_bbox_json,
             )
 
@@ -316,7 +324,7 @@ class BD_MediaPipeFaceMask(io.ComfyNode):
         region_batches: dict[str, list[torch.Tensor]] = {k: [] for k in _KEYS}
         statuses: list[str] = []
 
-        base_opts = _mpt.BaseOptions(model_asset_path=_MODEL_PATH)
+        base_opts = _mpt.BaseOptions(model_asset_path=model_path)
         opts = _mpv.FaceLandmarkerOptions(
             base_options=base_opts,
             running_mode=_mpv.RunningMode.IMAGE,

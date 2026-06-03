@@ -67,13 +67,45 @@ def _model_roots() -> list[str]:
 def find_mediapipe_model(filename: str = "face_landmarker.task") -> str:
     """Locate a MediaPipe model file under any configured ComfyUI model root, in a
     `mediapipe/` subfolder. Generic + machine-agnostic (uses folder_paths, never a
-    hardcoded path). Falls back to `<models_dir>/mediapipe/<filename>` if not found."""
+    hardcoded path). Falls back to `<models_dir>/mediapipe/<filename>` if not found.
+
+    Resolve only — never downloads. Use ensure_mediapipe_model() when you actually need
+    the file present."""
     for base_dir in _model_roots():
         candidate = os.path.join(base_dir, "mediapipe", filename)
         if os.path.exists(candidate):
             return candidate
     md = getattr(_folder_paths, "models_dir", "models") if _folder_paths else "models"
     return os.path.join(md, "mediapipe", filename)
+
+
+# Official Google MediaPipe model URLs (auto-download — no other node pack needed).
+_MEDIAPIPE_URLS = {
+    "face_landmarker.task": (
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+        "face_landmarker/float16/1/face_landmarker.task"
+    ),
+}
+
+
+def ensure_mediapipe_model(filename: str = "face_landmarker.task") -> str:
+    """Resolve the MediaPipe model path and AUTO-DOWNLOAD it from Google if missing.
+
+    Standalone: downloads the official Google asset into the ComfyUI models dir. Returns
+    the path (existing or freshly downloaded). Raises only if the file is absent AND the
+    download fails (so callers can surface a clear message)."""
+    path = find_mediapipe_model(filename)
+    if os.path.exists(path):
+        return path
+    url = _MEDIAPIPE_URLS.get(filename)
+    if not url:
+        return path  # unknown file — let the caller's existence check report it
+    import urllib.request
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    print(f"[BD MediaPipe] {filename} missing — downloading official model to {path}", flush=True)
+    urllib.request.urlretrieve(url, path)
+    print(f"[BD MediaPipe] downloaded {filename}", flush=True)
+    return path
 
 try:
     from mediapipe.tasks.python.vision.face_landmarker import FaceLandmarksConnections as _FLC
@@ -190,6 +222,13 @@ def detect_landmarks_robust(
     import mediapipe as mp
     from mediapipe.tasks import python as _mpt
     from mediapipe.tasks.python import vision as _mpv
+
+    # Auto-download the model if it isn't present yet (standalone — no manual setup).
+    if not os.path.exists(model_path):
+        try:
+            model_path = ensure_mediapipe_model(os.path.basename(model_path))
+        except Exception as e:
+            print(f"[BD MediaPipe] auto-download failed ({e}); using {model_path}", flush=True)
 
     H, W = np_img.shape[:2]
 

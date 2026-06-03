@@ -36,7 +36,10 @@ from comfy_api.latest import io
 import folder_paths as _folder_paths
 
 
-from .face_mp_shared import find_mediapipe_model as _find_mediapipe_model
+from .face_mp_shared import (
+    find_mediapipe_model as _find_mediapipe_model,
+    ensure_mediapipe_model as _ensure_mediapipe_model,
+)
 
 _MODEL_PATH = _find_mediapipe_model()
 
@@ -659,8 +662,13 @@ class BD_FaceSocketInfill(io.ComfyNode):
             if not HAS_MEDIAPIPE or not HAS_CV2:
                 missing = [p for p, h in [("mediapipe", HAS_MEDIAPIPE), ("opencv-python", HAS_CV2)] if not h]
                 return _fail(f"BD_FaceSocketInfill: missing — {', '.join(missing)}")
-            if not os.path.exists(_MODEL_PATH):
-                return _fail(f"BD_FaceSocketInfill: model not found at {_MODEL_PATH}")
+            try:
+                model_path = _ensure_mediapipe_model()      # auto-download if missing
+            except Exception as e:
+                model_path = _MODEL_PATH
+                print(f"[BD MP Face Infill] model auto-download failed: {e}", flush=True)
+            if not os.path.exists(model_path):
+                return _fail(f"BD_FaceSocketInfill: model not found at {model_path}")
         elif not HAS_CV2:
             return _fail("BD_FaceSocketInfill: opencv-python missing (needed even in face-data mode)")
 
@@ -704,7 +712,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         # ── Build MediaPipe landmarker (only when not using face data) ────────
         from contextlib import nullcontext
         if not _use_face_data:
-            base_opts = _mpt.BaseOptions(model_asset_path=_MODEL_PATH)
+            base_opts = _mpt.BaseOptions(model_asset_path=model_path)
             _mp_opts = _mpv.FaceLandmarkerOptions(
                 base_options=base_opts,
                 running_mode=_mpv.RunningMode.IMAGE,

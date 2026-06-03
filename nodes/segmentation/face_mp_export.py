@@ -182,8 +182,14 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
             print(f"[BD MP FaceExport] WARNING: missing {missing} — passthrough only, no export")
             return _pass(0, "")
 
-        if not os.path.exists(_MODEL_PATH):
-            print(f"[BD MP FaceExport] WARNING: model not found: {_MODEL_PATH} — passthrough only")
+        try:
+            from .face_mp_shared import ensure_mediapipe_model as _ensure_mediapipe_model
+            model_path = _ensure_mediapipe_model()          # auto-download if missing
+        except Exception as e:
+            model_path = _MODEL_PATH
+            print(f"[BD MP FaceExport] model auto-download failed: {e}", flush=True)
+        if not os.path.exists(model_path):
+            print(f"[BD MP FaceExport] WARNING: model not found: {model_path} — passthrough only")
             return _pass(0, "")
 
         # ── Context resolution (same pattern as BD_SaveBatch) ─────────────────
@@ -235,7 +241,7 @@ class BD_MediaPipeFaceExport(io.ComfyNode):
 
         try:
             lm, det_meta = detect_landmarks_robust(
-                np_img, _MODEL_PATH,
+                np_img, model_path,
                 min_conf=detection_confidence,
                 min_span=min_face_span,
             )
