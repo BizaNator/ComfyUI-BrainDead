@@ -19,7 +19,7 @@ Thresholds tuned on the seven PinkF1 visemes (Aa, i, Kk, O, sil, th, U), exposed
 - **teeth & tongue** get SAM3 seeded by their own colour bbox + interior positive points + the other parts' centroids as negatives. A **greediness guard** reverts a part to its colour mask if SAM3 over- or under-grows it (`[0.25–3.0]×` the colour area). Because the parts are nested in a tiny area, teeth typically over-grows and reverts to the (already clean) colour teeth; the real win is the **tongue**, where SAM3 captures the brightly-lit front that colour misreads as magenta lips.
 - **lips** stays the colour ring (a ring has no usable single SAM3 box); mutual-exclusivity carves teeth/tongue back out.
 
-Wire the model like BD MP SAM3 Face Segment: `Load Diffusion Model (UNETLoader) → sam3.pt → model` (symlink `sam3.pt` into `models/diffusion_models/`).
+**No wiring needed:** leave `model` unwired and the node **auto-loads + auto-downloads** the official SAM3 checkpoint (`Comfy-Org/sam3.1`) in-house via `bd_sam3` on first use. Wire a comfy-core SAM3 `MODEL` only if you want to override it.
 
 ## Inputs
 

@@ -8,13 +8,9 @@ The outputs match **BD MP Face Mask** (same names/semantics), so this node is dr
 
 ## Model
 
-Wire a **comfy-core SAM3 `MODEL`** (the same model `SAM3 Detect` uses):
+**No wiring needed.** Leave `model` unwired and the node **auto-loads + auto-downloads** the official SAM3 checkpoint (`Comfy-Org/sam3.1`) in-house via `bd_sam3` on first use (into `models/checkpoints/`). It uses `model.model.diffusion_model.forward_segment` (the SAM decoder box+point path; no CLIP/text needed). Standalone — comfyui-rmbg is **not** used.
 
-```
-Load Diffusion Model (UNETLoader) → sam3.pt → [model]
-```
-
-`sam3.pt` must be visible to UNETLoader, i.e. under `models/diffusion_models/` (symlink it from `models/sam3/sam3.pt`). This path uses `model.model.diffusion_model.forward_segment` (the SAM decoder box+point path) and needs no CLIP/text. comfyui-rmbg's text-only SAM3 is **not** used.
+Wire a comfy-core SAM3 `MODEL` (e.g. `Load Diffusion Model → sam3.pt`) only to override the auto-loaded model.
 
 ## Inputs
 

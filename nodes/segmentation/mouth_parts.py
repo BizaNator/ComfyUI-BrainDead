@@ -217,10 +217,10 @@ class BD_MouthParts(io.ComfyNode):
                 io.Combo.Input("engine", options=["color", "sam3"], default="color", optional=True,
                                tooltip="color — HSV classification, no model (default).\n"
                                        "sam3  — colour split SEEDS SAM3 (box + interior + sibling-negative points) "
-                                       "for object-accurate boundaries. Requires `model`; falls back to color if unwired."),
+                                       "for object-accurate boundaries. Auto-loads SAM3 in-house if `model` is unwired."),
                 io.Model.Input("model", optional=True,
-                               tooltip="Comfy-core SAM3 model (load sam3.pt — the same MODEL SAM3 Detect / BD MP "
-                                       "SAM3 Face Segment use). Only used when engine='sam3'."),
+                               tooltip="Comfy-core SAM3 model (override). Leave UNWIRED to auto-load + auto-download "
+                                       "the official SAM3 checkpoint in-house (bd_sam3). Only used when engine='sam3'."),
                 io.Image.Input("pom", optional=True,
                                tooltip="Optional POM / depth map (e.g. Lotus2 depth → NormLuma → CenterLuma) → packed "
                                        "into the A channel. Its luminance is used. If unwired, A = mouth foreground "
@@ -344,8 +344,13 @@ class BD_MouthParts(io.ComfyNode):
 
         used_engine = engine
         if engine == "sam3" and model is None:
-            print("[BD MP Mouth Parts] engine='sam3' but no model wired — falling back to color", flush=True)
-            used_engine = "color"
+            # No MODEL wired — auto-load + auto-download SAM3 in-house (no setup needed).
+            try:
+                from . import bd_sam3
+                model, _ = bd_sam3.load_sam3(need_clip=False)
+            except Exception as e:
+                print(f"[BD MP Mouth Parts] SAM3 auto-load failed ({e}) — falling back to color", flush=True)
+                used_engine = "color"
 
         if used_engine == "sam3":
             # Colour masks SEED SAM3: per part, box + interior positives + the other two

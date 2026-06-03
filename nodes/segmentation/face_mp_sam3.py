@@ -287,8 +287,9 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 "masks. Wire a comfy-core SAM3 MODEL (same as SAM3 Detect)."
             ),
             inputs=[
-                io.Model.Input("model", tooltip="Comfy-core SAM3 model (load sam3.pt with a model loader — "
-                                                "the same MODEL SAM3 Detect uses)."),
+                io.Model.Input("model", optional=True,
+                               tooltip="Comfy-core SAM3 model (override). Leave UNWIRED to auto-load + "
+                                       "auto-download the official SAM3 checkpoint in-house (bd_sam3) — no setup."),
                 io.Image.Input("image", tooltip="Full-color full-resolution face image. Only image[0] is used."),
                 io.Combo.Input("angle", options=["front", "side_left", "side_right"], default="front",
                                optional=True, tooltip="Stored for downstream/context use only."),
@@ -384,7 +385,7 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, model, image, angle="front", do_brows=True, do_eyes=True, do_lips=True,
+    def execute(cls, image, model=None, angle="front", do_brows=True, do_eyes=True, do_lips=True,
                 do_nose=True, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
                 refine_iterations=1, bleed_guard=48, cleanup=True, fill_holes=True, lips_mode="mouth",
                 edge_smooth=3, edge_refine="off", refine_radius=8, refine_eps=1e-4, refine_threshold=0.5,
@@ -441,6 +442,9 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                                          tight_features=True)
 
         # ── SAM3 setup (mirrors comfy_extras/nodes_sam3.SAM3_Detect) ──────────
+        if model is None:   # no MODEL wired — auto-load + auto-download in-house (no setup)
+            from . import bd_sam3
+            model, _ = bd_sam3.load_sam3(need_clip=False)
         comfy.model_management.load_model_gpu(model)
         device = comfy.model_management.get_torch_device()
         dtype = model.model.get_dtype()

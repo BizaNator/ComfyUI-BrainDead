@@ -5,42 +5,19 @@ Replaces a chain of SAM3Segment nodes for multi-region segmentation tasks like
 "global skin mask" (skin / face / arm / leg / hand / foot / neck) where you'd
 otherwise wire 7-12 SAM3 nodes manually and combine with mask-OR nodes.
 
-Wraps comfyui-rmbg's SAM3Segment class — same model, same accuracy, same VRAM.
-The only thing that changes is UI and one-shot batched execution.
+STANDALONE (no comfyui-rmbg): the SAM3 model + its text encoder are loaded in-house
+via `bd_sam3` (auto-downloads the official Comfy-Org/sam3.1 checkpoint on first use and
+loads it with comfy.sd). Multiline text prompts stay internal to the node — nothing to
+wire, same zero-setup UX as before, but with no dependency on another node pack.
 """
-
-import sys
-from pathlib import Path as _Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from comfy_api.latest import io
 from .mask_resolver import _rgb_to_lab, _adaptive_skin_likelihood
-
-
-# Resolve the comfyui-rmbg custom node directory relative to this file's
-# location (custom_nodes/<pack>/nodes/segmentation/ → custom_nodes/)
-_CUSTOM_NODES_DIR = _Path(__file__).resolve().parent.parent.parent
-_RMBG_CANDIDATES = [
-    _CUSTOM_NODES_DIR / "comfyui-rmbg",
-    _CUSTOM_NODES_DIR / "ComfyUI-rmbg",
-    _CUSTOM_NODES_DIR / "comfyui_rmbg",
-]
-_RMBG_PATH = next((str(p) for p in _RMBG_CANDIDATES if p.exists()), None)
-
-
-def _import_sam3_segment():
-    """Lazy import — folder_paths only available when ComfyUI is running."""
-    if _RMBG_PATH is None:
-        raise ImportError(
-            "comfyui-rmbg not found in custom_nodes/. "
-            "Install it alongside ComfyUI-BrainDead."
-        )
-    if _RMBG_PATH not in sys.path:
-        sys.path.insert(0, _RMBG_PATH)
-    from AILab_SAM3Segment import SAM3Segment
-    return SAM3Segment
+from . import bd_sam3
 
 
 def _skin_tone_likelihood(rgb: np.ndarray) -> np.ndarray:
@@ -247,7 +224,8 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
             description=(
                 "Run SAM3 once per prompt line (one per row) and combine the masks. "
                 "Replaces a chain of SAM3Segment nodes for multi-region segmentation. "
-                "Wraps comfyui-rmbg's SAM3Segment — same model, same VRAM, batched execution."
+                "Standalone: loads the SAM3 model + text encoder in-house (auto-downloads "
+                "the official Comfy-Org SAM3 checkpoint on first use) — no comfyui-rmbg."
             ),
             inputs=[
                 io.Image.Input("image"),
@@ -466,8 +444,8 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
         if not positive_list:
             raise ValueError("BD_SAM3MultiPrompt: no non-empty positive prompts provided")
 
-        SAM3Segment = _import_sam3_segment()
-        sam3 = SAM3Segment()
+        # In-house SAM3 (model + text encoder), auto-downloaded on first use. No rmbg.
+        sam3_model, sam3_clip = bd_sam3.load_sam3(need_clip=True)
 
         coverage_lines = []
 
@@ -488,31 +466,32 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                     f"  [silhouette] BLANK — ignored (mean={sil_mean:.4f}, max={sil_max:.3f})"
                 )
 
+        def _post_mask(mask: torch.Tensor) -> torch.Tensor:
+            """Optional blur/offset on a [1,H,W] mask (replaces rmbg's mask_blur/offset)."""
+            m = mask
+            if mask_offset > 0:
+                m = _dilate_mask((m > 0.5).float(), mask_offset)
+            elif mask_offset < 0:                                   # erode = dilate the inverse
+                m = 1.0 - _dilate_mask((m <= 0.5).float(), -mask_offset)
+            if mask_blur > 0:
+                k = 2 * mask_blur + 1
+                m = torch.nn.functional.avg_pool2d(
+                    m.unsqueeze(1).float(), kernel_size=k, stride=1, padding=mask_blur).squeeze(1)
+            return m
+
         def _run_sam3(prompt: str, last_in_chain: bool):
-            unload_now = unload_model if last_in_chain else False
-            _, mask, _ = sam3.segment(
-                image=image,
-                prompt=prompt,
-                sam3_model="sam3",
-                device=device,
-                confidence_threshold=confidence_threshold,
-                mask_blur=mask_blur,
-                mask_offset=mask_offset,
-                invert_output=False,
-                unload_model=unload_now,
-                background="Alpha",
-                background_color="#000000",
+            # Text-grounded SAM3 entirely in-house (bd_sam3): one [1,H,W] mask (union of
+            # all detector instances for this prompt — keeps label↔mask alignment).
+            mask = bd_sam3.segment_text(
+                sam3_model, sam3_clip, image, prompt,
+                threshold=confidence_threshold, refine_iterations=2,
             )
-            if mask.ndim == 4:
-                mask = mask.squeeze(0)
             if mask.ndim == 2:
                 mask = mask.unsqueeze(0)
-            # CRITICAL: SAM3 may return multiple instances when its detector finds
-            # >1 region matching the prompt (e.g. "earrings" → left + right). Collapse
-            # via pixel-wise max so we always emit exactly ONE mask per prompt — keeps
-            # label↔mask alignment intact for BD_PartsRefine / BD_PartsBuilder.
-            if mask.ndim == 3 and mask.shape[0] > 1:
-                mask = mask.amax(dim=0, keepdim=True)
+            mask = _post_mask(mask)
+            if last_in_chain and unload_model:
+                import comfy.model_management
+                comfy.model_management.unload_all_models()
             if sil_active is not None:
                 sil = sil_active.to(mask.device).to(mask.dtype)
                 if sil.shape[-2:] != mask.shape[-2:]:
