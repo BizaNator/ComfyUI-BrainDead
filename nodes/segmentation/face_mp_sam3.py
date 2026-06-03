@@ -298,6 +298,10 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 io.Boolean.Input("do_eyes", default=True, optional=True, tooltip="Segment eyes with SAM3."),
                 io.Boolean.Input("do_lips", default=True, optional=True, tooltip="Segment lips with SAM3."),
                 io.Boolean.Input("do_nose", default=True, optional=True, tooltip="Segment nose with SAM3."),
+                io.Boolean.Input("do_ears", default=False, optional=True,
+                                 tooltip="Segment ears with TEXT-grounded SAM3 ('ear', split L/R at the face centre) "
+                                         "instead of the weak MediaPipe approximation (the face mesh has no outer-ear "
+                                         "points). Off = MediaPipe ears. Loads the SAM3 text encoder in-house."),
                 io.Float.Input("detection_confidence", default=0.3, min=0.1, max=1.0, step=0.05, optional=True,
                                tooltip="MediaPipe face detection confidence. 0.3 works for stylized renders."),
                 io.Float.Input("min_face_span", default=0.35, min=0.0, max=1.0, step=0.05, optional=True,
@@ -309,9 +313,23 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                                      "stylized/non-photo renders — 1 (no mask-refine) gives the fullest feature; "
                                      "raise only if SAM3 over-segments."),
                 io.Int.Input("bleed_guard", default=48, min=0, max=200, step=2, optional=True,
-                             tooltip="Dilate the MediaPipe feature zone by this many px (at native res), then clip "
-                                     "SAM3's mask to it. LARGE = trust SAM3's shape (correct for offset brows); "
-                                     "small = hug the MediaPipe zone. 0 = clip exactly to MediaPipe."),
+                             tooltip="GENERAL bleed-guard: dilate the MediaPipe feature zone by this many px (at "
+                                     "native res), then clip SAM3's mask to it. Used for NOSE + as the fallback. "
+                                     "Brows/eyes/lips have their own (brow_/eye_/lips_bleed_guard). "
+                                     "0 = clip exactly to MediaPipe."),
+                io.Int.Input("brow_bleed_guard", default=44, min=0, max=200, step=2, optional=True,
+                             tooltip="Bleed-guard for BROWS only. Brows need a LARGE guard (~40-45): their MediaPipe "
+                                     "landmarks sit inside/below the painted brow, so SAM3 must grow out to fill it. "
+                                     "Raise if brows read thin; this won't loosen eyes/lips (they're separate)."),
+                io.Int.Input("lips_bleed_guard", default=12, min=0, max=200, step=2, optional=True,
+                             tooltip="Bleed-guard for LIPS only — kept separate because brows need a LARGE guard "
+                                     "(40-45) to fill while lips need a SMALL one or they overflow onto the face. "
+                                     "Lower = tighter lips (12 hugs the lip contour; 0 = clip exactly to MediaPipe)."),
+                io.Int.Input("eye_bleed_guard", default=10, min=0, max=200, step=2, optional=True,
+                             tooltip="Bleed-guard for EYES only. SAM3 grows to the whole eye (lid/lashes/sclera); a "
+                                     "small guard clips it back toward the eyelid aperture so the mask hugs the "
+                                     "eyeball — like BD Face Infill's eroded eyelid hull. Lower = tighter "
+                                     "(0 = clip exactly to the MediaPipe eye contour)."),
                 io.Boolean.Input("cleanup", default=True, optional=True,
                                  tooltip="Clean SAM3 noise: keep only the connected component(s) the positive "
                                          "landmark seeds land in (drops stray chunks around eyes/lips)."),
@@ -349,11 +367,38 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                                        "no other node pack required. base = higher quality, larger."),
                 io.Mask.Input("silhouette_mask", optional=True,
                               tooltip="Optional head silhouette (white=head). When wired, ALL outputs are clipped "
-                                      "to it and it becomes head_mask; masked_skin = skin within it. Use a SAM3 "
-                                      "head mask (BD SAM3 Multi-Prompt)."),
+                                      "to it and it becomes head_mask; masked_skin = skin within it. Overrides "
+                                      "remove_background. (Or let remove_background compute it in-house.)"),
                 io.Mask.Input("head_mask", optional=True,
                               tooltip="Optional inner head/face-plate mask used as the skin base (skin = head_mask "
                                       "− eyes − brows − lips). Falls back to face_oval. Echoed to the head_mask output."),
+                io.Boolean.Input("remove_background", default=False, optional=True,
+                                 tooltip="Compute a clean HEAD silhouette IN-HOUSE (text-grounded SAM3, no extra "
+                                         "nodes): segment head_prompts as positive, exclude_prompts (neck/shirt/etc.) "
+                                         "as negative → head minus neck/clothing/background. Clips every output to it, "
+                                         "becomes head_mask, and is emitted as the `silhouette` output. Skipped if "
+                                         "silhouette_mask is wired. Auto-downloads the SAM3 checkpoint if needed."),
+                io.String.Input("head_prompts", default="head\nface\nhair\near", multiline=True, optional=True,
+                                tooltip="remove_background positives — one per line. Union = the head."),
+                io.String.Input("exclude_prompts", default="neck\nshirt\nclothing\nshoulder", multiline=True, optional=True,
+                                tooltip="remove_background negatives — one per line. Their union is SUBTRACTED from the "
+                                        "head (peels off neck / clothing / body)."),
+                io.Boolean.Input("neck_cut", default=True, optional=True,
+                                 tooltip="With remove_background: remove the neck. PRIMARY = in-house SegFormer face "
+                                         "parser (1038lab/segformer_face, auto-downloaded) — subtracts its real "
+                                         "Neck/Clothing/Necklace classes (per-pixel, reliable). FALLBACK if it can't "
+                                         "load = cut below the MediaPipe jawline contour. Off = keep the neck."),
+                io.Combo.Input("cutout_bg", options=["transparent", "black", "white"], default="transparent", optional=True,
+                               tooltip="Background for the head_cutout / head_cutout_clean image outputs: transparent "
+                                       "(RGBA alpha), or composited on black / white."),
+                io.Boolean.Input("drop_eyes", default=True, optional=True,
+                                 tooltip="head_cutout_clean: remove the eyes (punch-out — fill is left to BD MP Face Infill)."),
+                io.Boolean.Input("drop_brows", default=True, optional=True,
+                                 tooltip="head_cutout_clean: remove the brows."),
+                io.Boolean.Input("drop_lips", default=True, optional=True,
+                                 tooltip="head_cutout_clean: remove the lips/mouth."),
+                io.Boolean.Input("drop_nose", default=False, optional=True,
+                                 tooltip="head_cutout_clean: remove the nose (off by default — nose is usually kept skin)."),
             ],
             outputs=[
                 io.Image.Output(display_name="rgba",
@@ -378,16 +423,31 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 io.Mask.Output(display_name="hair"),
                 io.Mask.Output(display_name="head_mask"),
                 io.Mask.Output(display_name="masked_skin"),
+                io.Mask.Output(display_name="silhouette",
+                               tooltip="The head silhouette used for clipping (head − neck/clothing/bg). When "
+                                       "remove_background is on it's the in-house text-SAM3 head cutout; else the "
+                                       "wired silhouette_mask, else face_oval. Wire this anywhere you need 'head "
+                                       "but not neck' — replaces a separate background-removal + silhouette chain."),
                 io.Image.Output(display_name="debug_overlay",
                                 tooltip="Render with feature masks tinted (lips=R, brows=G, eyes=B, nose=Y)."),
                 io.String.Output(display_name="status"),
+                io.Image.Output(display_name="head_cutout",
+                                tooltip="The input image with the head silhouette applied, on cutout_bg "
+                                        "(transparent RGBA / black / white) — head only, background+neck removed."),
+                io.Image.Output(display_name="head_cutout_clean",
+                                tooltip="Same as head_cutout but with the drop_* features (eyes/brows/lips/nose) "
+                                        "punched out (holes empty / bg-filled). Wire into BD MP Face Infill to fill "
+                                        "them, or use as the skin plate."),
             ],
         )
 
     @classmethod
     def execute(cls, image, model=None, angle="front", do_brows=True, do_eyes=True, do_lips=True,
-                do_nose=True, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
-                refine_iterations=1, bleed_guard=48, cleanup=True, fill_holes=True, lips_mode="mouth",
+                do_nose=True, do_ears=False, detection_confidence=0.3, min_face_span=0.35, mask_threshold=0.5,
+                refine_iterations=1, bleed_guard=48, brow_bleed_guard=44, lips_bleed_guard=12, eye_bleed_guard=10,
+                remove_background=False, head_prompts="head\nface\nhair\near", exclude_prompts="neck\nshirt\nclothing\nshoulder",
+                neck_cut=True, cutout_bg="transparent", drop_eyes=True, drop_brows=True,
+                drop_lips=True, drop_nose=False, cleanup=True, fill_holes=True, lips_mode="mouth",
                 edge_smooth=3, edge_refine="off", refine_radius=8, refine_eps=1e-4, refine_threshold=0.5,
                 vitmatte_model="small", silhouette_mask=None, head_mask=None) -> io.NodeOutput:
         if image.ndim == 3:
@@ -419,7 +479,8 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             z = _blank(H, W)
             rgba = torch.from_numpy(np.zeros((H, W, 4), np.float32)).unsqueeze(0)
             dbg = torch.from_numpy(np.zeros((H, W, 3), np.float32)).unsqueeze(0)
-            return io.NodeOutput(rgba, *([_m(z)] * 20), dbg, status)
+            blank_rgba = torch.from_numpy(np.zeros((H, W, 4), np.float32)).unsqueeze(0)
+            return io.NodeOutput(rgba, *([_m(z)] * 21), dbg, status, blank_rgba, blank_rgba)
 
         if not HAS_MEDIAPIPE or not HAS_CV2:
             return _bail("missing mediapipe/opencv — no segmentation")
@@ -437,8 +498,10 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             return _bail("no face detected")
 
         # MediaPipe zones (face_oval + per-feature) for bleed-guard + face_oval/skin/irises.
+        # ear_expand>0 so the ear masks aren't empty (the ear-oval landmarks are ~collinear
+        # face-edge points; at expand 0 their convex hull collapses to nothing).
         mp_masks = _masks_from_landmarks(lm, H, W, face_expand=0, feature_expand=0,
-                                         iris_expand=0, ear_expand=0, hair_expand=0,
+                                         iris_expand=0, ear_expand=25, hair_expand=0,
                                          tight_features=True)
 
         # ── SAM3 setup (mirrors comfy_extras/nodes_sam3.SAM3_Detect) ──────────
@@ -454,9 +517,25 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         ).to(device=device, dtype=dtype)
 
         scale = max(H, W) / 1536.0
-        guard_px = max(0, int(round(bleed_guard * scale)))
-        kernel = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * guard_px + 1, 2 * guard_px + 1))
-                  if guard_px > 0 and HAS_CV2 else None)
+        guard_px = max(0, int(round(bleed_guard * scale)))   # general guard (status display)
+
+        def _feature_guard(out_key: str):
+            """Per-feature bleed-guard. Brows need a LARGE guard (their MediaPipe landmarks
+            sit inside the painted brow, so SAM3 must grow out to fill); lips and eyes need
+            a SMALL one (else SAM3 grows past the lip/eyelid aperture onto the face/skin).
+            Returns (guard_px, dilate_kernel|None)."""
+            if out_key == "lips":
+                g = lips_bleed_guard
+            elif out_key in ("left_eye", "right_eye"):
+                g = eye_bleed_guard
+            elif out_key in ("left_brow", "right_brow"):
+                g = brow_bleed_guard
+            else:
+                g = bleed_guard   # nose + general fallback
+            gpx = max(0, int(round(g * scale)))
+            k = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * gpx + 1, 2 * gpx + 1))
+                 if gpx > 0 and HAS_CV2 else None)
+            return gpx, k
 
         def _sam3_feature(out_key: str) -> np.ndarray:
             pos_src, neg_srcs = _FEATURE_SPECS[out_key]
@@ -509,10 +588,11 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
 
             # Light bleed-guard: clip SAM3 to the MediaPipe zone dilated by guard_px.
             # Large guard ⇒ SAM3's shape dominates (correct for offset features like brows).
+            feat_guard_px, feat_kernel = _feature_guard(out_key)
             mp_zone = mp_masks.get(out_key)
-            if mp_zone is not None and kernel is not None:
-                sam = np.minimum(sam, cv2.dilate(mp_zone, kernel))
-            elif mp_zone is not None and guard_px == 0:
+            if mp_zone is not None and feat_kernel is not None:
+                sam = np.minimum(sam, cv2.dilate(mp_zone, feat_kernel))
+            elif mp_zone is not None and feat_guard_px == 0:
                 sam = np.minimum(sam, mp_zone)
 
             # Cleanup: drop stray non-contiguous chunks (keep seeded component) + fill holes.
@@ -537,6 +617,21 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             if feat_fill:
                 sam = _fill_holes(sam)
             return sam
+
+        # ── Text-grounded SAM3 helper (shared by remove_background + do_ears) ──
+        # Lazy-loads SAM3's text encoder in-house (bd_sam3) and segments a word prompt.
+        _txt = {}
+
+        def _text_mask(prompt: str) -> np.ndarray:
+            if "clip" not in _txt:
+                from . import bd_sam3
+                _txt["model"], _txt["clip"] = bd_sam3.load_sam3(need_clip=True)
+            from . import bd_sam3
+            t = bd_sam3.segment_text(_txt["model"], _txt["clip"], image, prompt, threshold=mask_threshold)
+            m = (t[0].detach().cpu().numpy() > 0.5).astype(np.uint8) * 255
+            if m.shape != (H, W):
+                m = cv2.resize(m, (W, H), interpolation=cv2.INTER_NEAREST)
+            return m
 
         # ── Per-feature segmentation ──────────────────────────────────────────
         left_eye  = _sam3_feature("left_eye")  if do_eyes  else _blank(H, W)
@@ -571,8 +666,114 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         forehead   = mp_masks["forehead"]
         hair       = mp_masks["hair"]
 
+        # do_ears: replace the (weak) MediaPipe ear approximation with a text-grounded SAM3
+        # "ear" segmentation, split into left/right at the face-oval centre. (The 478-pt face
+        # mesh has no outer-ear points, so SAM3 is the only way to get the actual ear.)
+        if do_ears:
+            try:
+                ear_all = _text_mask("ear")
+                cols = np.any(face_oval > 0, axis=0)
+                if cols.any():
+                    xs = np.where(cols)[0]
+                    face_cx = int((xs[0] + xs[-1]) / 2)
+                else:
+                    face_cx = W // 2
+                lclip = _blank(H, W); lclip[:, :face_cx] = 255
+                rclip = _blank(H, W); rclip[:, face_cx:] = 255
+                left_ear = np.minimum(ear_all, lclip)
+                right_ear = np.minimum(ear_all, rclip)
+                ears = _union(left_ear, right_ear)
+                print(f"[BD MP SAM3] do_ears: SAM3 ear {100.0 * (ears > 0).mean():.2f}%", flush=True)
+            except Exception as e:
+                print(f"[BD MP SAM3] do_ears failed ({e}) — keeping MediaPipe ears", flush=True)
+
         # head_mask: explicit input > silhouette > face_oval. Used as the skin base.
         sil = _mask_in(silhouette_mask)
+
+        # In-house background/neck removal: text-grounded SAM3 head silhouette (no extra
+        # nodes). head_prompts (positive) ∪ minus exclude_prompts (neck/clothing/bg).
+        if sil is None and remove_background:
+            try:
+                pos_lines = [p.strip() for p in (head_prompts or "").split("\n") if p.strip()]
+                neg_lines = [p.strip() for p in (exclude_prompts or "").split("\n") if p.strip()]
+
+                def _text_union(lines):
+                    acc = _blank(H, W)
+                    for p in lines:
+                        acc = np.maximum(acc, _text_mask(p))
+                    return acc
+
+                pos = _text_union(pos_lines)
+                neg = _text_union(neg_lines)
+                head_sil = (pos.astype(bool) & ~neg.astype(bool)).astype(np.uint8) * 255
+
+                # Neck removal — STACKED for robustness (face-parse alone under-detects the
+                # neck on stylized heads, leaving the bulk below its thin band):
+                #   1. in-house SegFormer face-parser (1038lab/segformer_face): subtract the
+                #      real Neck/Clothing/Necklace classes (catches neck/collar above the jaw).
+                #   2. jawline cut: below the MediaPipe jaw contour, INTERPOLATED across the
+                #      full width (np.interp) so the neck is cut in side columns too, not only
+                #      under the face — a contour, not a flat line.
+                #   3. keep the head's connected component: drops the now-disconnected neck/
+                #      shoulder remnant under the cut (the "clean up the rest under it" step).
+                cut_info = ""
+                if neck_cut:
+                    parts = []
+                    nc_sub = nc_loc = None
+                    try:
+                        from . import bd_face_parse
+                        pred = bd_face_parse.parse(image)
+                        nc_sub = bd_face_parse.class_mask(pred, ["Neck", "Clothing", "Necklace"])
+                        nc_loc = bd_face_parse.class_mask(pred, ["Neck"])           # boundary locator
+                        if nc_sub.shape != head_sil.shape:
+                            nc_sub = cv2.resize(nc_sub, (W, H), interpolation=cv2.INTER_NEAREST)
+                            nc_loc = cv2.resize(nc_loc, (W, H), interpolation=cv2.INTER_NEAREST)
+                    except Exception as e:
+                        print(f"[BD MP SAM3] face-parser unavailable ({e})", flush=True)
+                    if nc_sub is not None and (nc_sub > 0).any():
+                        head_sil[nc_sub > 0] = 0                                   # remove detected neck/clothing
+                        parts.append(f"faceparse{100.0 * (nc_sub > 0).mean():.0f}%")
+                        # The detected NECK band marks the jaw/neck boundary. Cut everything below
+                        # its TOP edge (per column, interpolated across the width) — removes the
+                        # rest of the neck the model mislabelled as skin, WITHOUT MediaPipe's
+                        # too-high chin (which ate the jaw/ear). Skin above the band = kept.
+                        loc = nc_loc if (nc_loc is not None and (nc_loc > 0).any()) else nc_sub
+                        lb = loc > 0
+                        lcols = np.where(np.any(lb, axis=0))[0]
+                        if len(lcols):
+                            neck_top = np.argmax(lb, axis=0).astype(np.float64)    # first neck row per col
+                            top_full = np.interp(np.arange(W), lcols, neck_top[lcols])
+                            head_sil[np.arange(H)[:, None] >= top_full[None, :]] = 0
+                            parts.append("below-neck")
+                        # keep the head connected component — drop the disconnected neck/shoulder remnant
+                        nlbl, lab, stats, _ = cv2.connectedComponentsWithStats((head_sil > 0).astype(np.uint8), 8)
+                        if nlbl > 1:
+                            ys2, xs2 = np.where(mp_masks["face_oval"] > 0)
+                            seed = 0
+                            if len(xs2):
+                                cy, cx = int(ys2.mean()), int(xs2.mean())
+                                if 0 <= cy < H and 0 <= cx < W and head_sil[cy, cx] > 0:
+                                    seed = int(lab[cy, cx])
+                            if seed == 0:
+                                seed = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+                            head_sil = (lab == seed).astype(np.uint8) * 255
+                            parts.append("head-cc")
+                    else:
+                        parts.append("no-neck-detected")   # leave the silhouette (don't risk eating the jaw)
+                    cut_info = " | neck:" + "+".join(parts) if parts else ""
+
+                if head_sil.any():
+                    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+                    head_sil = cv2.morphologyEx(head_sil, cv2.MORPH_CLOSE, k)
+                    head_sil = _fill_holes(head_sil)
+                    sil = head_sil
+                    print(f"[BD MP SAM3] remove_background: head silhouette {100.0 * (sil > 0).mean():.1f}% "
+                          f"(+{len(pos_lines)} -{len(neg_lines)} prompts){cut_info}", flush=True)
+                else:
+                    print("[BD MP SAM3] remove_background: empty head silhouette — skipping", flush=True)
+            except Exception as e:
+                print(f"[BD MP SAM3] remove_background failed ({e}) — skipping", flush=True)
+
         hm_in = _mask_in(head_mask)
         head_out = hm_in if hm_in is not None else (sil if sil is not None else face_oval)
         skin = _subtract(head_out, eyes, brows, lips)
@@ -590,24 +791,61 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 local[k] = np.minimum(local[k], sil)
             head_out = sil
         masked_skin = local["skin"]
+        # silhouette output: the head cutout used for clipping (head − neck/clothing/bg when
+        # remove_background; else the wired silhouette; else the face oval).
+        silhouette_out = sil if sil is not None else face_oval
 
         rgba_np = np.stack([local["lips"], local["brows"], local["eyes"], local["face_oval"]],
                            axis=-1).astype(np.float32) / 255.0
         rgba = torch.from_numpy(rgba_np).unsqueeze(0)
 
-        # Debug overlay: feature masks tinted over the render.
+        # Debug overlay: preview every region. Dim everything OUTSIDE the head silhouette
+        # (so the kept head / removed neck+bg is obvious), then tint each feature — incl.
+        # ears, irises, hair, forehead — over the render.
         ov = np_img.astype(np.float32).copy()
-        for msk, col in [(local["lips"], (255, 0, 0)), (local["brows"], (0, 255, 0)),
-                         (local["eyes"], (0, 80, 255)), (local["nose"], (255, 255, 0))]:
+        outside = silhouette_out == 0
+        ov[outside] *= 0.30
+        for msk, col in [(local["hair"], (160, 90, 0)), (local["forehead"], (90, 90, 90)),
+                         (local["ears"], (0, 220, 220)), (local["irises"], (255, 0, 255)),
+                         (local["nose"], (255, 255, 0)), (local["eyes"], (0, 80, 255)),
+                         (local["brows"], (0, 255, 0)), (local["lips"], (255, 0, 0))]:
             sel = msk > 0
             for ch in range(3):
-                ov[..., ch][sel] = 0.5 * ov[..., ch][sel] + 0.5 * col[ch]
+                ov[..., ch][sel] = 0.45 * ov[..., ch][sel] + 0.55 * col[ch]
         debug_overlay = _img(ov.clip(0, 255))
+
+        # head_cutout(_clean): input image masked to the head, on cutout_bg. _clean also
+        # punches out the drop_* features (fill is left to BD MP Face Infill).
+        _rgb01 = np_img.astype(np.float32) / 255.0
+
+        def _compose(mask_u8):
+            a = (mask_u8 > 0).astype(np.float32)[..., None]
+            if cutout_bg == "transparent":
+                rgba = np.concatenate([_rgb01, a], axis=-1)            # straight alpha
+            else:
+                bgv = 0.0 if cutout_bg == "black" else 1.0
+                comp = _rgb01 * a + bgv * (1.0 - a)
+                rgba = np.concatenate([comp, np.ones_like(a)], axis=-1)
+            return torch.from_numpy(rgba).unsqueeze(0)
+
+        head_cutout = _compose(silhouette_out)
+        clean = (silhouette_out > 0)
+        if drop_eyes:
+            clean &= ~(local["eyes"] > 0)
+        if drop_brows:
+            clean &= ~(local["brows"] > 0)
+        if drop_lips:
+            clean &= ~(local["lips"] > 0)
+        if drop_nose:
+            clean &= ~(local["nose"] > 0)
+        head_cutout_clean = _compose(clean.astype(np.uint8) * 255)
 
         feats = [k for k, on in
                  [("brows", do_brows), ("eyes", do_eyes), ("lips", do_lips), ("nose", do_nose)] if on]
+        lips_guard_px = max(0, int(round(lips_bleed_guard * scale)))
+        eye_guard_px = max(0, int(round(eye_bleed_guard * scale)))
         status = (f"SAM3-guided: {', '.join(feats) or 'none'} | det {det.get('quality')} "
-                  f"span={det.get('span')} | bleed_guard={guard_px}px"
+                  f"span={det.get('span')} | bleed_guard={guard_px}px (lips={lips_guard_px}px eyes={eye_guard_px}px)"
                   f"{' | silhouette-clipped' if sil is not None else ''}"
                   f"{' | refine=' + edge_refine if edge_refine != 'off' else ''}")
         print(f"[BD MP SAM3 Face Segment] {status}", flush=True)
@@ -619,7 +857,7 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             _m(local["right_iris"]), _m(local["irises"]), _m(local["lips"]), _m(local["nose"]),
             _m(local["left_ear"]), _m(local["right_ear"]), _m(local["ears"]),
             _m(local["forehead"]), _m(local["hair"]), _m(head_out), _m(masked_skin),
-            debug_overlay, status,
+            _m(silhouette_out), debug_overlay, status, head_cutout, head_cutout_clean,
         )
 
 

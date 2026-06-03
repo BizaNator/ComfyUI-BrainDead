@@ -20,11 +20,17 @@ Wire a comfy-core SAM3 `MODEL` (e.g. `Load Diffusion Model → sam3.pt`) only to
 | `image` | Full-color, full-resolution face image. Only `image[0]` is processed. |
 | `angle` | `front` / `side_left` / `side_right` — stored for downstream/context. |
 | `do_brows` / `do_eyes` / `do_lips` / `do_nose` | Per-feature SAM3 toggle. Disabled features fall back to the MediaPipe zone. |
+| `do_ears` | Segment ears with **text-grounded SAM3** ("ear", split L/R at the face centre) instead of the weak MediaPipe approximation (the 478-pt face mesh has no outer-ear points). Off = MediaPipe ears (now non-empty). |
+| `remove_background` | Compute a clean **head silhouette in-house** (text-SAM3): `head_prompts` positive minus `exclude_prompts` (neck/shirt/…) negative → head minus neck/clothing/background. Clips every output to it, becomes `head_mask`, and is emitted as the `silhouette` output. Replaces a separate bg-removal + silhouette chain. Skipped if `silhouette_mask` is wired. |
+| `head_prompts` / `exclude_prompts` | Positive / negative word prompts (one per line) for `remove_background`. |
+| `neck_cut` | With `remove_background`: drop everything below the MediaPipe **jawline** (`face_oval`'s lowest edge per column — follows the chin/jaw contour, *not* a flat line; hair/ears to the sides are kept). This is how the neck is removed: `head` (kept for the cranium/bald crown) pulls the neck in, and SAM3 can't reliably segment the bare neck as a text negative, but MediaPipe's jaw landmarks are accurate so the cut tracks the jaw exactly. |
 | `detection_confidence` | MediaPipe detection confidence (0.3 works for stylized renders). |
 | `min_face_span` | Tiny-detection guard (see **BD MP Face Export**). 0 disables. |
 | `mask_threshold` | SAM3 mask probability cutoff (lower → grow thin masks). |
 | `refine_iterations` | SAM decoder refinement passes. Sharpens brows/eyes; **lips always use a single pass** (the loop destabilizes them) and a collapse-guard reverts any feature that the loop over-shrinks. |
-| `bleed_guard` | Dilate the MediaPipe zone by N px, then clip SAM3 to it. **Large = trust SAM3** (needed for offset brows); 0 = clip exactly to MediaPipe. |
+| `bleed_guard` | Dilate the MediaPipe zone by N px, then clip SAM3 to it, for **brows/eyes/nose**. **Large = trust SAM3** (brows need ~40-45 to grow out and fill); 0 = clip exactly to MediaPipe. |
+| `lips_bleed_guard` | Same, but for **lips only** (default 12). Kept separate because brows need a *large* guard to fill while lips need a *small* one or they overflow onto the face. Lower = tighter lips; 0 = clip exactly to the MediaPipe lip contour. |
+| `eye_bleed_guard` | Same, but for **eyes only** (default 10). SAM3 grows to the whole eye (lid/lashes/sclera); a small guard clips it back toward the eyelid aperture so the mask hugs the eyeball — like **BD Face Infill**'s eroded eyelid hull. Lower = tighter; 0 = clip exactly to the MediaPipe eye contour. |
 | `cleanup` | Keep only the connected component(s) a positive seed lands in (drops stray SAM3 chunks). |
 | `fill_holes` | Fill interior holes on **non-lip** features (eyes/nose/etc.) so each is solid. Lips are controlled by `lips_mode`. |
 | `lips_mode` | Lips-specific: `mouth` (default) fills the whole mouth area (lips + teeth + tongue) into the lips mask; `lips_only` keeps lip flesh only (color-aware `edge_refine` excludes teeth/tongue). |
