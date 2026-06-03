@@ -27,6 +27,8 @@ Helper drawing functions: _pts, _blank, _fill_convex, _fill_poly_ordered, _union
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 try:
@@ -34,6 +36,44 @@ try:
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
+
+try:
+    import folder_paths as _folder_paths
+except ImportError:
+    _folder_paths = None
+
+
+def _model_roots() -> list[str]:
+    """Every configured ComfyUI model root, generically — `models_dir` plus the parent
+    of each registered folder path (so extra_model_paths.yaml roots are picked up too).
+    No hardcoded machine paths: works wherever the user pointed ComfyUI's models dir."""
+    roots: list[str] = []
+    if _folder_paths is None:
+        return roots
+    md = getattr(_folder_paths, "models_dir", None)
+    if md:
+        roots.append(md)
+    try:
+        for _name, _entry in getattr(_folder_paths, "folder_names_and_paths", {}).items():
+            for _p in _entry[0]:
+                parent = os.path.dirname(os.path.normpath(_p))   # .../models/checkpoints → .../models
+                if parent and parent not in roots:
+                    roots.append(parent)
+    except Exception:
+        pass
+    return roots
+
+
+def find_mediapipe_model(filename: str = "face_landmarker.task") -> str:
+    """Locate a MediaPipe model file under any configured ComfyUI model root, in a
+    `mediapipe/` subfolder. Generic + machine-agnostic (uses folder_paths, never a
+    hardcoded path). Falls back to `<models_dir>/mediapipe/<filename>` if not found."""
+    for base_dir in _model_roots():
+        candidate = os.path.join(base_dir, "mediapipe", filename)
+        if os.path.exists(candidate):
+            return candidate
+    md = getattr(_folder_paths, "models_dir", "models") if _folder_paths else "models"
+    return os.path.join(md, "mediapipe", filename)
 
 try:
     from mediapipe.tasks.python.vision.face_landmarker import FaceLandmarksConnections as _FLC

@@ -84,8 +84,15 @@ def get_pipeline(model_path: str = DEFAULT_MODEL_PATH) -> "Pixal3DImageTo3DPipel
         if _orig_birefnet is not None:
             _p3d_rembg.BiRefNet = _orig_birefnet
 
-    # Load rembg from local path — avoids gated HF download, uses existing copy.
-    _RMBG_LOCAL = "/srv/AI_Stuff/models/RMBG/RMBG-2.0"
+    # Load rembg from a local copy under ComfyUI's configured models dir — avoids the
+    # gated HF download. Generic (folder_paths), not a hardcoded machine path.
+    import os as _os
+    try:
+        import folder_paths as _fp
+        _models_dir = _fp.models_dir
+    except Exception:
+        _models_dir = "models"
+    _RMBG_LOCAL = _os.path.join(_models_dir, "RMBG", "RMBG-2.0")
     print(f"[BD Pixal3D] Loading BiRefNet rembg from {_RMBG_LOCAL}...")
     pipeline.rembg_model = _p3d_rembg.BiRefNet(model_name=_RMBG_LOCAL)
 

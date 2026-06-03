@@ -36,15 +36,7 @@ from comfy_api.latest import io
 import folder_paths as _folder_paths
 
 
-def _find_mediapipe_model() -> str:
-    """Find face_landmarker.task in ComfyUI model directories, or return default path."""
-    filename = "face_landmarker.task"
-    for base_dir in _folder_paths.get_folder_paths("models"):
-        candidate = os.path.join(base_dir, "mediapipe", filename)
-        if os.path.exists(candidate):
-            return candidate
-    return os.path.join(_folder_paths.models_dir, "mediapipe", filename)
-
+from .face_mp_shared import find_mediapipe_model as _find_mediapipe_model
 
 _MODEL_PATH = _find_mediapipe_model()
 

@@ -68,6 +68,19 @@ def _largest_cc(mask: np.ndarray) -> np.ndarray:
     return lab == (1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA])))
 
 
+def _despeckle(mask_bool: np.ndarray, min_px: int) -> np.ndarray:
+    """Drop connected components smaller than min_px (removes specular specks — e.g. the
+    wet glints on the tongue that read as teeth-white and punch holes in the tongue)."""
+    if min_px <= 0:
+        return mask_bool
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(mask_bool.astype(np.uint8), connectivity=8)
+    keep = np.zeros_like(mask_bool)
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] >= min_px:
+            keep |= (lab == i)
+    return keep
+
+
 def _seed_points(mask_u8: np.ndarray, k: int = 6):
     """Interior positive seeds + bbox from a colour-prior mask. Points are the most-
     interior pixels (distance-transform peak band) so SAM3 grows from inside the part,
@@ -253,6 +266,10 @@ class BD_MouthParts(io.ComfyNode):
                 io.Boolean.Input("fill_holes", default=True, optional=True,
                                  tooltip="Fill interior holes so each part is solid (e.g. specular gaps in the "
                                          "tongue, gaps between teeth in the lips ring)."),
+                io.Float.Input("despeckle", default=0.0008, min=0.0, max=0.05, step=0.0001, optional=True,
+                               tooltip="Drop connected components smaller than this fraction of the image (removes "
+                                       "specular glints on the tongue that read as teeth and punch holes in it). "
+                                       "0 disables. Keep small so real (separate) teeth aren't removed."),
                 io.Combo.Input("edge_refine", options=["off", "guided", "matting", "vitmatte"], default="off",
                                optional=True,
                                tooltip="Snap each part's edge to the image colour/edges (shared with BD MP SAM3):\n"
@@ -289,8 +306,8 @@ class BD_MouthParts(io.ComfyNode):
     def execute(cls, image, engine="color", model=None, pom=None, bg_v_min=25, teeth_s_max=60,
                 teeth_v_min=140, tongue_h_lo=325, tongue_h_hi=358, tongue_s_min=80, tongue_s_max=170,
                 tongue_v_min=120, lips_s_min=85, interior_frac=0.06, sam3_iters=1, bleed_guard=24,
-                edge_smooth=3, fill_holes=True, edge_refine="off", refine_radius=6, refine_eps=1e-4,
-                refine_threshold=0.5, vitmatte_model="small") -> io.NodeOutput:
+                edge_smooth=3, fill_holes=True, despeckle=0.0008, edge_refine="off", refine_radius=6,
+                refine_eps=1e-4, refine_threshold=0.5, vitmatte_model="small") -> io.NodeOutput:
         if image.ndim == 3:
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
@@ -350,8 +367,19 @@ class BD_MouthParts(io.ComfyNode):
             else:
                 guard = fg_union
 
-            u8 = {}
-            for key in ("lips", "teeth", "tongue"):
+            # SAM3 REFINES the colour priors, it must never regress them. lips/teeth/tongue
+            # are nested in a tiny area with overlapping bboxes, so a box+point prompt is
+            # ambiguous (teeth's box can engulf the whole mouth; the lip RING's bbox *is* the
+            # whole mouth). So:
+            #   • teeth & tongue — compact blobs — get SAM3 with their own tight colour bbox,
+            #     guarded: if SAM3 over- or under-grows vs the colour prior it reverts to colour.
+            #     This is where SAM3 helps most (e.g. the lit front of the tongue that colour
+            #     misreads as magenta lips).
+            #   • lips — taken from the colour ring; mutual-exclusivity below carves teeth/tongue
+            #     back out. (No usable single SAM3 box for a ring.)
+            GREEDY_HI, GREEDY_LO = 3.0, 0.25
+            u8 = {"lips": color_u8["lips"].copy()}
+            for key in ("teeth", "tongue"):
                 cm = color_u8[key]
                 if cm.max() == 0:
                     u8[key] = cm
@@ -362,13 +390,20 @@ class BD_MouthParts(io.ComfyNode):
                 try:
                     sam = _sam3_segment(sam3, sam_frame, H, W, device, dtype,
                                         pos_px, neg_px, box, mask_threshold=0.5, iters=sam3_iters)
+                    sam = np.minimum(sam, guard)                   # keep inside the mouth
+                    sam = _clean_feature_mask(sam, pos_px, smooth_px=edge_smooth, fill=False)
                 except Exception as e:
                     print(f"[BD MP Mouth Parts] SAM3 failed for {key} ({e}) — using colour mask", flush=True)
                     u8[key] = cm
                     continue
-                sam = np.minimum(sam, guard)                       # keep inside the mouth
-                sam = _clean_feature_mask(sam, pos_px, smooth_px=edge_smooth, fill=False)
-                u8[key] = sam if sam.max() > 0 else cm             # never lose a part SAM3 dropped
+                ca = max(1, int((cm > 0).sum()))
+                sa = int((sam > 0).sum())
+                if sa == 0 or sa > GREEDY_HI * ca or sa < GREEDY_LO * ca:
+                    print(f"[BD MP Mouth Parts] SAM3 {key} {sa}px vs colour {ca}px out of "
+                          f"[{GREEDY_LO}–{GREEDY_HI}]× — reverting to colour", flush=True)
+                    u8[key] = cm
+                else:
+                    u8[key] = sam
         else:
             u8 = dict(color_u8)
 
@@ -387,6 +422,20 @@ class BD_MouthParts(io.ComfyNode):
         teeth_b = u8["teeth"] > 0
         tongue_b = (u8["tongue"] > 0) & ~teeth_b
         lips_b = (u8["lips"] > 0) & ~teeth_b & ~tongue_b
+
+        # Despeckle: drop tiny components (tongue specular glints misread as teeth, etc.).
+        # Removed teeth/tongue specks inside a larger part are reclaimed by re-filling that
+        # part's holes, then exclusivity is re-applied so the parts stay disjoint.
+        if despeckle > 0:
+            min_px = int(despeckle * H * W)
+            teeth_b = _despeckle(teeth_b, min_px)
+            tongue_b = _despeckle(tongue_b, min_px)
+            if fill_holes:
+                tongue_b = _fill_holes(tongue_b.astype(np.uint8) * 255) > 0
+                lips_b = _fill_holes(lips_b.astype(np.uint8) * 255) > 0
+            tongue_b = tongue_b & ~teeth_b
+            lips_b = lips_b & ~teeth_b & ~tongue_b
+
         u8 = {"lips": lips_b.astype(np.uint8) * 255,
               "teeth": teeth_b.astype(np.uint8) * 255,
               "tongue": tongue_b.astype(np.uint8) * 255}
