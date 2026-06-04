@@ -222,6 +222,27 @@ class BD_CropToMask(io.ComfyNode):
             cropped = img[:, y1c:y2c, x1c:x2c, :]
 
         sz = int(output_size)
+
+        # If mask provided and image is RGB (3ch), embed mask as alpha → RGBA output
+        embed_alpha = (mask is not None) and (C == 3)
+        if embed_alpha:
+            # Crop the mask with the same box
+            m = mask if mask.ndim == 3 else mask.unsqueeze(0)
+            if m.shape[-2] != H or m.shape[-1] != W:
+                # Resize mask to match image if needed
+                m = F.interpolate(m.unsqueeze(1).float(), size=(H, W), mode="bilinear", align_corners=False).squeeze(1)
+            if int(fixed_size_px) > 0:
+                m_crop = _pad_and_crop(m.unsqueeze(-1), x1, y1, x2, y2)[..., 0:1]
+            else:
+                x1c2, y1c2 = max(0, x1), max(0, y1)
+                x2c2, y2c2 = min(W, x2), min(H, y2)
+                m_crop = m[:, y1c2:y2c2, x1c2:x2c2].unsqueeze(-1)
+            # ComfyUI MASK convention: 0=opaque foreground, 1=transparent background
+            # Invert to get proper alpha: 1=opaque, 0=transparent
+            m_alpha = 1.0 - m_crop.float()
+            # Concatenate as 4th channel → RGBA crop
+            cropped = torch.cat([cropped, m_alpha.expand(cropped.shape[0], -1, -1, -1)], dim=-1)
+
         nchw = cropped.permute(0, 3, 1, 2).float()
 
         if resize_mode == "fit":
@@ -233,6 +254,7 @@ class BD_CropToMask(io.ComfyNode):
             scaled = F.interpolate(nchw, size=(new_h, new_w), mode="bilinear", align_corners=False)
             pad_top = (sz - new_h) // 2
             pad_left = (sz - new_w) // 2
+            # Canvas zeros = black RGB + transparent alpha — correct for RGBA
             canvas = torch.zeros(nchw.shape[0], nchw.shape[1], sz, sz,
                                  dtype=nchw.dtype, device=nchw.device)
             canvas[:, :, pad_top:pad_top+new_h, pad_left:pad_left+new_w] = scaled
