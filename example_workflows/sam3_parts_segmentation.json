@@ -22,9 +22,9 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "# BrainDead - SAM3 Parts Segmentation\n\nOpen-vocabulary part segmentation from a single image. SAM3 segments each named prompt into a mask; the Parts pipeline crops each part to its own RGBA image and exports per-part PNGs + a layered composite.\n\n## Flow\n1. **Load Image** - pick any image (subject on a clean background works best).\n2. **BD SAM3 Multi-Prompt** - type one part name per line in `prompts`. Standalone: auto-downloads the official `Comfy-Org/sam3.1` checkpoint on first use. Outputs `per_prompt_masks` + `combined_mask`.\n3. **BD Parts Builder** - crops/pads each masked region into its own image, emits a `PARTS_BUNDLE`.\n4. **BD Parts Compose** - flattens the parts back into a single preview image (shown inline).\n5. **BD Parts Export** - writes per-part RGBA PNGs + a composite PNG to the output folder.\n\n## Models / VRAM\nSAM3 (`Comfy-Org/sam3.1`) auto-downloads in-house on first run - no comfyui-rmbg needed. Plan ~8-10 GB VRAM for the SAM3 model + text encoder. Edit the `prompts` list to match your subject (e.g. `head`, `torso`, `arm`, `leg`, `hand`).\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+        "# BrainDead - SAM3 Parts Segmentation\n\nOpen-vocabulary part segmentation from a single image. SAM3 segments each named prompt into a mask; the Parts pipeline crops each part to its own RGBA image and exports per-part PNGs + a layered composite.\n\n## Flow\n1. **Load Image** - pick any image (subject on a clean background works best).\n2. **BD SAM3 Multi-Prompt** - type one part name per line in `prompts`. Standalone: auto-downloads the official `Comfy-Org/sam3.1` checkpoint on first use. Outputs `per_prompt_masks` + `combined_mask`.\n3. **BD Parts Builder** - crops/pads each masked region into its own image, emits a `PARTS_BUNDLE`.\n4. **BD Parts Compose** - flattens the parts back into a single preview image (shown inline).\n5. **BD Parts Export** - writes per-part RGBA PNGs + a composite PNG to the output folder.\n\n## Models / VRAM\nSAM3 (`Comfy-Org/sam3.1`) auto-downloads in-house on first run - no comfyui-rmbg needed. Plan ~8-10 GB VRAM for the SAM3 model + text encoder. Edit the `prompts` list to match your subject (e.g. `head`, `torso`, `arm`, `leg`, `hand`).\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ],
-      "title": "\u2139\ufe0f About \u2014 BrainDead SAM3 Parts"
+      "title": "ℹ️ About — BrainDead SAM3 Parts"
     },
     {
       "id": 1,
@@ -64,7 +64,7 @@
         "example.png",
         "image"
       ],
-      "title": "\u2460 Load Image"
+      "title": "① Load Image"
     },
     {
       "id": 2,
@@ -153,7 +153,7 @@
         0.0,
         false
       ],
-      "title": "\u2461 SAM3 Multi-Prompt (one part per line)"
+      "title": "② SAM3 Multi-Prompt (one part per line)"
     },
     {
       "id": 3,
@@ -242,9 +242,11 @@
         64,
         "",
         1024,
+        "#888888",
+        1024,
         "#888888"
       ],
-      "title": "\u2462 Parts Builder (crop each part)"
+      "title": "③ Parts Builder (crop each part)"
     },
     {
       "id": 4,
@@ -288,7 +290,7 @@
         0,
         true
       ],
-      "title": "\u2463 Parts Compose (flatten preview)"
+      "title": "④ Parts Compose (flatten preview)"
     },
     {
       "id": 5,
@@ -375,7 +377,7 @@
         0,
         false
       ],
-      "title": "\u2464 Parts Export (PNGs + composite)"
+      "title": "⑤ Parts Export (PNGs + composite)"
     }
   ],
   "links": [

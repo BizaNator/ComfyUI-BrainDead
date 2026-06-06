@@ -22,9 +22,9 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "# Qwen Character Consistency\n\nKeep a character's **face and identity** locked while you re-prompt pose, outfit, or scene with **Qwen-Image-Edit**.\n\n## Flow\n1. **Load Diffusion Model / CLIP / VAE** \u2014 Qwen-Image-Edit 2509 (bf16) + the qwen_image text encoder + qwen_image VAE.\n2. **Load Image** \u2014 your character reference photo (portable picker).\n3. **BD Qwen Character Edit** \u2014 type your edit prompt; the built-in system template preserves facial structure, hair, eyes, skin, and distinctive marks. Outputs the positive conditioning + a latent sized to the reference.\n4. **ConditioningZeroOut** \u2014 derives the negative conditioning.\n5. **KSampler \u2192 VAE Decode \u2192 Save Image** \u2014 render the edited, identity-preserved result.\n\n## Models / VRAM\nUses standard ComfyUI loaders \u2014 swap in any Qwen-Image-Edit checkpoint, text encoder (`qwen_image` CLIP type), and VAE you have. bf16 Qwen-Image-Edit needs ~40 GB VRAM; use an fp8 variant on smaller cards. No models auto-download \u2014 set the three loader widgets to files present in your `models/` folders.\n\nTip: for multi-reference identity weighting, swap **BD Qwen Character Edit** for **BD Qwen Identity Lock** (image1 = character, image2 = pose/style).\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+        "# Qwen Character Consistency\n\nKeep a character's **face and identity** locked while you re-prompt pose, outfit, or scene with **Qwen-Image-Edit**.\n\n## Flow\n1. **Load Diffusion Model / CLIP / VAE** — Qwen-Image-Edit 2509 (bf16) + the qwen_image text encoder + qwen_image VAE.\n2. **Load Image** — your character reference photo (portable picker).\n3. **BD Qwen Character Edit** — type your edit prompt; the built-in system template preserves facial structure, hair, eyes, skin, and distinctive marks. Outputs the positive conditioning + a latent sized to the reference.\n4. **ConditioningZeroOut** — derives the negative conditioning.\n5. **KSampler → VAE Decode → Save Image** — render the edited, identity-preserved result.\n\n## Models / VRAM\nUses standard ComfyUI loaders — swap in any Qwen-Image-Edit checkpoint, text encoder (`qwen_image` CLIP type), and VAE you have. bf16 Qwen-Image-Edit needs ~40 GB VRAM; use an fp8 variant on smaller cards. No models auto-download — set the three loader widgets to files present in your `models/` folders.\n\nTip: for multi-reference identity weighting, swap **BD Qwen Character Edit** for **BD Qwen Identity Lock** (image1 = character, image2 = pose/style).\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ],
-      "title": "\u2139\ufe0f About \u2014 Qwen Character Consistency"
+      "title": "ℹ️ About — Qwen Character Consistency"
     },
     {
       "id": 1,
@@ -336,11 +336,11 @@
       },
       "widgets_values": [
         42,
-        "fixed",
+        20,
         20,
         2.5,
-        "euler",
         "simple",
+        1.0,
         1.0
       ],
       "title": "KSampler"

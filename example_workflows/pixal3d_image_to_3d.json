@@ -206,7 +206,9 @@
       "properties": {
         "Node name for S&R": "BD_Preview3D"
       },
-      "widgets_values": [],
+      "widgets_values": [
+        true
+      ],
       "title": "④ Preview 3D"
     },
     {
@@ -271,7 +273,7 @@
         "pixal3d_output",
         "glb",
         true,
-        "",
+        true,
         "",
         "",
         ""

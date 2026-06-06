@@ -24,9 +24,9 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# BrainDead \u2014 TRELLIS.2 Shape \u2192 Textured Mesh\n\nSingle-image to **PBR-textured 3D mesh** with Microsoft TRELLIS.2. Drop in a reference image, get back a watertight mesh with base-color / metallic / roughness vertex attributes.\n\n## Flow\n1. **Load Image** \u2014 pick any reference image (front-facing subject works best).\n2. **Trellis2 Remove Background** \u2014 produces a clean foreground mask.\n3. **BD TRELLIS.2 Get Conditioning** \u2014 DinoV3 conditioning (carries resolution / VRAM config).\n4. **BD TRELLIS.2 Image to Shape** \u2014 sparse-structure + shape sampling \u2192 untextured geometry.\n5. **BD TRELLIS.2 Shape to Textured Mesh** \u2014 PBR texture sampling \u2192 textured `trimesh` + voxelgrid.\n6. **BD Preview 3D** \u2014 interactive viewer for the textured mesh.\n\n## Models / VRAM\n`microsoft/TRELLIS.2-4B` auto-downloads on first run (resolved via `extra_model_paths.yaml`); no loader-node `models` block needed. Defaults use the `1024_cascade` resolution and `max_tokens=49152` (~9 GB just for the cascade). Budget **~20 GB VRAM** end to end; the RTX PRO 6000 (97 GB) runs it comfortably in `keep_loaded` mode. Lower `max_tokens` or use the `512` resolution to cut VRAM. Requires the `flash_attn` backend + CuMesh.\n\n## Tips\n- Raise `ss_sampling_steps` / `shape_sampling_steps` for more shape detail (slower).\n- Reuse one `shape_result` and feed a different `texture_conditioning` to retexture without regenerating geometry (or use **BD TRELLIS.2 Retexture**).\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+        "# BrainDead — TRELLIS.2 Shape → Textured Mesh\n\nSingle-image to **PBR-textured 3D mesh** with Microsoft TRELLIS.2. Drop in a reference image, get back a watertight mesh with base-color / metallic / roughness vertex attributes.\n\n## Flow\n1. **Load Image** — pick any reference image (front-facing subject works best).\n2. **Trellis2 Remove Background** — produces a clean foreground mask.\n3. **BD TRELLIS.2 Get Conditioning** — DinoV3 conditioning (carries resolution / VRAM config).\n4. **BD TRELLIS.2 Image to Shape** — sparse-structure + shape sampling → untextured geometry.\n5. **BD TRELLIS.2 Shape to Textured Mesh** — PBR texture sampling → textured `trimesh` + voxelgrid.\n6. **BD Preview 3D** — interactive viewer for the textured mesh.\n\n## Models / VRAM\n`microsoft/TRELLIS.2-4B` auto-downloads on first run (resolved via `extra_model_paths.yaml`); no loader-node `models` block needed. Defaults use the `1024_cascade` resolution and `max_tokens=49152` (~9 GB just for the cascade). Budget **~20 GB VRAM** end to end; the RTX PRO 6000 (97 GB) runs it comfortably in `keep_loaded` mode. Lower `max_tokens` or use the `512` resolution to cut VRAM. Requires the `flash_attn` backend + CuMesh.\n\n## Tips\n- Raise `ss_sampling_steps` / `shape_sampling_steps` for more shape detail (slower).\n- Reuse one `shape_result` and feed a different `texture_conditioning` to retexture without regenerating geometry (or use **BD TRELLIS.2 Retexture**).\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ],
-      "title": "\u2139\ufe0f About \u2014 BrainDead TRELLIS.2"
+      "title": "ℹ️ About — BrainDead TRELLIS.2"
     },
     {
       "id": 1,
@@ -66,7 +66,7 @@
         "example.png",
         "image"
       ],
-      "title": "\u2460 Load Image (reference)"
+      "title": "① Load Image (reference)"
     },
     {
       "id": 2,
@@ -113,7 +113,7 @@
       "widgets_values": [
         true
       ],
-      "title": "\u2461 Remove Background \u2192 mask"
+      "title": "② Remove Background → mask"
     },
     {
       "id": 3,
@@ -168,7 +168,7 @@
         true,
         "gray"
       ],
-      "title": "\u2462 Get Conditioning (DinoV3)"
+      "title": "③ Get Conditioning (DinoV3)"
     },
     {
       "id": 4,
@@ -218,7 +218,7 @@
         12,
         49152
       ],
-      "title": "\u2463 Image to Shape (geometry)"
+      "title": "④ Image to Shape (geometry)"
     },
     {
       "id": 5,
@@ -292,9 +292,10 @@
         0,
         7.5,
         12,
-        false
+        false,
+        null
       ],
-      "title": "\u2464 Shape \u2192 Textured Mesh (PBR)"
+      "title": "⑤ Shape → Textured Mesh (PBR)"
     },
     {
       "id": 6,
@@ -341,7 +342,7 @@
       "widgets_values": [
         true
       ],
-      "title": "\u2465 Preview 3D (textured)"
+      "title": "⑥ Preview 3D (textured)"
     }
   ],
   "links": [
