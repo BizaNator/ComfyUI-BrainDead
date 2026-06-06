@@ -23,7 +23,7 @@
       "title": "ℹ️ About — BrainDead Lotus-2 Depth & Normal",
       "properties": {},
       "widgets_values": [
-        "# 🧠 BrainDead — Lotus-2 Depth & Normal\n\nFlux-based monocular depth and surface normal estimation. Produces metric-quality depth maps and surface normals from a single image — ready for ControlNet, PBR derivation, or BD_DerivePBR.\n\n## Flow\n1. **LoadImage** — load any image.\n2. **BD Lotus-2 Model Loader (depth)** — loads FLUX.1-dev + Lotus-2 depth weights (~10 GB). Auto-downloads on first run.\n3. **BD Lotus-2 Predict (depth)** — outputs `map` (linear depth), `raw_linear`, `colorized_preview`.\n4. **BD Lotus-2 Model Loader (normal)** — same base model, different Lotus-2 weights.\n5. **BD Lotus-2 Predict (normal)** — outputs surface normals in RGB encoding.\n\n## Models (auto-download on first run)\n- FLUX.1-dev base: requires HuggingFace token + approval at huggingface.co/black-forest-labs/FLUX.1-dev\n- Lotus-2 depth + normal weights: auto-download (~2 GB each)\nRequires ~20 GB VRAM for bf16. Use `cpu_offload: true` for lower VRAM at the cost of speed.\n\n## Tips\n- Pipe `map` output into **BD Depth to Shadow Map** for shadow baking.\n- Pipe normals into **BD Derive PBR** to extract roughness / metallic.\n- `num_inference_steps: 1` is the recommended setting (Lotus-2 is a one-step diffusion model).\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
+        "# 🧠 BrainDead — Lotus-2 Depth & Normal\n\nFlux-based monocular depth and surface normal estimation. Produces metric-quality depth maps and surface normals from a single image — ready for ControlNet, PBR derivation, or BD_DerivePBR.\n\n## Flow\n1. **LoadImage** — load any image.\n2. **BD Lotus-2 Model Loader (depth)** — loads FLUX.1-dev + Lotus-2 depth weights (~10 GB). Auto-downloads on first run.\n3. **BD Lotus-2 Predict (depth)** — outputs `map` (linear depth), `raw_linear`, `colorized_preview`.\n4. **BD Lotus-2 Model Loader (normal)** — same base model, different Lotus-2 weights.\n5. **BD Lotus-2 Predict (normal)** — outputs surface normals in RGB encoding.\n\n## Models (auto-download on first run)\n- FLUX.1-dev base: uses **Comfy-Org/flux1-dev** (fp8, no token/approval required). Downloads ~8 GB automatically. If you have the original BFL repo approved, swap to `black-forest-labs/FLUX.1-dev` for bf16 quality.\n- Lotus-2 depth + normal weights: auto-download (~2 GB each)\nRequires ~12 GB VRAM (fp8 default). For bf16, swap repo to `black-forest-labs/FLUX.1-dev` (requires HF approval) and expect ~24 GB VRAM. Use `cpu_offload: true` to run below 12 GB at the cost of speed.\n\n## Tips\n- Pipe `map` output into **BD Depth to Shadow Map** for shadow baking.\n- Pipe normals into **BD Derive PBR** to extract roughness / metallic.\n- `num_inference_steps: 1` is the recommended setting (Lotus-2 is a one-step diffusion model).\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ]
     },
     {
@@ -99,7 +99,7 @@
         "depth",
         "bf16",
         "auto",
-        "black-forest-labs/FLUX.1-dev",
+        "Comfy-Org/flux1-dev",
         "",
         false
       ],
@@ -224,7 +224,7 @@
         "normal",
         "bf16",
         "auto",
-        "black-forest-labs/FLUX.1-dev",
+        "Comfy-Org/flux1-dev",
         "",
         false
       ],
