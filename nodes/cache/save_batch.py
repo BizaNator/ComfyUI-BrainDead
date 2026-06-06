@@ -50,6 +50,7 @@ class BD_SaveBatch(io.ComfyNode):
             node_id="BD_SaveBatch",
             display_name="BD Save Batch",
             category="🧠BrainDead/Cache",
+            is_output_node=True,
             description=(
                 "Save each frame of an IMAGE batch as a separate file. "
                 "Wire a batch (B>=1) and a labels list — one file per frame, "

@@ -55,7 +55,7 @@
         "Node name for S&R": "UNETLoader"
       },
       "widgets_values": [
-        "LBM/LBM_depth.safetensors",
+        "qwen_image_edit_2509_bf16.safetensors",
         "default"
       ],
       "title": "Load Diffusion Model (Qwen-Image-Edit)"
@@ -89,8 +89,8 @@
         "Node name for S&R": "CLIPLoader"
       },
       "widgets_values": [
-        "FLUX/Long-ViT-L-14-BEST-GmP-smooth-ft.safetensors",
-        "stable_diffusion",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image",
         "default"
       ],
       "title": "Load CLIP (qwen_image)"
@@ -125,7 +125,7 @@
         "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "Flux/ae.safetensors"
+        "qwen_image_vae.safetensors"
       ],
       "title": "Load VAE (qwen_image)"
     },
