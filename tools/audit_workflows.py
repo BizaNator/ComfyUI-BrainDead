@@ -22,16 +22,14 @@ import argparse
 import urllib.request
 from pathlib import Path
 
-# Types that occupy an input socket but never produce a widget
-# Types that are always connection-only (never widget even if unwired)
-ALWAYS_CONNECTION = {
-    "IMAGE", "MASK", "LATENT", "TRIMESH", "TRIMESH_LIST", "CONDITIONING",
-    "MODEL", "VAE", "CLIP", "AUDIO", "MESH", "PARTS_BUNDLE",
-    "LOTUS2_MODEL", "PIXAL3D_INPUT", "TRELLIS2_VOXELGRID",
-}
+# Only these primitive types ever produce a widget in the ComfyUI UI.
+# Everything else (IMAGE, MASK, TRIMESH, TRELLIS2_CONDITIONING, custom types, …)
+# is a socket-only connection type — no widget even when unwired.
+PRIMITIVE_WIDGET_TYPES = {"STRING", "INT", "FLOAT", "BOOLEAN", "IMAGEUPLOAD"}
+# COMBO inputs are lists in the schema (spec[0] is a list of options) — handled separately.
 
-# IMAGEUPLOAD is a widget type (not a socket), include it but don't validate its value
-WIDGET_PASS_THROUGH = {"IMAGEUPLOAD", "CUSTOM"}
+# IMAGEUPLOAD widgets exist but have no meaningful validation
+WIDGET_PASS_THROUGH = {"IMAGEUPLOAD"}
 
 
 def fetch_schema(server: str, node_type: str) -> dict | None:
@@ -41,6 +39,9 @@ def fetch_schema(server: str, node_type: str) -> dict | None:
             return data.get(node_type)
     except Exception:
         return None
+
+
+CONTROL_AFTER_GENERATE_OPTIONS = ["fixed", "increment", "decrement", "randomize"]
 
 
 def widget_inputs_for_node(schema: dict, linked_names: set[str]) -> list[tuple[str, str | list, dict]]:
@@ -55,24 +56,24 @@ def widget_inputs_for_node(schema: dict, linked_names: set[str]) -> list[tuple[s
             raw_type = spec[0]
             opts = spec[1] if len(spec) > 1 else {}
 
-            # COMBO types arrive as a list of options
-            if isinstance(raw_type, list):
-                itype = raw_type  # keep as list — it IS a COMBO
-            else:
-                itype = raw_type
+            is_combo = isinstance(raw_type, list)
+            itype = raw_type  # list for COMBO, string for everything else
 
-            # Skip connection-type sockets
-            if isinstance(itype, str) and itype in ALWAYS_CONNECTION:
+            # Only primitive types and COMBOs produce widgets.
+            # All non-primitive string types (IMAGE, MASK, TRIMESH, TRELLIS2_*, custom…)
+            # are socket-only — no widget even when unwired.
+            if not is_combo and itype not in PRIMITIVE_WIDGET_TYPES:
                 continue
-            # IMAGEUPLOAD is a real widget but we don't validate its value
-            if isinstance(itype, str) and itype in WIDGET_PASS_THROUGH:
-                result.append((name, itype, opts))
-                continue
-            # Skip if wired
+
+            # Skip if wired via a link
             if name in linked_names:
                 continue
 
             result.append((name, itype, opts))
+
+            # ComfyUI frontend injects control_after_generate after every seed-type INT
+            if not is_combo and itype == "INT" and "seed" in name.lower():
+                result.append(("control_after_generate", CONTROL_AFTER_GENERATE_OPTIONS, {}))
     return result
 
 
@@ -125,6 +126,8 @@ def default_for(itype, opts: dict):
     """Return the schema default, or a safe fallback."""
     if "default" in opts:
         return opts["default"]
+    if isinstance(itype, list) and itype == CONTROL_AFTER_GENERATE_OPTIONS:
+        return "fixed"
     if isinstance(itype, list):
         return itype[0]
     if itype == "FLOAT":

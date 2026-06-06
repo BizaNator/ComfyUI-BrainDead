@@ -20,10 +20,10 @@
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "\u2139\ufe0f About \u2014 BrainDead CubePart",
+      "title": "ℹ️ About — BrainDead CubePart",
       "properties": {},
       "widgets_values": [
-        "# \ud83e\udde0 BrainDead \u2014 CubePart Part Decomposition\n\nOpen-vocabulary, **part-controllable 3D**. Give CubePart a mesh + up to **8 part names** and it generates one clean mesh per part \u2014 ready for rigging / game engines.\n\n## Flow\n1. **BD Load Mesh** \u2014 pick a mesh (or set a file_path).\n2. **BD CubePart Segment** \u2014 type up to 8 comma/newline part names.\n3. **BD Mesh Preview (Thumbnails)** \u2014 labeled grid of every part (shown inline).\n4. **BD Preview 3D** \u2014 interactive, color-coded 3D viewer.\n5. **BD CubePart Get Part** \u2192 **BD Export Mesh With Colors**, named by **BD Save Context**.\n\n## Models (auto-download on first run)\n`Roblox/cubepart` + `Qwen/Qwen3-VL-4B-Instruct` \u2014 resolved via `extra_model_paths.yaml`. ~18 GB VRAM to load, ~70 s first run. Max **8** parts. Weights are CUBE3D **research-only** license \u2014 review before commercial use.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+        "# 🧠 BrainDead — CubePart Part Decomposition\n\nOpen-vocabulary, **part-controllable 3D**. Give CubePart a mesh + up to **8 part names** and it generates one clean mesh per part — ready for rigging / game engines.\n\n## Flow\n1. **BD Load Mesh** — pick a mesh (or set a file_path).\n2. **BD CubePart Segment** — type up to 8 comma/newline part names.\n3. **BD Mesh Preview (Thumbnails)** — labeled grid of every part (shown inline).\n4. **BD Preview 3D** — interactive, color-coded 3D viewer.\n5. **BD CubePart Get Part** → **BD Export Mesh With Colors**, named by **BD Save Context**.\n\n## Models (auto-download on first run)\n`Roblox/cubepart` + `Qwen/Qwen3-VL-4B-Instruct` — resolved via `extra_model_paths.yaml`. ~18 GB VRAM to load, ~70 s first run. Max **8** parts. Weights are CUBE3D **research-only** license — review before commercial use.\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ]
     },
     {
@@ -67,11 +67,11 @@
         "Node name for S&R": "BD_LoadMesh"
       },
       "widgets_values": [
-        "(none \u2014 use file_path)",
-        "",
+        "(none — use file_path)",
+        true,
         true
       ],
-      "title": "\u2460 Load Mesh (pick or path)"
+      "title": "① Load Mesh (pick or path)"
     },
     {
       "id": 1,
@@ -127,18 +127,19 @@
       "widgets_values": [
         "body, front left wheel, front right wheel, rear left wheel, rear right wheel, exhaust pipe, headlights, gun",
         0,
+        "fixed",
         7.5,
         50,
         8.5,
-        "dpm_solver",
         4.0,
         128000,
-        "",
+        128000,
+        true,
         true,
         "",
         ""
       ],
-      "title": "\u2461 CubePart Segment (\u22648 parts)"
+      "title": "② CubePart Segment (≤8 parts)"
     },
     {
       "id": 3,
@@ -192,12 +193,12 @@
       "widgets_values": [
         256,
         0,
-        "part_colors",
-        "dark",
+        35.0,
+        20.0,
         35.0,
         20.0
       ],
-      "title": "\u2462 Mesh Preview \u2014 thumbnail grid"
+      "title": "③ Mesh Preview — thumbnail grid"
     },
     {
       "id": 4,
@@ -234,7 +235,7 @@
       "widgets_values": [
         true
       ],
-      "title": "\u2463 Preview 3D \u2014 interactive viewer"
+      "title": "④ Preview 3D — interactive viewer"
     },
     {
       "id": 5,
@@ -286,7 +287,7 @@
       "widgets_values": [
         0
       ],
-      "title": "\u2464 Get Part (index \u2192 TRIMESH)"
+      "title": "⑤ Get Part (index → TRIMESH)"
     },
     {
       "id": 6,
@@ -389,11 +390,11 @@
       "widgets_values": [
         "part",
         "glb",
-        "",
+        true,
         true,
         ""
       ],
-      "title": "\u2465 Export selected part"
+      "title": "⑥ Export selected part"
     }
   ],
   "links": [

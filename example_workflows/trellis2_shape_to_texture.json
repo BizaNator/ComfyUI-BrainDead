@@ -162,7 +162,7 @@
         "Node name for S&R": "BD_Trellis2GetConditioning"
       },
       "widgets_values": [
-        "1024_cascade",
+        true,
         "flash_attn",
         "keep_loaded",
         true,
@@ -212,6 +212,7 @@
       },
       "widgets_values": [
         0,
+        "fixed",
         7.5,
         12,
         7.5,
@@ -290,6 +291,7 @@
       },
       "widgets_values": [
         0,
+        "fixed",
         7.5,
         12,
         false,

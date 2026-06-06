@@ -98,7 +98,7 @@
       "widgets_values": [
         "depth",
         "bf16",
-        "auto",
+        false,
         "Comfy-Org/flux1-dev",
         "",
         false
@@ -223,7 +223,7 @@
       "widgets_values": [
         "normal",
         "bf16",
-        "auto",
+        false,
         "Comfy-Org/flux1-dev",
         "",
         false

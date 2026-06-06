@@ -24,7 +24,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# BrainDead - OVoxel PBR Bake\n\nBake game-ready **PBR texture maps** (albedo / normal / roughness / metallic) from a 3D mesh using Microsoft's o_voxel reference pipeline. Portable: drop in any mesh with the **BD Load Mesh** picker.\n\n## Flow\n1. **BD Load Mesh** - pick a textured mesh (.glb/.obj) or set a file_path.\n2. **BD Mesh to OVoxel** - voxelize geometry + extract PBR attributes into a VOXELGRID.\n3. **BD OVoxel Bake** - simplify, UV-unwrap, BVH-project and trilinear-bake -> textured mesh + diffuse / normal / metallic / roughness / alpha maps.\n4. **Save Image** x4 - write the albedo, normal, roughness and metallic maps.\n5. **BD Export Mesh With Colors** - export the textured mesh as GLB.\n\n## Models / VRAM\nNo external checkpoints. Requires the `o_voxel`, `cumesh`, `nvdiffrast` and `flex_gemm` CUDA libs (bundled with the TRELLIS2 stack). Runs on GPU; ~6-12 GB VRAM at 2048 texture size. For an actual TRELLIS2 voxelgrid, swap **BD Mesh to OVoxel** for a `TRELLIS2_VOXELGRID` source - **BD OVoxel Bake** accepts either.\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+        "# BrainDead - OVoxel PBR Bake\n\nBake game-ready **PBR texture maps** (albedo / normal / roughness / metallic) from a 3D mesh using Microsoft's o_voxel reference pipeline. Portable: drop in any mesh with the **BD Load Mesh** picker.\n\n## Flow\n1. **BD Load Mesh** - pick a textured mesh (.glb/.obj) or set a file_path.\n2. **BD Mesh to OVoxel** - voxelize geometry + extract PBR attributes into a VOXELGRID.\n3. **BD OVoxel Bake** - simplify, UV-unwrap, BVH-project and trilinear-bake -> textured mesh + diffuse / normal / metallic / roughness / alpha maps.\n4. **Save Image** x4 - write the albedo, normal, roughness and metallic maps.\n5. **BD Export Mesh With Colors** - export the textured mesh as GLB.\n\n## Models / VRAM\nNo external checkpoints. Requires the `o_voxel`, `cumesh`, `nvdiffrast` and `flex_gemm` CUDA libs (bundled with the TRELLIS2 stack). Runs on GPU; ~6-12 GB VRAM at 2048 texture size. For an actual TRELLIS2 voxelgrid, swap **BD Mesh to OVoxel** for a `TRELLIS2_VOXELGRID` source - **BD OVoxel Bake** accepts either.\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ],
       "title": "About - OVoxel PBR Bake"
     },
@@ -69,8 +69,8 @@
         "Node name for S&R": "BD_LoadMesh"
       },
       "widgets_values": [
-        "(none \u2014 use file_path)",
-        "",
+        "(none — use file_path)",
+        true,
         true
       ],
       "title": "1. Load Mesh (pick or path)"
@@ -371,7 +371,7 @@
       "widgets_values": [
         "ovoxel_baked",
         "glb",
-        "OVoxel",
+        true,
         true,
         "",
         "",

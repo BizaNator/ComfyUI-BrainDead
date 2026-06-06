@@ -249,9 +249,9 @@
         "",
         "skin",
         "",
-        "png",
         false,
-        "",
+        false,
+        false,
         false,
         false,
         ""

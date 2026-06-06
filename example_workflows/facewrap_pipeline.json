@@ -20,10 +20,10 @@
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "\u2139\ufe0f About \u2014 BrainDead FaceWrap",
+      "title": "ℹ️ About — BrainDead FaceWrap",
       "properties": {},
       "widgets_values": [
-        "# FaceWrap Pipeline \u2014 photo views \u2192 clean UV face texture\n\nTurns a **4-view head photo stack** (front / left / right / rear) into a single seamless **UV face texture** you can drop onto CC5 / MetaHuman / canonical heads. MediaPipe finds the landmarks, the canonical (or ICT) face mesh is fit to them, each view is baked into UV space, then all views are confidence-blended into one texture with a gap (inpaint) mask.\n\n## Flow\n1. **Load Image** \u2014 a batched image: front, left, right, rear (that order).\n2. **BD Face Landmarks** \u2014 MediaPipe FaceLandmarker \u2192 478 landmarks per view (+ overlay).\n3. **BD Face Fit** \u2014 fits the canonical / ICT head mesh to the landmark stack.\n4. **BD Face Texture Bake** \u2014 projects every view into the shared UV layout (textures + confidences).\n5. **BD UV Confidence Blend** \u2014 cosine-weighted composite \u2192 one UV texture + filled / inpaint masks.\n6. **Preview Image** \u2014 the finished blended UV texture.\n\nThe `inpaint_mask` output of the blend feeds a Qwen Image Edit step (see **BD Face Wrap Composite**) to fill the remaining gaps \u2014 omitted here to keep the template model-free.\n\n## Models / VRAM\n`BD Face Landmarks` downloads `face_landmarker.task` (MediaPipe, ~3 MB) to the mediapipe model dir on first run. The canonical / ICT face meshes are bundled with the node pack. No checkpoint / diffusion model needed \u2014 runs on CPU-to-low VRAM. Provide your own 4-view head batch via Load Image.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+        "# FaceWrap Pipeline — photo views → clean UV face texture\n\nTurns a **4-view head photo stack** (front / left / right / rear) into a single seamless **UV face texture** you can drop onto CC5 / MetaHuman / canonical heads. MediaPipe finds the landmarks, the canonical (or ICT) face mesh is fit to them, each view is baked into UV space, then all views are confidence-blended into one texture with a gap (inpaint) mask.\n\n## Flow\n1. **Load Image** — a batched image: front, left, right, rear (that order).\n2. **BD Face Landmarks** — MediaPipe FaceLandmarker → 478 landmarks per view (+ overlay).\n3. **BD Face Fit** — fits the canonical / ICT head mesh to the landmark stack.\n4. **BD Face Texture Bake** — projects every view into the shared UV layout (textures + confidences).\n5. **BD UV Confidence Blend** — cosine-weighted composite → one UV texture + filled / inpaint masks.\n6. **Preview Image** — the finished blended UV texture.\n\nThe `inpaint_mask` output of the blend feeds a Qwen Image Edit step (see **BD Face Wrap Composite**) to fill the remaining gaps — omitted here to keep the template model-free.\n\n## Models / VRAM\n`BD Face Landmarks` downloads `face_landmarker.task` (MediaPipe, ~3 MB) to the mediapipe model dir on first run. The canonical / ICT face meshes are bundled with the node pack. No checkpoint / diffusion model needed — runs on CPU-to-low VRAM. Provide your own 4-view head batch via Load Image.\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ]
     },
     {
@@ -65,7 +65,7 @@
         "example.png",
         "image"
       ],
-      "title": "\u2460 Load 4-view head batch"
+      "title": "① Load 4-view head batch"
     },
     {
       "id": 3,
@@ -118,7 +118,7 @@
         0.4,
         ""
       ],
-      "title": "\u2461 Face Landmarks (MediaPipe)"
+      "title": "② Face Landmarks (MediaPipe)"
     },
     {
       "id": 4,
@@ -162,10 +162,10 @@
       },
       "widgets_values": [
         "mediapipe_canonical",
-        "",
+        1.0,
         1.0
       ],
-      "title": "\u2462 Face Fit (canonical mesh)"
+      "title": "③ Face Fit (canonical mesh)"
     },
     {
       "id": 5,
@@ -231,7 +231,7 @@
         2048,
         0.0
       ],
-      "title": "\u2463 Texture Bake (per-view \u2192 UV)"
+      "title": "④ Texture Bake (per-view → UV)"
     },
     {
       "id": 6,
@@ -301,7 +301,7 @@
         0.05,
         3.0
       ],
-      "title": "\u2464 UV Confidence Blend"
+      "title": "⑤ UV Confidence Blend"
     },
     {
       "id": 7,
@@ -329,7 +329,7 @@
         "Node name for S&R": "PreviewImage"
       },
       "widgets_values": [],
-      "title": "\u2465 Blended UV Texture"
+      "title": "⑥ Blended UV Texture"
     }
   ],
   "links": [
