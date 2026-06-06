@@ -78,6 +78,7 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 
 | Node | Description |
 |------|-------------|
+| **BD Load Mesh** | Load a mesh (GLB/GLTF/OBJ/PLY/STL/FBX/…) as TRIMESH. File picker over the input folder + upload button, or a `file_path` override. Outputs mesh (TRIMESH) + resolved mesh_path. Feeds any BD mesh node (CuMesh, Blender, CubePart, Export). |
 | **BD Cache Mesh** | Cache TRIMESH objects as PLY files |
 | **BD Sample Voxelgrid Colors** | Sample vertex colors from TRELLIS2 voxelgrid |
 | **BD Sample Voxelgrid PBR** | Sample full PBR attributes from voxelgrid |
@@ -86,7 +87,9 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 | **BD Transfer Colors Pymeshlab** | Transfer colors using pymeshlab |
 | **BD Mesh Repair** | Repair mesh topology (holes, normals, duplicates) |
 | **BD Smart Decimate** | Edge-preserving decimation with pymeshlab |
-| **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ |
+| **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ. Optional `context_id` (BD Save Context) for template-based naming |
+| **BD Trimesh → MESH** | Convert TRIMESH → ComfyUI native MESH (geometry only) to feed built-in 3D nodes (Save 3D Model / SaveGLB) |
+| **BD MESH → Trimesh** | Convert native MESH → TRIMESH to pull built-in Hunyuan3D/voxel results into the BD pipeline |
 | **BD CuMesh Simplify** | GPU-accelerated mesh simplification with color preservation |
 | **BD CuMesh Quad Remesh** | GPU-accelerated quad remeshing from triangle meshes |
 | **BD MeshLib Fill Holes** | Fill mesh holes and open boundaries via pymeshlab |
@@ -103,6 +106,15 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 | **BD Unpack Bundle** | Unpack MESH_BUNDLE into individual components |
 | **BD Cache Bundle** | Cache MESH_BUNDLE for fast reload |
 | **BD Mesh Inspector** | Inspect mesh properties (verts, faces, UVs, colors) |
+
+**Mesh types — `TRIMESH` vs native `MESH`:**
+BD nodes pass meshes as **`TRIMESH`** (a full `trimesh.Trimesh` carrying vertex colors, UVs,
+materials, and processing/export) — the same type TRELLIS2 / Hunyuan3d-2-1 / GeometryPack use.
+ComfyUI's built-in 3D nodes use the native **`MESH`** type, a thin batched `(vertices, faces)`
+tensor container with no colors/UVs. They're different data models, not interchangeable. Use
+**BD Trimesh → MESH** / **BD MESH → Trimesh** to bridge when you need a built-in 3D node — but keep
+work inside `TRIMESH` (and **BD Export Mesh With Colors**) whenever colors/UVs must survive, since
+native `MESH` can't represent them.
 
 **OVoxel Baking Pipeline:**
 ```
@@ -326,6 +338,41 @@ BD Pixal3D Image to 3D  (pipeline_type=1024_cascade)
 BD CuMesh Simplify    BD OVoxelBake → albedo, normal, roughness, metallic
 ```
 
+### CubePart Nodes (`BrainDead/CubePart`)
+Open-vocabulary, part-controllable 3D decomposition with Roblox **CubePart**. Give it a mesh and up to **8** free-text part names; it generates one clean mesh per part, canonically aligned for rigging / game engines. The `cube_part` library is vendored under `nodes/cubepart/vendor/` (self-contained — no separate pip package).
+
+| Node | Description |
+|------|-------------|
+| **BD CubePart Segment** | TRIMESH (or a `.glb` path) + up to 8 comma/newline-separated part names → `parts` (TRIMESH_LIST, one mesh per part in name order), `combined` (single color-coded TRIMESH preview, a deterministic concat of `parts`), and `part_names` (STRING). Names past 8 are dropped (logged). |
+| **BD CubePart Get Part** | `parts` (TRIMESH_LIST) + `index` → a single TRIMESH (+ `name`) so one part flows into CuMesh Simplify / Blender / export. Index is clamped to range. |
+
+**Models** — paths auto-resolve via ComfyUI `folder_paths` (respecting `extra_model_paths.yaml`) and **auto-download from HuggingFace on first run** if missing (`auto_download` toggle, default on). Leave `model_dir`/`text_encoder_path` empty to auto-resolve, or set an explicit override.
+- `Roblox/cubepart` → `cubepart` model folder (`extra_model_paths.yaml: cubepart:` → `/srv/AI_Stuff/models/cubepart/`; else `models/cubepart`). `multi_part_dit.safetensors` ~8.6GB + `vae.safetensors` ~1.3GB.
+- `Qwen/Qwen3-VL-4B-Instruct` → under the `LLM` model folder (`/srv/AI_Stuff/models/LLM/Qwen3-VL-4B-Instruct/`), text encoder loaded offline.
+- `Qwen/Qwen-Image` transformer config (architecture only) → HF cache.
+
+To pre-download instead of relying on first-run auto-download:
+```bash
+huggingface-cli download Roblox/cubepart --local-dir /srv/AI_Stuff/models/cubepart
+huggingface-cli download Qwen/Qwen3-VL-4B-Instruct --local-dir /srv/AI_Stuff/models/LLM/Qwen3-VL-4B-Instruct
+```
+Extra venv deps: `warp-lang`, `jaxtyping` (everything else is already present; nothing touches torch). Pipeline load ~18GB VRAM.
+
+**Save naming:** the part/combined meshes export through **BD Export Mesh With Colors**, which accepts a `context_id` from **BD Save Context** (+ `suffix`, wirable from Get Part's `name`) for template-based naming/foldering — same save system as the rest of the pipeline.
+
+> **License:** CubePart *code* is MIT, but the model weights / parent repo are under the **CUBE3D RESEARCH-ONLY RAIL-MS** license — fine for internal/research use; review before shipping outputs commercially.
+
+**CubePart pipeline:**
+```
+[mesh from Pixal3D / Trellis2 / .glb]
+  ↓ mesh
+BD CubePart Segment  (parts="body, left wheel, right wheel, ...")
+  ↓ parts (TRIMESH_LIST)        ↓ combined (colored preview)
+BD CubePart Get Part (index=N)
+  ↓ mesh
+BD CuMesh Simplify → BD Blender Decimate → export
+```
+
 ### Depth Nodes (`BrainDead/Depth`)
 SOTA monocular geometry prediction.
 
@@ -434,6 +481,7 @@ output/
 - **Blender** — Blender-based geometry tools (~12)
 - **TRELLIS2** — TRELLIS2-specific shape/texture nodes (~9)
 - **Pixal3D** — image-to-3D generation (Pixal3D + MoGe FOV estimation) (~2)
+- **CubePart** — open-vocabulary part decomposition (Roblox CubePart) (~2)
 - **Character** — Qwen-Image character consistency (~4)
 - **Prompt** — prompt iteration, filename templates, ForEach iteration (~5)
 - **Segmentation** — SAM3 multi-prompt + Parts pipeline + FaceSocketInfill + LumaStats + NormalizeLuma + CenterMedianLuma + DepthToShadowMap + DrawRect + DrawEllipse + MaskResolver + MaskCorrelate + Human parsers (~25)
@@ -449,6 +497,7 @@ BrainDead/
 ├── Blender/       # Blender-based mesh operations
 ├── TRELLIS2/      # TRELLIS2-specific caching
 ├── Pixal3D/       # Pixal3D image-to-3D generation
+├── CubePart/      # Roblox CubePart part decomposition
 ├── Character/     # Qwen-Image character consistency
 ├── Prompt/        # Prompt iteration tools
 ├── Segmentation/  # SAM3 + Parts pipeline + asset prep

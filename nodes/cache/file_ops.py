@@ -532,46 +532,128 @@ class BD_LoadImage(io.ComfyNode):
             return io.NodeOutput(empty_img, empty_mask, f"Load failed: {e}")
 
 
+_MESH_EXTS = {".glb", ".gltf", ".obj", ".ply", ".stl", ".fbx", ".off", ".3mf", ".dae"}
+_LOADMESH_PICK_NONE = "(none — use file_path)"
+
+
 class BD_LoadMesh(io.ComfyNode):
-    """Load a 3D mesh from a file path (STRING input)."""
+    """Load a 3D mesh into the BrainDead pipeline as TRIMESH.
+
+    Two ways to choose a file:
+      - `model_file` dropdown — lists meshes in ComfyUI's input dir (recursively),
+        with an upload button to add new ones. Uploaded/selected files resolve via
+        folder_paths.
+      - `file_path` — an absolute (or input-relative) path override; wins over the
+        picker when set. Wirable + typeable, so it also works programmatically.
+
+    Outputs TRIMESH (compatible with every BD mesh node — CuMesh, Blender, CubePart,
+    Export) plus the resolved mesh_path (handy for nodes that take a path string).
+    """
 
     @classmethod
     def define_schema(cls) -> io.Schema:
+        import folder_paths
+        from pathlib import Path
+
+        base = Path(folder_paths.get_input_directory())
+        try:
+            files = [
+                str(p.relative_to(base)).replace("\\", "/")
+                for p in base.rglob("*")
+                if p.suffix.lower() in _MESH_EXTS
+            ]
+        except Exception:
+            files = []
+        options = [_LOADMESH_PICK_NONE] + sorted(files)
+
         return io.Schema(
             node_id="BD_LoadMesh",
             display_name="BD Load Mesh",
-            category="🧠BrainDead/Cache",
-            description="Load a 3D mesh from a file path. Supports PLY, OBJ, GLB, STL.",
+            category="🧠BrainDead/Mesh",
+            description="Load a 3D mesh (GLB/GLTF/OBJ/PLY/STL/FBX/...) as TRIMESH. "
+                        "Pick from the input folder (with upload) or set file_path.",
             inputs=[
-                io.String.Input("file_path", default="", force_input=True),
+                io.Combo.Input(
+                    "model_file", options=options, default=_LOADMESH_PICK_NONE,
+                    upload=io.UploadType.model,
+                    tooltip="Pick a mesh from ComfyUI's input folder, or upload one. "
+                            "Ignored when file_path is set.",
+                ),
+                io.String.Input(
+                    "file_path", default="", optional=True,
+                    tooltip="Absolute or input-relative path override. Wins over the picker. "
+                            "Leave empty to use the dropdown.",
+                ),
+                io.Boolean.Input(
+                    "merge_scene", default=True, optional=True,
+                    tooltip="Merge a multi-part file (e.g. a GLB scene) into a single mesh. "
+                            "Off = keep only the first sub-mesh.",
+                ),
             ],
             outputs=[
-                io.Mesh.Output(display_name="mesh"),
+                io.Custom("TRIMESH").Output(display_name="mesh"),
+                io.String.Output(display_name="mesh_path"),
                 io.String.Output(display_name="status"),
             ],
         )
 
     @classmethod
-    def execute(cls, file_path: str) -> io.NodeOutput:
-        if not HAS_TRIMESH:
-            return io.NodeOutput(None, "ERROR: trimesh not installed")
+    def _resolve_path(cls, model_file: str, file_path: str) -> str:
+        fp = (file_path or "").strip()
+        if fp:
+            if os.path.isabs(fp) and os.path.exists(fp):
+                return fp
+            # input-relative or cwd-relative fallback
+            try:
+                import folder_paths
+                ann = folder_paths.get_annotated_filepath(fp)
+                if ann and os.path.exists(ann):
+                    return ann
+            except Exception:
+                pass
+            return fp
+        if not model_file or model_file == _LOADMESH_PICK_NONE:
+            return ""
+        try:
+            import folder_paths
+            return folder_paths.get_annotated_filepath(model_file)
+        except Exception:
+            return model_file
 
-        if not file_path or not os.path.exists(file_path):
-            return io.NodeOutput(None, f"File not found: {file_path}")
+    @classmethod
+    def execute(cls, model_file: str = _LOADMESH_PICK_NONE, file_path: str = "",
+                merge_scene: bool = True) -> io.NodeOutput:
+        if not HAS_TRIMESH:
+            return io.NodeOutput(None, "", "ERROR: trimesh not installed")
+
+        path = cls._resolve_path(model_file, file_path)
+        if not path:
+            return io.NodeOutput(
+                None, "",
+                "No mesh selected. Pick a model_file (or upload one) or set file_path.")
+        if not os.path.exists(path):
+            return io.NodeOutput(None, path, f"File not found: {path}")
 
         try:
-            mesh = trimesh.load(file_path)
+            if merge_scene:
+                mesh = trimesh.load(path, force="mesh", process=False)
+            else:
+                mesh = trimesh.load(path, process=False)
+                if isinstance(mesh, trimesh.Scene):
+                    geoms = [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                    if not geoms:
+                        return io.NodeOutput(None, path, "No meshes found in scene")
+                    mesh = geoms[0]
 
-            if isinstance(mesh, trimesh.Scene):
-                meshes = [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
-                if meshes:
-                    mesh = trimesh.util.concatenate(meshes)
-                else:
-                    return io.NodeOutput(None, "No meshes found in scene")
+            if not isinstance(mesh, trimesh.Trimesh) or len(mesh.vertices) == 0:
+                return io.NodeOutput(None, path, f"Loaded object has no geometry: {path}")
 
-            return io.NodeOutput(mesh, f"Loaded: {os.path.basename(file_path)} ({len(mesh.vertices)} verts)")
+            status = (f"Loaded {os.path.basename(path)}: "
+                      f"{len(mesh.vertices):,} verts, {len(mesh.faces):,} faces")
+            print(f"[BD LoadMesh] {status} ({path})", flush=True)
+            return io.NodeOutput(mesh, path, status)
         except Exception as e:
-            return io.NodeOutput(None, f"Load failed: {e}")
+            return io.NodeOutput(None, path, f"Load failed: {e}")
 
 
 class BD_LoadAudio(io.ComfyNode):

@@ -34,6 +34,7 @@ from .nodes.depth import DEPTH_V3_NODES
 from .nodes.facewrap import FACEWRAP_V3_NODES
 from .nodes.glsl import GLSL_V3_NODES
 from .nodes.pixal3d import PIXAL3D_V3_NODES
+from .nodes.cubepart import CUBEPART_V3_NODES
 
 # =============================================================================
 # V3 Extension Entry Point
@@ -56,6 +57,7 @@ class BrainDeadExtension(ComfyExtension):
             *FACEWRAP_V3_NODES,
             *GLSL_V3_NODES,
             *PIXAL3D_V3_NODES,
+            *CUBEPART_V3_NODES,
         ]
 
 
@@ -80,6 +82,7 @@ from .nodes.depth import NODE_CLASS_MAPPINGS as DEPTH_NODES, NODE_DISPLAY_NAME_M
 from .nodes.facewrap import NODE_CLASS_MAPPINGS as FACEWRAP_NODES, NODE_DISPLAY_NAME_MAPPINGS as FACEWRAP_DISPLAY
 from .nodes.glsl import NODE_CLASS_MAPPINGS as GLSL_NODES, NODE_DISPLAY_NAME_MAPPINGS as GLSL_DISPLAY
 from .nodes.pixal3d import NODE_CLASS_MAPPINGS as PIXAL3D_NODES, NODE_DISPLAY_NAME_MAPPINGS as PIXAL3D_DISPLAY
+from .nodes.cubepart import NODE_CLASS_MAPPINGS as CUBEPART_NODES, NODE_DISPLAY_NAME_MAPPINGS as CUBEPART_DISPLAY
 
 # Aggregate all node mappings for V1 registration
 NODE_CLASS_MAPPINGS = {
@@ -94,6 +97,7 @@ NODE_CLASS_MAPPINGS = {
     **FACEWRAP_NODES,
     **GLSL_NODES,
     **PIXAL3D_NODES,
+    **CUBEPART_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -108,6 +112,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **FACEWRAP_DISPLAY,
     **GLSL_DISPLAY,
     **PIXAL3D_DISPLAY,
+    **CUBEPART_DISPLAY,
 }
 
 # Web directory for JavaScript extensions (toast notifications, etc.)
@@ -140,4 +145,5 @@ print(f"  - Depth: {len(DEPTH_NODES)} nodes")
 print(f"  - FaceWrap: {len(FACEWRAP_NODES)} nodes")
 print(f"  - GLSL: {len(GLSL_NODES)} nodes")
 print(f"  - Pixal3D: {len(PIXAL3D_NODES)} nodes")
+print(f"  - CubePart: {len(CUBEPART_NODES)} nodes")
 print("=" * 60)

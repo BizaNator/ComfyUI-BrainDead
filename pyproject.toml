@@ -43,6 +43,8 @@ dependencies = []
 [project.optional-dependencies]
 mesh = ["trimesh"]
 segmentation = ["transformers", "pillow"]
+# CubePart: vendored cube_part library needs these third-party libs (no torch change).
+cubepart = ["warp-lang>=1.4", "jaxtyping", "omegaconf>=2.3", "einops", "fpsample>=0.3", "diffusers>=0.30", "transformers>=4.45"]
 
 [project.urls]
 Homepage = "https://github.com/BizaNator/ComfyUI-BrainDead"

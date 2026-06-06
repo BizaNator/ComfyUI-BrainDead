@@ -35,7 +35,8 @@ class BD_ExportMeshWithColors(io.ComfyNode):
             node_id="BD_ExportMeshWithColors",
             display_name="BD Export Mesh With Colors",
             category="🧠BrainDead/Mesh",
-            description="Export mesh with vertex colors to GLB/PLY/OBJ. Use after BD_SampleVoxelgridColors.",
+            description="Export mesh with vertex colors to GLB/PLY/OBJ. Use after BD_SampleVoxelgridColors. "
+                       "Wire context_id from BD_SaveContext for template-based naming.",
             is_output_node=True,
             inputs=[
                 TrimeshInput("mesh"),
@@ -43,6 +44,17 @@ class BD_ExportMeshWithColors(io.ComfyNode):
                 io.Combo.Input("format", options=["glb", "ply", "obj"], default="glb"),
                 io.String.Input("name_prefix", default="", optional=True, tooltip="Prepended to filename. Supports subdirs (e.g., 'Project/Name')"),
                 io.Boolean.Input("auto_increment", default=True, optional=True, tooltip="Auto-increment filename to avoid overwriting"),
+                io.String.Input("context_id", default="", optional=True,
+                                tooltip="BD_SaveContext id for template-based naming + foldering. Empty + exactly "
+                                        "one registered context = auto-pick. When it resolves, the template (with "
+                                        "%suffix%) drives the path; filename/name_prefix pass through as "
+                                        "%filename%/%name_prefix%."),
+                io.String.Input("suffix", default="", optional=True,
+                                tooltip="Per-save suffix → %suffix% in the template (e.g. '_body', '_combined'). "
+                                        "Wirable — e.g. connect BD CubePart Get Part's `name` output. Only used when context_id resolves."),
+                io.String.Input("context_custom_vars", multiline=True, default="", optional=True,
+                                tooltip="Extra key=value template vars (one per line), layered on top of the context "
+                                        "(e.g. subfolder=parts). Only used when context_id resolves."),
             ],
             outputs=[
                 io.String.Output(display_name="file_path"),
@@ -52,7 +64,9 @@ class BD_ExportMeshWithColors(io.ComfyNode):
 
     @classmethod
     def execute(cls, mesh, filename: str, format: str = "glb",
-                name_prefix: str = "", auto_increment: bool = True) -> io.NodeOutput:
+                name_prefix: str = "", auto_increment: bool = True,
+                context_id: str = "", suffix: str = "",
+                context_custom_vars: str = "") -> io.NodeOutput:
         if not HAS_TRIMESH:
             return io.NodeOutput("", "ERROR: trimesh not installed")
 
@@ -62,47 +76,71 @@ class BD_ExportMeshWithColors(io.ComfyNode):
         import folder_paths
         base_output_dir = folder_paths.get_output_directory()
 
-        # Concatenate name_prefix + filename (same pattern as cache nodes)
-        full_name = f"{name_prefix}_{filename}" if name_prefix else filename
+        # --- Path resolution -------------------------------------------------
+        # If a BD_SaveContext is wired (or auto-picked from a single registered
+        # context), resolve the path from its template so naming/foldering follow
+        # the shared BD save system. Otherwise fall back to filename/name_prefix.
+        from ..cache.save_context import (
+            resolve_context_path, get_context, auto_pick_context,
+        )
+        effective_ctx_id = context_id.strip() if context_id else ""
+        if not effective_ctx_id:
+            picked = auto_pick_context()
+            if picked is not None:
+                effective_ctx_id = picked
+        use_context = bool(effective_ctx_id) and get_context(effective_ctx_id) is not None
 
-        # Handle subdirectories if full_name contains path separators
-        full_name = full_name.replace('\\', '/')
-        if '/' in full_name:
-            parts = full_name.rsplit('/', 1)
-            subdir, base_filename = parts
-            output_dir = os.path.join(base_output_dir, subdir)
+        if use_context:
+            # Context owns auto-increment (set on BD_SaveContext); ignore node toggle.
+            file_path, _rel = resolve_context_path(
+                effective_ctx_id, suffix, format,
+                node_filename=filename, node_name_prefix=name_prefix,
+                node_custom_vars=context_custom_vars,
+            )
+            output_dir = os.path.dirname(file_path)
+            os.makedirs(output_dir, exist_ok=True)
         else:
-            output_dir = base_output_dir
-            base_filename = full_name
+            # Concatenate name_prefix + filename (same pattern as cache nodes)
+            full_name = f"{name_prefix}_{filename}" if name_prefix else filename
 
-        # Ensure directory exists
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Auto-increment to avoid overwriting
-        if auto_increment:
-            # Find existing files with this pattern
-            pattern = os.path.join(output_dir, f"{base_filename}_*.{format}")
-            existing = glob(pattern)
-
-            if existing:
-                # Extract numbers and find max
-                numbers = []
-                for f in existing:
-                    try:
-                        # Extract _NNN before extension
-                        num_str = os.path.basename(f).replace(f".{format}", "").split("_")[-1]
-                        numbers.append(int(num_str))
-                    except:
-                        pass
-                next_num = max(numbers) + 1 if numbers else 1
+            # Handle subdirectories if full_name contains path separators
+            full_name = full_name.replace('\\', '/')
+            if '/' in full_name:
+                parts = full_name.rsplit('/', 1)
+                subdir, base_filename = parts
+                output_dir = os.path.join(base_output_dir, subdir)
             else:
-                next_num = 1
+                output_dir = base_output_dir
+                base_filename = full_name
 
-            final_filename = f"{base_filename}_{next_num:03d}.{format}"
-        else:
-            final_filename = f"{base_filename}.{format}"
+            # Ensure directory exists
+            os.makedirs(output_dir, exist_ok=True)
 
-        file_path = os.path.join(output_dir, final_filename)
+            # Auto-increment to avoid overwriting
+            if auto_increment:
+                # Find existing files with this pattern
+                pattern = os.path.join(output_dir, f"{base_filename}_*.{format}")
+                existing = glob(pattern)
+
+                if existing:
+                    # Extract numbers and find max
+                    numbers = []
+                    for f in existing:
+                        try:
+                            # Extract _NNN before extension
+                            num_str = os.path.basename(f).replace(f".{format}", "").split("_")[-1]
+                            numbers.append(int(num_str))
+                        except:
+                            pass
+                    next_num = max(numbers) + 1 if numbers else 1
+                else:
+                    next_num = 1
+
+                final_filename = f"{base_filename}_{next_num:03d}.{format}"
+            else:
+                final_filename = f"{base_filename}.{format}"
+
+            file_path = os.path.join(output_dir, final_filename)
 
         try:
             # Extract vertex colors — check vertex_attributes first (safe for TextureVisuals meshes).
