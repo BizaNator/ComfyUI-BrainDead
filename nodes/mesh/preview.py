@@ -190,11 +190,8 @@ class BD_MeshPreview(io.ComfyNode):
             description="Render a TRIMESH_LIST (e.g. CubePart parts) or a TRIMESH to a labeled "
                         "contact-sheet IMAGE + per-mesh IMAGE batch. Shows the grid inline.",
             inputs=[
-                io.Custom("TRIMESH_LIST").Input("meshes", optional=True,
-                    tooltip="List of meshes (e.g. CubePart `parts`)."),
-                TrimeshInput("mesh", optional=True),
-                io.String.Input("labels", default="", multiline=True, optional=True,
-                    tooltip="Optional per-mesh labels (newline-separated), e.g. CubePart `part_names`."),
+                # Required first, then optional — keeps frontend widget order
+                # (definition order) aligned with required-then-optional.
                 io.Int.Input("tile_size", default=256, min=64, max=1024, step=32),
                 io.Int.Input("columns", default=0, min=0, max=16,
                     tooltip="Grid columns. 0 = auto (square-ish)."),
@@ -204,6 +201,11 @@ class BD_MeshPreview(io.ComfyNode):
                                default="dark"),
                 io.Float.Input("azimuth", default=35.0, min=-180.0, max=180.0, step=5.0),
                 io.Float.Input("elevation", default=20.0, min=-89.0, max=89.0, step=5.0),
+                io.Custom("TRIMESH_LIST").Input("meshes", optional=True,
+                    tooltip="List of meshes (e.g. CubePart `parts`)."),
+                TrimeshInput("mesh", optional=True),
+                io.String.Input("labels", default="", multiline=True, optional=True,
+                    tooltip="Optional per-mesh labels (newline-separated), e.g. CubePart `part_names`."),
             ],
             outputs=[
                 io.Image.Output(display_name="grid"),

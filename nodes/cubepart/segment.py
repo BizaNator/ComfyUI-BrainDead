@@ -63,20 +63,15 @@ class BD_CubePartSegment(io.ComfyNode):
             category="🧠BrainDead/CubePart",
             description="Open-vocabulary part decomposition (Roblox CubePart): "
                         "mesh + up to 8 part names -> one mesh per part.",
+            # Required inputs are listed first, then optional — so the frontend's
+            # widget order (definition order) matches required-then-optional and
+            # serialized widgets_values line up in both the UI and headless runs.
             inputs=[
-                io.Custom("TRIMESH").Input(
-                    "mesh", optional=True,
-                    tooltip="Input mesh from a BD mesh source. If unset, mesh_path is used.",
-                ),
                 io.String.Input(
                     "parts", multiline=True,
                     default="body, left wheel, right wheel",
                     tooltip="Up to 8 part names, comma- or newline-separated. "
                             "Open vocabulary. Extra names past 8 are dropped (logged).",
-                ),
-                io.String.Input(
-                    "mesh_path", default="", optional=True,
-                    tooltip="Path to a .glb on disk. Used only when no `mesh` is wired.",
                 ),
                 io.Int.Input(
                     "seed", default=0, min=0, max=2**31 - 1,
@@ -106,6 +101,14 @@ class BD_CubePartSegment(io.ComfyNode):
                 io.Int.Input(
                     "num_samples", default=128_000, min=16_000, max=256_000, step=8_000,
                     tooltip="Surface points sampled from the input mesh for encoding.",
+                ),
+                io.Custom("TRIMESH").Input(
+                    "mesh", optional=True,
+                    tooltip="Input mesh from a BD mesh source. If unset, mesh_path is used.",
+                ),
+                io.String.Input(
+                    "mesh_path", default="", optional=True,
+                    tooltip="Path to a .glb on disk. Used only when no `mesh` is wired.",
                 ),
                 io.Boolean.Input(
                     "auto_download", default=True, optional=True,

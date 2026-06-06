@@ -18,9 +18,12 @@ GLSL, …) add a `<Title>.json` + matching `<Title>.png` here.
      links block (below).
    - Prefer portable inputs (e.g. **BD Load Mesh** with a picker, or LoadImage)
      over machine-specific absolute paths so the template runs on any install.
-2. **`<Title>.png`** — a thumbnail/screenshot (a rendered result or the node
-   graph). ~1180×680 landscape reads well in the browser. `tools/` may hold a
-   generator; the CubePart card is composited from its BD Mesh Preview grid.
+2. **`<Title>.jpg`** — the thumbnail. **Must be `.jpg`** with the same basename
+   as the `.json`: the ComfyUI frontend hardcodes `mediaSubtype: 'jpg'` for
+   custom-node templates and requests `/api/workflow_templates/<pack>/<Title>.jpg`
+   (a `.png` is never loaded). ~1180×680 landscape reads well (QwenVL/QwenTTS use
+   ~2:1 node-graph screenshots). The CubePart card is composited from its BD Mesh
+   Preview grid + title + links.
 
 ## BrainDead links block (paste into every MarkdownNote)
 
