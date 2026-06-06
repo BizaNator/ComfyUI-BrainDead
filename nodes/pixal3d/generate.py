@@ -172,7 +172,9 @@ Outputs:
             ],
             outputs=[
                 io.Custom("TRIMESH").Output(display_name="mesh"),
-                io.Custom("TRELLIS2_VOXELGRID").Output(display_name="voxelgrid"),
+                # VOXELGRID (the canonical type used by BD_OVoxelBake / BD_OVoxelTextureBake /
+                # Trellis2). Was mislabeled TRELLIS2_VOXELGRID, which blocked the link in the UI.
+                io.Custom("VOXELGRID").Output(display_name="voxelgrid"),
             ],
         )
 
