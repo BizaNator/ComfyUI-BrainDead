@@ -1,8 +1,32 @@
 # ComfyUI-BrainDead dependencies
 # ComfyUI Manager installs these automatically on node pack install.
 
-# MoGe — monocular geometry estimation for Pixal3D camera FOV
-# Pinned sub-deps required by moge v2 (git versions with .pt submodule)
+# ---------------------------------------------------------------------------
+# Pixal3D node (BD_Pixal3DPreprocess + BD_Pixal3DImageTo3D)
+# ---------------------------------------------------------------------------
+# MoGe — monocular geometry estimation for camera FOV
+# Pinned sub-deps required by moge v2 (.pt submodule missing from PyPI utils3d)
 utils3d @ git+https://github.com/EasternJournalist/utils3d.git@3fab839f0be9931dac7c8488eb0e1600c236e183
 pipeline @ git+https://github.com/EasternJournalist/pipeline.git@866f059d2a05cde05e4a52211ec5051fd5f276d6
 moge @ git+https://github.com/microsoft/MoGe.git
+
+# natten — Neighborhood Attention used by Pixal3D's NAF model
+natten
+
+# ---------------------------------------------------------------------------
+# NOTE: The following are vendored/private packages that require manual install.
+# ComfyUI Manager cannot install these automatically.
+#
+# pixal3d — Tencent's Pixal3D generation pipeline
+#   Source: TencentARC/Pixal3D (private repo or local vendor copy)
+#   Install: copy the pixal3d/ directory to your venv site-packages
+#   e.g.: cp -r /path/to/pixal3d /opt/comfyui/stable/venv/lib/python3.12/site-packages/
+#
+# cube_part — CubePart 3D segmentation library
+#   Source: vendored in this repo under nodes/cubepart/vendor/
+#   Install: automatically set up by the node on first import
+#
+# BiRefNet compatibility note:
+#   If using transformers >= 4.45, the RMBG-2.0 model's Config class needs
+#   a get_text_config() stub. The node handles this automatically via monkey-patching.
+# ---------------------------------------------------------------------------

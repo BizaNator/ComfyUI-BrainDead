@@ -94,6 +94,22 @@ def get_pipeline(model_path: str = DEFAULT_MODEL_PATH) -> "Pixal3DImageTo3DPipel
         _models_dir = "models"
     _RMBG_LOCAL = _os.path.join(_models_dir, "RMBG", "RMBG-2.0")
     print(f"[BD Pixal3D] Loading BiRefNet rembg from {_RMBG_LOCAL}...")
+    # Patch BiRefNet's Config class for transformers >= 4.40 compatibility (once, on disk).
+    # Newer transformers calls get_text_config() during tie_weights() but BiRefNet's
+    # Config is a plain Python dataclass without that method.
+    _birefnet_src = _os.path.join(_RMBG_LOCAL, "birefnet.py")
+    if _os.path.exists(_birefnet_src):
+        try:
+            _src = open(_birefnet_src).read()
+            if "get_text_config" not in _src:
+                _patched = _src.replace(
+                    "    def print_task(self) -> None:",
+                    "    def get_text_config(self, decoder=False):\n        return self\n\n    def print_task(self) -> None:",
+                )
+                open(_birefnet_src, "w").write(_patched)
+                print("[BD Pixal3D] Patched BiRefNet Config for transformers >= 4.40")
+        except Exception as _e:
+            print(f"[BD Pixal3D] WARNING: could not patch birefnet.py: {_e}")
     pipeline.rembg_model = _p3d_rembg.BiRefNet(model_name=_RMBG_LOCAL)
 
     print("[BD Pixal3D] Building DinoV3 projection models...")
