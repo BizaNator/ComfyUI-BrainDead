@@ -105,7 +105,9 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 | **BD Pack Bundle** | Pack mesh + textures + colors into MESH_BUNDLE |
 | **BD Unpack Bundle** | Unpack MESH_BUNDLE into individual components |
 | **BD Cache Bundle** | Cache MESH_BUNDLE for fast reload |
-| **BD Mesh Inspector** | Inspect mesh properties (verts, faces, UVs, colors) |
+| **BD Mesh Inspector** | Inspect mesh properties (verts, faces, UVs, colors) + interactive three.js viewer |
+| **BD Mesh Preview (Thumbnails)** | Render a TRIMESH_LIST (e.g. CubePart `parts`) or single TRIMESH to a labeled, color-coded contact-sheet IMAGE (shown inline) + per-mesh IMAGE batch. Headless GPU (EGL) render. Wire `part_names` → `labels`. |
+| **BD Preview 3D** | Show a mesh — or CubePart `parts` auto color-coded — in the in-node interactive three.js viewer (same viewer as Mesh Inspector). |
 
 **Mesh types — `TRIMESH` vs native `MESH`:**
 BD nodes pass meshes as **`TRIMESH`** (a full `trimesh.Trimesh` carrying vertex colors, UVs,
@@ -371,6 +373,10 @@ BD CubePart Segment  (parts="body, left wheel, right wheel, ...")
 BD CubePart Get Part (index=N)
   ↓ mesh
 BD CuMesh Simplify → BD Blender Decimate → export
+
+# Preview all segments at once:
+parts ─→ BD Mesh Preview (Thumbnails)   # labeled contact-sheet IMAGE of every part
+parts ─→ BD Preview 3D                  # interactive three.js viewer, color-coded
 ```
 
 ### Depth Nodes (`BrainDead/Depth`)
@@ -380,6 +386,17 @@ SOTA monocular geometry prediction.
 |------|-------------|
 | **BD Lotus-2 Model Loader** | Load FLUX.1-dev base + Lotus-2 depth or normal LoRA + LCM bridge. Module-level cache so reuse across Predict calls is instant. Optional CPU offload toggle for stacking with other models. |
 | **BD Lotus-2 Predict** | Run a loaded Lotus-2 model on an image. Outputs map (IMAGE), raw_linear ([0,1] normalized), and colorized_preview. Diffusion-based, much higher quality than feedforward depth estimators (DepthAnything/MiDaS). |
+
+## Workflow Templates
+
+Ready-to-use example workflows ship in [`example_workflows/`](example_workflows/) and appear in
+ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an
+in-canvas note. One template per major function set (see
+[example_workflows/README.md](example_workflows/README.md) to author more):
+
+| Template | Shows |
+|----------|-------|
+| **CubePart Part Decomposition** | Load Mesh → CubePart Segment → Mesh Preview (thumbnail grid) + Preview 3D + Get Part → Export (Save Context) |
 
 ## Installation
 

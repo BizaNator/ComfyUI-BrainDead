@@ -214,12 +214,14 @@ class BD_CubePartSegment(io.ComfyNode):
             print(f"[BD CubePart]   part {i} '{name}': "
                   f"{len(tm.vertices):,} verts, {len(tm.faces):,} faces")
 
-        # combined = deterministic colored concatenation of the canonical list
+        # combined = deterministic colored concatenation of the canonical list.
+        # Use VERTEX colors (not face) so they export as glTF COLOR_0 and render in
+        # the three.js viewer / any glb consumer.
         palette = _palette(len(out_meshes))
         colored = []
         for j, tm in enumerate(out_meshes):
             c = tm.copy()
-            c.visual.face_colors = np.tile(palette[j % len(palette)], (len(c.faces), 1))
+            c.visual.vertex_colors = np.tile(palette[j % len(palette)], (len(c.vertices), 1))
             colored.append(c)
         if colored:
             combined = trimesh.util.concatenate(colored)
