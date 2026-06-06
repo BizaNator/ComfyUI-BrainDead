@@ -399,6 +399,21 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                                  tooltip="head_cutout_clean: remove the lips/mouth."),
                 io.Boolean.Input("drop_nose", default=False, optional=True,
                                  tooltip="head_cutout_clean: remove the nose (off by default — nose is usually kept skin)."),
+                io.Combo.Input("skin_color_filter", options=["off", "fixed_hsv", "adaptive_lab", "both"],
+                               default="off", optional=True,
+                               tooltip="Refine the `skin`/`masked_skin` outputs by COLOUR (same engine as BD SAM3 "
+                                       "Multi-Prompt / BD Mask Resolver): adaptive_lab samples the skin tone from the "
+                                       "current skin region and keeps pixels within ΔE tolerance (works for any tone); "
+                                       "fixed_hsv uses HSV skin ranges; both = stricter. Drops non-skin pixels (e.g. a "
+                                       "dark mustache) from skin. Off = skin is purely geometric (head − features)."),
+                io.Float.Input("skin_color_threshold", default=0.3, min=0.0, max=1.0, step=0.05, optional=True,
+                               tooltip="skin_color_filter cutoff: keep pixels with skin-likelihood ≥ this. Lower for "
+                                       "stylized art (more permissive)."),
+                io.Boolean.Input("drop_facial_hair", default=False, optional=True,
+                                 tooltip="head_cutout_clean: also punch out non-skin-coloured facial hair (mustache/"
+                                         "beard) in the lower face, found via the skin colour filter (SAM3 text + "
+                                         "face-parse can't segment facial hair on stylized art). Best-effort; uses "
+                                         "skin_color_threshold. Wire the result to BD MP Face Infill to repaint it."),
             ],
             outputs=[
                 io.Image.Output(display_name="rgba",
@@ -447,7 +462,8 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 refine_iterations=1, bleed_guard=48, brow_bleed_guard=44, lips_bleed_guard=12, eye_bleed_guard=10,
                 remove_background=False, head_prompts="head\nface\nhair\near", exclude_prompts="neck\nshirt\nclothing\nshoulder",
                 neck_cut=True, cutout_bg="transparent", drop_eyes=True, drop_brows=True,
-                drop_lips=True, drop_nose=False, cleanup=True, fill_holes=True, lips_mode="mouth",
+                drop_lips=True, drop_nose=False, skin_color_filter="off", skin_color_threshold=0.3,
+                drop_facial_hair=False, cleanup=True, fill_holes=True, lips_mode="mouth",
                 edge_smooth=3, edge_refine="off", refine_radius=8, refine_eps=1e-4, refine_threshold=0.5,
                 vitmatte_model="small", silhouette_mask=None, head_mask=None) -> io.NodeOutput:
         if image.ndim == 3:
@@ -708,45 +724,34 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                 neg = _text_union(neg_lines)
                 head_sil = (pos.astype(bool) & ~neg.astype(bool)).astype(np.uint8) * 255
 
-                # Neck removal — STACKED for robustness (face-parse alone under-detects the
-                # neck on stylized heads, leaving the bulk below its thin band):
-                #   1. in-house SegFormer face-parser (1038lab/segformer_face): subtract the
-                #      real Neck/Clothing/Necklace classes (catches neck/collar above the jaw).
-                #   2. jawline cut: below the MediaPipe jaw contour, INTERPOLATED across the
-                #      full width (np.interp) so the neck is cut in side columns too, not only
-                #      under the face — a contour, not a flat line.
-                #   3. keep the head's connected component: drops the now-disconnected neck/
-                #      shoulder remnant under the cut (the "clean up the rest under it" step).
+                # Neck removal — CHIN-SAFE. Subtract the in-house face-parser's real
+                # Neck/Clothing/Necklace pixels, then (only if the neck is substantial)
+                # bridge that band HORIZONTALLY so the neck below disconnects, and drop it
+                # via connected-component. This NEVER cuts a full-width line into the chin:
+                # the chin stays because it's part of the head's connected component. If no
+                # neck is detected, nothing is cut. (The old below-band interpolation ate the
+                # chin whenever the parser fired even a tiny/false neck near the jaw.)
                 cut_info = ""
                 if neck_cut:
                     parts = []
-                    nc_sub = nc_loc = None
+                    nc = None
                     try:
                         from . import bd_face_parse
                         pred = bd_face_parse.parse(image)
-                        nc_sub = bd_face_parse.class_mask(pred, ["Neck", "Clothing", "Necklace"])
-                        nc_loc = bd_face_parse.class_mask(pred, ["Neck"])           # boundary locator
-                        if nc_sub.shape != head_sil.shape:
-                            nc_sub = cv2.resize(nc_sub, (W, H), interpolation=cv2.INTER_NEAREST)
-                            nc_loc = cv2.resize(nc_loc, (W, H), interpolation=cv2.INTER_NEAREST)
+                        nc = bd_face_parse.class_mask(pred, ["Neck", "Clothing", "Necklace"])
+                        if nc.shape != head_sil.shape:
+                            nc = cv2.resize(nc, (W, H), interpolation=cv2.INTER_NEAREST)
                     except Exception as e:
                         print(f"[BD MP SAM3] face-parser unavailable ({e})", flush=True)
-                    if nc_sub is not None and (nc_sub > 0).any():
-                        head_sil[nc_sub > 0] = 0                                   # remove detected neck/clothing
-                        parts.append(f"faceparse{100.0 * (nc_sub > 0).mean():.0f}%")
-                        # The detected NECK band marks the jaw/neck boundary. Cut everything below
-                        # its TOP edge (per column, interpolated across the width) — removes the
-                        # rest of the neck the model mislabelled as skin, WITHOUT MediaPipe's
-                        # too-high chin (which ate the jaw/ear). Skin above the band = kept.
-                        loc = nc_loc if (nc_loc is not None and (nc_loc > 0).any()) else nc_sub
-                        lb = loc > 0
-                        lcols = np.where(np.any(lb, axis=0))[0]
-                        if len(lcols):
-                            neck_top = np.argmax(lb, axis=0).astype(np.float64)    # first neck row per col
-                            top_full = np.interp(np.arange(W), lcols, neck_top[lcols])
-                            head_sil[np.arange(H)[:, None] >= top_full[None, :]] = 0
-                            parts.append("below-neck")
-                        # keep the head connected component — drop the disconnected neck/shoulder remnant
+                    if nc is not None and (nc > 0).any():
+                        area = float((nc > 0).mean())
+                        band = nc.copy()
+                        if area > 0.005:   # substantial neck — bridge horizontally to fully sever it
+                            bw = max(15, int(0.05 * W)) | 1
+                            band = cv2.dilate(band, cv2.getStructuringElement(cv2.MORPH_RECT, (bw, 3)))
+                        head_sil[band > 0] = 0
+                        parts.append(f"faceparse{100.0 * area:.1f}%")
+                        # keep the head's component — drops the now-disconnected neck/shoulder below
                         nlbl, lab, stats, _ = cv2.connectedComponentsWithStats((head_sil > 0).astype(np.uint8), 8)
                         if nlbl > 1:
                             ys2, xs2 = np.where(mp_masks["face_oval"] > 0)
@@ -760,7 +765,7 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
                             head_sil = (lab == seed).astype(np.uint8) * 255
                             parts.append("head-cc")
                     else:
-                        parts.append("no-neck-detected")   # leave the silhouette (don't risk eating the jaw)
+                        parts.append("no-neck-detected")
                     cut_info = " | neck:" + "+".join(parts) if parts else ""
 
                 if head_sil.any():
@@ -778,6 +783,30 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         hm_in = _mask_in(head_mask)
         head_out = hm_in if hm_in is not None else (sil if sil is not None else face_oval)
         skin = _subtract(head_out, eyes, brows, lips)
+
+        # Colour-aware skin refinement (same engine as BD SAM3 Multi-Prompt / Mask Resolver).
+        # Refines `skin` to skin-coloured pixels and (drop_facial_hair) finds non-skin facial
+        # hair in the lower face for head_cutout_clean — SAM3 text/face-parse can't segment it.
+        facial_hair = None
+        if skin_color_filter != "off" or drop_facial_hair:
+            try:
+                from .sam3_multiprompt import _compute_skin_likelihood
+                cmode = skin_color_filter if skin_color_filter != "off" else "adaptive_lab"
+                ref = (skin > 0)
+                like, _dbg = _compute_skin_likelihood(np_img.astype(np.float32) / 255.0,
+                                                      cmode, ref, 25.0, 50)
+                if skin_color_filter != "off":
+                    skin = np.where((skin > 0) & (like >= skin_color_threshold), 255, 0).astype(np.uint8)
+                if drop_facial_hair:
+                    fr = (mp_masks["face_oval"] > 0) & (like < skin_color_threshold)
+                    fr &= ~(eyes > 0) & ~(brows > 0) & ~(lips > 0) & ~(irises > 0)
+                    if (brows > 0).any():
+                        fr[:int(np.where(np.any(brows > 0, axis=1))[0][-1]), :] = False   # lower face only
+                    fr = cv2.morphologyEx(fr.astype(np.uint8) * 255, cv2.MORPH_OPEN,
+                                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+                    facial_hair = fr > 0
+            except Exception as e:
+                print(f"[BD MP SAM3] skin_color_filter failed ({e}) — skipping", flush=True)
 
         # Optional silhouette clip on every output.
         all_keys = ["face_oval", "skin", "left_eye", "right_eye", "eyes", "left_brow", "right_brow",
@@ -838,6 +867,8 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
             clean &= ~(local["lips"] > 0)
         if drop_nose:
             clean &= ~(local["nose"] > 0)
+        if drop_facial_hair and facial_hair is not None:
+            clean &= ~facial_hair
         head_cutout_clean = _compose(clean.astype(np.uint8) * 255)
 
         feats = [k for k, on in
