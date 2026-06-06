@@ -1,0 +1,320 @@
+{
+  "id": "bd-pixal3d-image-to-3d",
+  "revision": 0,
+  "last_node_id": 6,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        380,
+        260
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ℹ️ About — BrainDead Pixal3D",
+      "properties": {},
+      "widgets_values": [
+        "# 🧠 BrainDead — Pixal3D Image to 3D\n\nSingle image → textured 3D mesh. Pixal3D estimates geometry and texture from a single photo or generated image, outputting a TRIMESH compatible with all BD mesh nodes.\n\n## Flow\n1. **LoadImage** — load any image (single object works best; remove background first for clean results).\n2. **BD Pixal3D Preprocess** — background compositing + camera FOV estimation. Use `black` background mode for best geometry.\n3. **BD Pixal3D Image to 3D** — generates shape + texture. `1024_cascade` pipeline = best quality (~60 s). `1536_cascade` = higher resolution.\n4. **BD Preview 3D** — interactive 3D viewer in the canvas.\n5. **BD Export Mesh With Colors** — saves `.glb` (default) to ComfyUI output folder.\n\n## Models (auto-download on first run)\nPixal3D model (~10 GB) downloads from `TencentARC/Pixal3D` on first use. Model cached to `$HF_HOME`. Requires ~12 GB VRAM.\n\n## Tips\n- Use `fov_mode: auto_moge` unless you know the camera FOV of the source image (requires MoGe-2).\n- Use `fov_mode: manual` with `manual_fov: 0.2` if MoGe gives distorted results.\n- Pipe the mesh output into **BD OVoxel Bake** for full PBR texture extraction.\n- Works great after Flux/SD generation — generate → Pixal3D → game-ready asset in one workflow.\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        340
+      ],
+      "size": [
+        315,
+        130
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ],
+      "title": "① Load Image"
+    },
+    {
+      "id": 3,
+      "type": "BD_Pixal3DPreprocess",
+      "pos": [
+        400,
+        280
+      ],
+      "size": [
+        360,
+        320
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pixal3d_input",
+          "type": "PIXAL3D_INPUT",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "preprocessed_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Pixal3DPreprocess"
+      },
+      "widgets_values": [
+        "black",
+        "auto_moge",
+        0.2,
+        1.0,
+        0
+      ],
+      "title": "② Pixal3D Preprocess"
+    },
+    {
+      "id": 4,
+      "type": "BD_Pixal3DImageTo3D",
+      "pos": [
+        810,
+        250
+      ],
+      "size": [
+        380,
+        500
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pixal3d_input",
+          "type": "PIXAL3D_INPUT",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            3,
+            4
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "voxelgrid",
+          "type": "TRELLIS2_VOXELGRID",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Pixal3DImageTo3D"
+      },
+      "widgets_values": [
+        42,
+        "1024_cascade",
+        49152,
+        7.5,
+        0.7,
+        25,
+        5.0,
+        7.5,
+        0.5,
+        25,
+        3.0,
+        1.0,
+        0.0,
+        25,
+        3.0,
+        "TencentARC/Pixal3D"
+      ],
+      "title": "③ Pixal3D Image to 3D"
+    },
+    {
+      "id": 5,
+      "type": "BD_Preview3D",
+      "pos": [
+        1240,
+        250
+      ],
+      "size": [
+        300,
+        200
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 3
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "BD_Preview3D"
+      },
+      "widgets_values": [],
+      "title": "④ Preview 3D"
+    },
+    {
+      "id": 6,
+      "type": "BD_ExportMeshWithColors",
+      "pos": [
+        1240,
+        490
+      ],
+      "size": [
+        300,
+        200
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 4
+        },
+        {
+          "name": "name_prefix",
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "context_id",
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "suffix",
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "context_custom_vars",
+          "type": "STRING",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "file_path",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_ExportMeshWithColors"
+      },
+      "widgets_values": [
+        "pixal3d_output",
+        "glb",
+        true,
+        "",
+        "",
+        "",
+        ""
+      ],
+      "title": "⑤ Export Mesh (.glb)"
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      3,
+      0,
+      4,
+      0,
+      "PIXAL3D_INPUT"
+    ],
+    [
+      3,
+      4,
+      0,
+      5,
+      0,
+      "TRIMESH"
+    ],
+    [
+      4,
+      4,
+      0,
+      6,
+      0,
+      "TRIMESH"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

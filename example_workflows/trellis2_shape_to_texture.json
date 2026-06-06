@@ -1,0 +1,409 @@
+{
+  "id": "bd-trellis2-shape-to-texture",
+  "revision": 0,
+  "last_node_id": 7,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 7,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        430,
+        360
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# BrainDead \u2014 TRELLIS.2 Shape \u2192 Textured Mesh\n\nSingle-image to **PBR-textured 3D mesh** with Microsoft TRELLIS.2. Drop in a reference image, get back a watertight mesh with base-color / metallic / roughness vertex attributes.\n\n## Flow\n1. **Load Image** \u2014 pick any reference image (front-facing subject works best).\n2. **Trellis2 Remove Background** \u2014 produces a clean foreground mask.\n3. **BD TRELLIS.2 Get Conditioning** \u2014 DinoV3 conditioning (carries resolution / VRAM config).\n4. **BD TRELLIS.2 Image to Shape** \u2014 sparse-structure + shape sampling \u2192 untextured geometry.\n5. **BD TRELLIS.2 Shape to Textured Mesh** \u2014 PBR texture sampling \u2192 textured `trimesh` + voxelgrid.\n6. **BD Preview 3D** \u2014 interactive viewer for the textured mesh.\n\n## Models / VRAM\n`microsoft/TRELLIS.2-4B` auto-downloads on first run (resolved via `extra_model_paths.yaml`); no loader-node `models` block needed. Defaults use the `1024_cascade` resolution and `max_tokens=49152` (~9 GB just for the cascade). Budget **~20 GB VRAM** end to end; the RTX PRO 6000 (97 GB) runs it comfortably in `keep_loaded` mode. Lower `max_tokens` or use the `512` resolution to cut VRAM. Requires the `flash_attn` backend + CuMesh.\n\n## Tips\n- Raise `ss_sampling_steps` / `shape_sampling_steps` for more shape detail (slower).\n- Reuse one `shape_result` and feed a different `texture_conditioning` to retexture without regenerating geometry (or use **BD TRELLIS.2 Retexture**).\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+      ],
+      "title": "\u2139\ufe0f About \u2014 BrainDead TRELLIS.2"
+    },
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        440
+      ],
+      "size": [
+        330,
+        314
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ],
+      "title": "\u2460 Load Image (reference)"
+    },
+    {
+      "id": 2,
+      "type": "Trellis2RemoveBackground",
+      "pos": [
+        410,
+        440
+      ],
+      "size": [
+        300,
+        130
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "links": [
+            3
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "Trellis2RemoveBackground"
+      },
+      "widgets_values": [
+        true
+      ],
+      "title": "\u2461 Remove Background \u2192 mask"
+    },
+    {
+      "id": 3,
+      "type": "BD_Trellis2GetConditioning",
+      "pos": [
+        750,
+        440
+      ],
+      "size": [
+        340,
+        230
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 2
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "conditioning",
+          "type": "TRELLIS2_CONDITIONING",
+          "links": [
+            4,
+            7
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "preprocessed_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Trellis2GetConditioning"
+      },
+      "widgets_values": [
+        "1024_cascade",
+        "flash_attn",
+        "keep_loaded",
+        true,
+        "gray"
+      ],
+      "title": "\u2462 Get Conditioning (DinoV3)"
+    },
+    {
+      "id": 4,
+      "type": "BD_Trellis2ImageToShape",
+      "pos": [
+        1130,
+        440
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "conditioning",
+          "type": "TRELLIS2_CONDITIONING",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "shape_result",
+          "type": "TRELLIS2_SHAPE_RESULT",
+          "links": [
+            5
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Trellis2ImageToShape"
+      },
+      "widgets_values": [
+        0,
+        7.5,
+        12,
+        7.5,
+        12,
+        49152
+      ],
+      "title": "\u2463 Image to Shape (geometry)"
+    },
+    {
+      "id": 5,
+      "type": "BD_Trellis2ShapeToTexturedMesh",
+      "pos": [
+        1130,
+        730
+      ],
+      "size": [
+        360,
+        250
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "conditioning",
+          "type": "TRELLIS2_CONDITIONING",
+          "link": 7
+        },
+        {
+          "name": "shape_result",
+          "type": "TRELLIS2_SHAPE_RESULT",
+          "link": 5
+        },
+        {
+          "name": "texture_conditioning",
+          "type": "TRELLIS2_CONDITIONING",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "trimesh",
+          "type": "TRIMESH",
+          "links": [
+            6
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "voxelgrid",
+          "type": "VOXELGRID",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "pbr_pointcloud",
+          "type": "TRIMESH",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "shape_voxelgrid",
+          "type": "VOXELGRID",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "shape_pbr_pointcloud",
+          "type": "TRIMESH",
+          "links": null,
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Trellis2ShapeToTexturedMesh"
+      },
+      "widgets_values": [
+        0,
+        7.5,
+        12,
+        false
+      ],
+      "title": "\u2464 Shape \u2192 Textured Mesh (PBR)"
+    },
+    {
+      "id": 6,
+      "type": "BD_Preview3D",
+      "pos": [
+        550,
+        730
+      ],
+      "size": [
+        440,
+        470
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "meshes",
+          "type": "TRIMESH_LIST",
+          "link": null
+        },
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 6
+        },
+        {
+          "name": "color_parts",
+          "type": "BOOLEAN",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Preview3D"
+      },
+      "widgets_values": [
+        true
+      ],
+      "title": "\u2465 Preview 3D (textured)"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      2,
+      1,
+      3,
+      1,
+      "MASK"
+    ],
+    [
+      4,
+      3,
+      0,
+      4,
+      0,
+      "TRELLIS2_CONDITIONING"
+    ],
+    [
+      5,
+      4,
+      0,
+      5,
+      1,
+      "TRELLIS2_SHAPE_RESULT"
+    ],
+    [
+      6,
+      5,
+      0,
+      6,
+      1,
+      "TRIMESH"
+    ],
+    [
+      7,
+      3,
+      0,
+      5,
+      0,
+      "TRELLIS2_CONDITIONING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

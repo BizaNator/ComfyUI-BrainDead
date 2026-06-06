@@ -42,4 +42,12 @@ Workflows here ship with the node pack and appear in ComfyUI's
 
 | Template (file) | What it shows |
 |-----------------|---------------|
-| `cubepart_part_decomposition` | Load Mesh → CubePart Segment → Mesh Preview (thumbnail grid) + Preview 3D + Get Part → Export (Save Context). |
+| `CubePart_Part_Decomposition` | Load Mesh → CubePart Segment → Mesh Preview (grid) + Preview 3D + Get Part → Export (Save Context). |
+| `trellis2_shape_to_texture` | Load Image → Remove BG → Trellis2 Conditioning → Image-to-Shape → Shape-to-Textured-Mesh → Preview 3D. |
+| `ovoxel_pbr_bake` | Load Mesh → Mesh-to-OVoxel → OVoxel Bake → albedo/normal/roughness/metallic + Export GLB. |
+| `pixal3d_image_to_3d` | Load Image → Pixal3D Preprocess (MoGe FOV) → Image-to-3D → CuMesh Simplify + OVoxel Bake. |
+| `sam3_parts_segmentation` | Load Image → SAM3 Multi-Prompt → Parts Builder → Parts Compose + Parts Export. |
+| `lotus2_depth_normal` | Load Image → Lotus-2 Loader → Predict (depth/normal) → previews. |
+| `facewrap_pipeline` | FaceWrap nodes end to end. |
+| `glsl_skin_tinting` | Load Image → GLSL Batch (skin tint) → Save Batch. |
+| `character_consistency` | Qwen-Image character consistency pipeline. |

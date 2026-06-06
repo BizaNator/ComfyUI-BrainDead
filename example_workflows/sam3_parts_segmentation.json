@@ -1,0 +1,435 @@
+{
+  "id": "bd-sam3-parts-template",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        420,
+        420
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "# BrainDead - SAM3 Parts Segmentation\n\nOpen-vocabulary part segmentation from a single image. SAM3 segments each named prompt into a mask; the Parts pipeline crops each part to its own RGBA image and exports per-part PNGs + a layered composite.\n\n## Flow\n1. **Load Image** - pick any image (subject on a clean background works best).\n2. **BD SAM3 Multi-Prompt** - type one part name per line in `prompts`. Standalone: auto-downloads the official `Comfy-Org/sam3.1` checkpoint on first use. Outputs `per_prompt_masks` + `combined_mask`.\n3. **BD Parts Builder** - crops/pads each masked region into its own image, emits a `PARTS_BUNDLE`.\n4. **BD Parts Compose** - flattens the parts back into a single preview image (shown inline).\n5. **BD Parts Export** - writes per-part RGBA PNGs + a composite PNG to the output folder.\n\n## Models / VRAM\nSAM3 (`Comfy-Org/sam3.1`) auto-downloads in-house on first run - no comfyui-rmbg needed. Plan ~8-10 GB VRAM for the SAM3 model + text encoder. Edit the `prompts` list to match your subject (e.g. `head`, `torso`, `arm`, `leg`, `hand`).\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+      ],
+      "title": "\u2139\ufe0f About \u2014 BrainDead SAM3 Parts"
+    },
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        500
+      ],
+      "size": [
+        320,
+        320
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ],
+      "title": "\u2460 Load Image"
+    },
+    {
+      "id": 2,
+      "type": "BD_SAM3MultiPrompt",
+      "pos": [
+        400,
+        320
+      ],
+      "size": [
+        400,
+        540
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "combined_mask",
+          "type": "MASK",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "masked_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "per_prompt_masks",
+          "type": "MASK",
+          "links": [
+            3
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "silhouette_composite",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_SAM3MultiPrompt"
+      },
+      "widgets_values": [
+        "head\ntorso\nleft arm\nright arm\nleft leg\nright leg",
+        "",
+        "union",
+        1.0,
+        0.5,
+        0.5,
+        "off",
+        0.7,
+        0.3,
+        "adaptive_lab",
+        25.0,
+        0.5,
+        50,
+        true,
+        64,
+        "white",
+        true,
+        0.5,
+        "Auto",
+        0,
+        0,
+        false,
+        false,
+        0.0,
+        false
+      ],
+      "title": "\u2461 SAM3 Multi-Prompt (one part per line)"
+    },
+    {
+      "id": 3,
+      "type": "BD_PartsBuilder",
+      "pos": [
+        840,
+        320
+      ],
+      "size": [
+        340,
+        420
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 4
+        },
+        {
+          "name": "sapiens2_labels",
+          "type": "SAPIENS2_LABELS",
+          "link": null
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 3
+        },
+        {
+          "name": "mask_labels",
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "depth_image",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "combined_mask",
+          "type": "MASK",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image_batch",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "label_list",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "bbox_list",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "links": [
+            5,
+            6
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsBuilder"
+      },
+      "widgets_values": [
+        "all",
+        5,
+        "native",
+        "pad_to_square",
+        "alpha",
+        64,
+        "",
+        1024,
+        "#888888"
+      ],
+      "title": "\u2462 Parts Builder (crop each part)"
+    },
+    {
+      "id": 4,
+      "type": "BD_PartsCompose",
+      "pos": [
+        1220,
+        40
+      ],
+      "size": [
+        300,
+        200
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "alpha",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsCompose"
+      },
+      "widgets_values": [
+        0,
+        true
+      ],
+      "title": "\u2463 Parts Compose (flatten preview)"
+    },
+    {
+      "id": 5,
+      "type": "BD_PartsExport",
+      "pos": [
+        1220,
+        320
+      ],
+      "size": [
+        340,
+        440
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "link": 6
+        },
+        {
+          "name": "base_image",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "background_image",
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "output_dir",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "summary",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "composite_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "composite_image_masked",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "parts_image_batch",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsExport"
+      },
+      "widgets_values": [
+        "parts",
+        "SAM3_Parts",
+        true,
+        "",
+        true,
+        false,
+        false,
+        false,
+        true,
+        0,
+        false
+      ],
+      "title": "\u2464 Parts Export (PNGs + composite)"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      5,
+      "MASK"
+    ],
+    [
+      3,
+      2,
+      2,
+      3,
+      2,
+      "MASK"
+    ],
+    [
+      4,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      5,
+      3,
+      3,
+      4,
+      0,
+      "PARTS_BUNDLE"
+    ],
+    [
+      6,
+      3,
+      3,
+      5,
+      0,
+      "PARTS_BUNDLE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

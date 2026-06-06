@@ -1,0 +1,292 @@
+{
+  "id": "bd-glsl-skin-tinting-template",
+  "revision": 1,
+  "last_node_id": 10,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        440,
+        400
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ℹ️ About — BrainDead GLSL Skin Tinting",
+      "properties": {},
+      "widgets_values": [
+        "# 🧠 BrainDead — GLSL Skin Tinting\n\nGPU-accelerated GLSL batch shader — generate **4 skin tone variations** (light / medium / dark / zombie) from a single source image in **one pass**. No re-sampling per iteration; all tones render sequentially on GPU via `BD_GLSLBatch`, then `BD_SaveBatch` writes one labeled PNG per tone.\n\n## Flow\n1. **Load Image** — load a character render (RGBA art recommended; alpha = art over tint).\n2. **BD GLSL Batch** — inline GLSL ES 3.0 shader applies a soft-light skin tint per iteration. `vary_floats` drives 4 skin tones (light → dark → zombie) in one workflow execution.\n3. **BD Save Batch** — `fc0_batch` + `iteration_names` → one PNG per tone, named by label.\n\n## Customizing skin tones\nEdit `vary_floats` in **BD GLSL Batch** to change the RGB values per iteration:\n- `u_float0=0.95,0.72,0.49,0.43`  — red channel (light→zombie)\n- `u_float1=0.82,0.62,0.41,0.56`  — green channel (zombie gets a green lift)\n- `u_float2=0.72,0.50,0.34,0.34`  — blue channel\n- `u_float3=0.4` in `floats`  — global tint strength\n\nEdit `iteration_names` to rename outputs (`light\\nmedium\\ndark\\nzombie`).\n\n## For production use\nPoint `fragment_shader_file` at your `skin_shader.glsl` (4-output ILM/SR/Unity/Unreal shader) and use `fc0..fc3` outputs. Use `save_only` / `pass_only` on BD Save Batch to filter which tones hit disk vs pass downstream.\n\n## VRAM\nRuns on GPU via GLSL — very fast. No AI model loaded.\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
+      ]
+    },
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        480
+      ],
+      "size": [
+        320,
+        320
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ],
+      "title": "① Load base image"
+    },
+    {
+      "id": 2,
+      "type": "BD_GLSLBatch",
+      "pos": [
+        420,
+        480
+      ],
+      "size": [
+        480,
+        580
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "u_image0",
+          "type": "IMAGE",
+          "link": 1
+        },
+        {
+          "name": "u_image1",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "u_image2",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "u_image3",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "u_image4",
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fc0_batch",
+          "type": "IMAGE",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "fc1_batch",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "fc2_batch",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "fc3_batch",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "iteration_names",
+          "type": "STRING",
+          "links": [
+            3
+          ],
+          "slot_index": 4
+        },
+        {
+          "name": "iteration_count",
+          "type": "INT",
+          "links": null,
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_GLSLBatch"
+      },
+      "widgets_values": [
+        "#version 300 es\nprecision highp float;\nin vec2 v_texCoord;\nuniform sampler2D u_image0;\nuniform float u_float0;  // u_tint_r\nuniform float u_float1;  // u_tint_g\nuniform float u_float2;  // u_tint_b\nuniform float u_float3;  // u_strength (0-1)\nlayout(location=0) out vec4 fragColor0;\nvoid main(){\n    vec4 src = texture(u_image0, v_texCoord);\n    float luma = dot(src.rgb, vec3(0.299, 0.587, 0.114));\n    vec3 tint = vec3(u_float0, u_float1, u_float2);\n    // Soft-light blend: tint modulates midtones, shadows/highlights preserved\n    vec3 tinted = src.rgb * tint * 2.0;\n    float blend = u_float3 * smoothstep(0.08, 0.92, luma);\n    vec3 result = clamp(mix(src.rgb, tinted, blend), 0.0, 1.0);\n    // alpha-over: composite art on tinted layer\n    vec3 outc = mix(result, src.rgb, src.a);\n    fragColor0 = vec4(outc, 1.0);\n}\n",
+        "",
+        "u_float3=0.4",
+        "",
+        "",
+        "u_float0=0.95,0.72,0.49,0.43  // Tint R  light,medium,dark,zombie\nu_float1=0.82,0.62,0.41,0.56  // Tint G\nu_float2=0.72,0.50,0.34,0.34  // Tint B\n",
+        "light\nmedium\ndark\nzombie\n",
+        0,
+        0,
+        0
+      ],
+      "title": "② GLSL Batch — skin-tint (4 tones)"
+    },
+    {
+      "id": 3,
+      "type": "BD_SaveBatch",
+      "pos": [
+        960,
+        480
+      ],
+      "size": [
+        380,
+        440
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 2
+        },
+        {
+          "name": "labels",
+          "type": "STRING",
+          "link": 3
+        },
+        {
+          "name": "alpha_mask",
+          "type": "MASK",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "saved_count",
+          "type": "INT",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "saved_paths",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "passed_images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "passed_labels",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "preview_images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 5
+        },
+        {
+          "name": "preview_alpha",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 6
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_SaveBatch"
+      },
+      "widgets_values": [
+        "",
+        "",
+        "skin",
+        "",
+        "png",
+        false,
+        "",
+        false,
+        false,
+        ""
+      ],
+      "title": "③ Save Batch — one PNG per tone"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      2,
+      4,
+      3,
+      1,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
