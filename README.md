@@ -1,29 +1,117 @@
 # ComfyUI-BrainDead
 
-
-A comprehensive collection of ComfyUI custom nodes for caching, character consistency, prompt iteration, **3D mesh / PBR baking, character segmentation pipelines, and game-asset preparation**.
-
-
 <div align="center">
 
-  **🧠 BrainDeadGuild**
+<img src="docs/images/banner.jpg" alt="ComfyUI-BrainDead" width="100%">
 
-  *Don't Be BrAIn Dead Alone*
+A comprehensive collection of ComfyUI custom nodes for caching, character consistency, prompt iteration, **3D mesh / PBR baking, character segmentation pipelines, image-to-3D generation, and game-asset preparation**.
 
-  *Games | AI | Community*
-
-  [![BrainDeadGuild](https://img.shields.io/badge/BrainDeadGuild-Community-purple)](https://BrainDeadGuild.com/discord)
-  [![BrainDead.TV](https://img.shields.io/badge/BrainDead.TV-Lore-red)](https://BrainDead.TV)
+[![BrainDeadGuild](https://img.shields.io/badge/BrainDeadGuild-Community-purple)](https://BrainDeadGuild.com/discord)
+[![BrainDead.TV](https://img.shields.io/badge/BrainDead.TV-Lore-red)](https://BrainDead.TV)
+[![ComfyUI V3](https://img.shields.io/badge/ComfyUI-V3%20API-blue)](https://docs.comfy.org/custom-nodes/v3_migration)
+[![~110 nodes](https://img.shields.io/badge/nodes-~110-green)](nodes/)
 
 </div>
 
+---
+
 ## 🎯 About BrainDead Nodes
-AN interanlly used node pack for Biloxi Studios designed to help with character, story, 3d and audio generation for next generation UGC game and TV pipelines.
+AN internally-used node pack for Biloxi Studios designed to help with character, story, 3D, and audio generation for next-generation UGC game and TV pipelines. All nodes use the **ComfyUI V3 API** and appear under the `🧠BrainDead` category in the node browser.
+
+---
+
+## Workflow Templates
+
+Nine ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
+
+<table>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/workflow_pixal3d.jpg" width="100%" alt="Pixal3D Image to 3D"><br>
+<b>Pixal3D Image to 3D</b><br>
+<sub>Image → MoGe FOV → 3-stage pipeline → mesh + voxelgrid → PBR bake</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_cubepart.jpg" width="100%" alt="CubePart Part Decomposition"><br>
+<b>CubePart Part Decomposition</b><br>
+<sub>Mesh → open-vocab part names → TRIMESH per part → preview + export</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_sam3.jpg" width="100%" alt="SAM3 Parts Segmentation"><br>
+<b>SAM3 Parts Segmentation</b><br>
+<sub>Image → SAM3 multi-prompt → Parts Refine → Batch Edit → PSD export</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/workflow_lotus2.jpg" width="100%" alt="Lotus-2 Depth & Normal"><br>
+<b>Lotus-2 Depth & Normal</b><br>
+<sub>FLUX-based diffusion depth — far higher quality than feedforward estimators</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_glsl.jpg" width="100%" alt="GLSL Skin Tinting"><br>
+<b>GLSL Skin Tinting</b><br>
+<sub>4-output GPU shader: ILM / SR+Parts / Unity / Unreal skin-tone pipeline</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_ovoxel.jpg" width="100%" alt="OVoxel PBR Bake"><br>
+<b>OVoxel PBR Bake</b><br>
+<sub>TRELLIS2 voxelgrid → simplify → UV unwrap → albedo/normal/roughness/metallic</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/workflow_trellis2.jpg" width="100%" alt="TRELLIS2 Shape to Texture"><br>
+<b>TRELLIS2 Shape to Texture</b><br>
+<sub>Voxelgrid → textured mesh with full PBR material bake via BD OVoxel Bake</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_facewrap.jpg" width="100%" alt="FaceWrap Pipeline"><br>
+<b>FaceWrap Pipeline</b><br>
+<sub>MediaPipe landmarks → SAM3 guided face masks → socket infill → UV export</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_character.jpg" width="100%" alt="Character Consistency"><br>
+<b>Character Consistency</b><br>
+<sub>Qwen-Image multi-view edit with identity lock, prompt iteration, save context</sub>
+</td>
+</tr>
+</table>
+
+---
+
+## Installation
+
+### ComfyUI Manager
+Search for **"BrainDead"** in ComfyUI Manager and install. Dependencies in `requirements.txt` are installed automatically.
+
+### Manual Installation
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/BizaNator/ComfyUI-BrainDead
+cd ComfyUI-BrainDead
+pip install -r requirements.txt
+```
+
+### Dependencies
+`requirements.txt` is installed automatically by ComfyUI Manager. It covers:
+
+| Package | Purpose |
+|---------|---------|
+| `moge` (git) | MoGe-2 monocular geometry for Pixal3D FOV estimation |
+| `utils3d` (git, pinned) | Required by MoGe `.pt` submodule — PyPI version is incomplete |
+| `pipeline` (git, pinned) | Required by MoGe |
+| `natten` | Neighborhood Attention for Pixal3D NAF upsampler |
+
+> **Pixal3D model weights** (~10 GB) are downloaded automatically on first run.
+> `cube_part` is vendored under `nodes/cubepart/vendor/` — no separate install needed.
+
+---
 
 ## Features
 
-### Cache Nodes (`BrainDead/Cache`)
-Smart caching with **lazy evaluation** - upstream nodes are completely SKIPPED when cache is valid.
+### Cache Nodes (`🧠BrainDead/Cache`)
+Smart caching with **lazy evaluation** — upstream nodes are completely SKIPPED when cache is valid.
 
 | Node | Description |
 |------|-------------|
@@ -57,7 +145,7 @@ Smart caching with **lazy evaluation** - upstream nodes are completely SKIPPED w
 4. Per-save `custom_vars` (multiline `key=value`) layer on top of the context for one-off variations like `subfolder=PBR` or `materials=metal`
 5. `BD Get Context Path` outputs a STRING path for ANY save node — works with ComfyUI's built-in SaveImage and third-party packs
 
-### Character Nodes (`BrainDead/Character`)
+### Character Nodes (`🧠BrainDead/Character`)
 Advanced tools for maintaining character consistency with Qwen-Image models.
 
 | Node | Description |
@@ -73,7 +161,7 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 - Per-image weight and role control
 - Identity-focused templates that prioritize facial features
 
-### Mesh Nodes (`BrainDead/Mesh`)
+### Mesh Nodes (`🧠BrainDead/Mesh`)
 3D mesh processing, color sampling, simplification, and PBR texture baking tools.
 
 | Node | Description |
@@ -133,8 +221,8 @@ native `MESH` can't represent them.
 [BD Load OVoxel] → voxelgrid → [BD OVoxel Bake] → re-bake without regenerating
 ```
 
-### Blender Nodes (`BrainDead/Blender`)
-Advanced mesh processing using Blender's geometry tools (requires Blender 5.0+).
+### Blender Nodes (`🧠BrainDead/Blender`)
+Advanced mesh processing using Blender's geometry tools (requires Blender 5.0+, bundled in `lib/`).
 
 | Node | Description |
 |------|-------------|
@@ -174,7 +262,7 @@ Advanced mesh processing using Blender's geometry tools (requires Blender 5.0+).
 - **Region subdivision**: Proportional face density based on area
 - **Output topology**: TRI, QUAD, or NGON output
 
-### Prompt Nodes (`BrainDead/Prompt`)
+### Prompt Nodes (`🧠BrainDead/Prompt`)
 Iterate through multiple prompts with automatic filename generation, plus per-Run iteration over typed inputs.
 
 | Node | Description |
@@ -198,7 +286,7 @@ Iterate through multiple prompts with automatic filename generation, plus per-Ru
 - `suffix_list`: `base_front`, `base_left`, etc.
 - `template`: `{base}_{index:03d}_{suffix}`
 
-### Segmentation Nodes (`BrainDead/Segmentation`)
+### Segmentation Nodes (`🧠BrainDead/Segmentation`)
 Character segmentation, parts pipeline, PBR map derivation, asset prep.
 
 **Parts pipeline** — single-execution character processing using the `PARTS_BUNDLE` type:
@@ -237,8 +325,8 @@ Character segmentation, parts pipeline, PBR map derivation, asset prep.
 | **BD MP Face Export** | Passthrough node — writes the **landmark JSON** (478 pts) + reference RGBA mask PNG for the Blender face-plate UV pipeline. Tiny-detection guard (retry + padded fallback). |
 | **BD MP Save / Load Face Data** | Persist all region masks + head_mask + image to `.mpface.npz`/`.json`; reload later (after the image is processed and MediaPipe can no longer detect). |
 | **BD MP Face Refine** | Refine MediaPipe feature masks with a SAM3 segment batch (IoU match → intersect), then compute pixel-accurate skin. |
-| **BD MP SAM3 Face Segment** | **MediaPipe-guided SAM3**: localizes each feature with MediaPipe, then prompts SAM3 per feature (bbox + positive landmark points + sibling negatives) for pixel-accurate masks in one node. Solves the stylized-brow offset (point seed → SAM3 grows to the whole eyebrow). Outputs match BD MP Face Mask. Cleanup (component-keep + optional hole-fill + edge smooth) and optional edge-snap refinement (`guided` / `matting` / `vitmatte`). **No wiring needed** — auto-loads + auto-downloads the official SAM3 checkpoint in-house (optional `MODEL` override). |
-| **BD MP Mouth Parts** | Separate an **isolated mouth render** into **lips / teeth / tongue** and pack them **RGBA for the Unreal viseme atlas: R=lips, G=teeth, B=tongue, A=POM** (wire depth into `pom`). Two engines: `color` (tuned-HSV, no model — teeth=bright/desaturated, tongue=warm-hue region-grown + interior-gated, lips=saturated remainder/cavity-excluded) and `sam3` (colour split seeds SAM3 to refine the tongue, with a greediness guard that protects clean teeth/lips). Optional `edge_refine` + `despeckle`. Replaces the `SAM3×3 → FillHoles → PackChannels` chain in the lip-viseme atlas. |
+| **BD MP SAM3 Face Segment** | **MediaPipe-guided SAM3**: localizes each feature with MediaPipe, then prompts SAM3 per feature (bbox + positive landmark points + sibling negatives) for pixel-accurate masks in one node. Solves the stylized-brow offset. Outputs match BD MP Face Mask. Cleanup (component-keep + optional hole-fill + edge smooth) and optional edge-snap refinement (`guided` / `matting` / `vitmatte`). **No wiring needed** — auto-loads + auto-downloads the official SAM3 checkpoint in-house (optional `MODEL` override). `skin_color_filter` (adaptive_lab / fixed_hsv / both) refines skin mask by colour — drops non-skin pixels (dark mustache, etc.). `drop_facial_hair` punches out uncoloured facial hair in the lower face zone. **Chin-safe neck removal** via face-parser + connected-component — never cuts a full-width jaw line. |
+| **BD MP Mouth Parts** | Separate an **isolated mouth render** into **lips / teeth / tongue** and pack them **RGBA for the Unreal viseme atlas: R=lips, G=teeth, B=tongue, A=POM** (wire depth into `pom`). Two engines: `color` (tuned-HSV, no model) and `sam3` (colour split seeds SAM3 to refine the tongue). Optional `edge_refine` + `despeckle`. Replaces the `SAM3×3 → FillHoles → PackChannels` chain in the lip-viseme atlas. |
 
 **Face socket / animation textures:**
 
@@ -321,7 +409,7 @@ ALL into BD Derive PBR Maps with metallic_zone_mask=accessories_mask
          → per-tag PNGs + composite PNG + layered PSD with optional mask layers
 ```
 
-### Pixal3D Nodes (`BrainDead/Pixal3D`)
+### Pixal3D Nodes (`🧠BrainDead/Pixal3D`)
 Image-to-3D generation using Pixal3D (TencentARC/Pixal3D, Trellis2-based). Downloads ~10GB model weights on first run to `/srv/AI_Stuff/models/huggingface/`.
 
 | Node | Description |
@@ -340,7 +428,7 @@ BD Pixal3D Image to 3D  (pipeline_type=1024_cascade)
 BD CuMesh Simplify    BD OVoxelBake → albedo, normal, roughness, metallic
 ```
 
-### CubePart Nodes (`BrainDead/CubePart`)
+### CubePart Nodes (`🧠BrainDead/CubePart`)
 Open-vocabulary, part-controllable 3D decomposition with Roblox **CubePart**. Give it a mesh and up to **8** free-text part names; it generates one clean mesh per part, canonically aligned for rigging / game engines. The `cube_part` library is vendored under `nodes/cubepart/vendor/` (self-contained — no separate pip package).
 
 | Node | Description |
@@ -351,16 +439,12 @@ Open-vocabulary, part-controllable 3D decomposition with Roblox **CubePart**. Gi
 **Models** — paths auto-resolve via ComfyUI `folder_paths` (respecting `extra_model_paths.yaml`) and **auto-download from HuggingFace on first run** if missing (`auto_download` toggle, default on). Leave `model_dir`/`text_encoder_path` empty to auto-resolve, or set an explicit override.
 - `Roblox/cubepart` → `cubepart` model folder (`extra_model_paths.yaml: cubepart:` → `/srv/AI_Stuff/models/cubepart/`; else `models/cubepart`). `multi_part_dit.safetensors` ~8.6GB + `vae.safetensors` ~1.3GB.
 - `Qwen/Qwen3-VL-4B-Instruct` → under the `LLM` model folder (`/srv/AI_Stuff/models/LLM/Qwen3-VL-4B-Instruct/`), text encoder loaded offline.
-- `Qwen/Qwen-Image` transformer config (architecture only) → HF cache.
 
 To pre-download instead of relying on first-run auto-download:
 ```bash
 huggingface-cli download Roblox/cubepart --local-dir /srv/AI_Stuff/models/cubepart
 huggingface-cli download Qwen/Qwen3-VL-4B-Instruct --local-dir /srv/AI_Stuff/models/LLM/Qwen3-VL-4B-Instruct
 ```
-Extra venv deps: `warp-lang`, `jaxtyping` (everything else is already present; nothing touches torch). Pipeline load ~18GB VRAM.
-
-**Save naming:** the part/combined meshes export through **BD Export Mesh With Colors**, which accepts a `context_id` from **BD Save Context** (+ `suffix`, wirable from Get Part's `name`) for template-based naming/foldering — same save system as the rest of the pipeline.
 
 > **License:** CubePart *code* is MIT, but the model weights / parent repo are under the **CUBE3D RESEARCH-ONLY RAIL-MS** license — fine for internal/research use; review before shipping outputs commercially.
 
@@ -379,7 +463,7 @@ parts ─→ BD Mesh Preview (Thumbnails)   # labeled contact-sheet IMAGE of eve
 parts ─→ BD Preview 3D                  # interactive three.js viewer, color-coded
 ```
 
-### Depth Nodes (`BrainDead/Depth`)
+### Depth Nodes (`🧠BrainDead/Depth`)
 SOTA monocular geometry prediction.
 
 | Node | Description |
@@ -387,37 +471,7 @@ SOTA monocular geometry prediction.
 | **BD Lotus-2 Model Loader** | Load FLUX.1-dev base + Lotus-2 depth or normal LoRA + LCM bridge. Module-level cache so reuse across Predict calls is instant. Optional CPU offload toggle for stacking with other models. |
 | **BD Lotus-2 Predict** | Run a loaded Lotus-2 model on an image. Outputs map (IMAGE), raw_linear ([0,1] normalized), and colorized_preview. Diffusion-based, much higher quality than feedforward depth estimators (DepthAnything/MiDaS). |
 
-## Workflow Templates
-
-Ready-to-use example workflows ship in [`example_workflows/`](example_workflows/) and appear in
-ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an
-in-canvas note. One template per major function set (see
-[example_workflows/README.md](example_workflows/README.md) to author more):
-
-| Template | Shows |
-|----------|-------|
-| **CubePart Part Decomposition** | Load Mesh → CubePart Segment → Mesh Preview (thumbnail grid) + Preview 3D + Get Part → Export (Save Context) |
-
-## Installation
-
-### ComfyUI Manager
-Search for "BrainDead" in ComfyUI Manager and install.
-
-### Manual Installation
-```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/BizaNator/ComfyUI-BrainDead
-```
-
-### Dependencies
-Most dependencies are included with ComfyUI. Optional:
-```bash
-# For audio caching
-pip install torchaudio
-
-# For mesh caching
-pip install trimesh
-```
+---
 
 ## Usage Examples
 
@@ -477,7 +531,27 @@ BD Derive PBR Maps             BD Bulk Save
                                   image1_role: character
 ```
 
+---
+
 ## Directory Structure
+
+```
+ComfyUI-BrainDead/
+├── nodes/
+│   ├── mesh/          # 3D mesh processing
+│   ├── blender/       # Blender-based operations
+│   ├── cache/         # Caching and save nodes
+│   ├── character/     # Qwen character consistency
+│   ├── pixal3d/       # Pixal3D image-to-3D
+│   ├── cubepart/      # Roblox CubePart (vendored)
+│   ├── trellis2/      # TRELLIS2 shape/texture
+│   └── segmentation/  # SAM3, Parts, Face, Luma, PBR
+├── example_workflows/ # 9 ready-to-use workflow templates
+├── docs/images/       # Banner + workflow thumbnails
+├── tools/             # audit_workflows.py, etc.
+├── lib/               # Bundled Blender 5.0
+└── requirements.txt   # Auto-installed by ComfyUI Manager
+```
 
 ```
 output/
@@ -488,6 +562,8 @@ output/
 │       └── step1_xyz789.png
 └── saved_file.png       # BD Save File saves to main output/
 ```
+
+---
 
 ## Node Counts at a Glance
 
@@ -508,7 +584,7 @@ output/
 ## Node Categories
 
 ```
-BrainDead/
+🧠BrainDead/
 ├── Cache/         # Caching and file I/O nodes
 ├── Mesh/          # 3D mesh processing and color tools
 ├── Blender/       # Blender-based mesh operations
@@ -520,6 +596,8 @@ BrainDead/
 ├── Segmentation/  # SAM3 + Parts pipeline + asset prep
 └── Depth/         # Lotus-2 depth/normal
 ```
+
+---
 
 ## Tips
 
@@ -540,7 +618,6 @@ BrainDead/
 - Connect `seed` output to sampler for different seeds per prompt
 - Use `workflow_id` to maintain separate iteration states
 
-
 ---
 
 <div align="center">
@@ -551,7 +628,7 @@ BrainDead/
 
 Created by **BizaNator**
 
-[BrainDeadGuild.com](https://BrainDeadGuild.com) | [BrainDead.TV](https://BrainDead.TV) | [GitHub](https://github.com/BrainDeadGuild) | [discord](https://braindeadguild.com/discord)
+[BrainDeadGuild.com](https://BrainDeadGuild.com) | [BrainDead.TV](https://BrainDead.TV) | [GitHub](https://github.com/BrainDeadGuild) | [Discord](https://braindeadguild.com/discord)
 
 ### Other BrainDead ComfyUI Nodes
 - BD - Image Descriptor (Coming Soon)
@@ -564,11 +641,11 @@ Created by **BizaNator**
 
 **A Biloxi Studios Inc. Production**
 
-© 2024 Biloxi Studios Inc. - All Rights Reserved
+© 2025 Biloxi Studios Inc. — All Rights Reserved
 
 </div>
 
 ## Support
 
 - GitHub Issues: [Report bugs](https://github.com/BizaNator/ComfyUI-BrainDead/issues)
-- discord: [BrainDeadGuild](https://BrainDeadGuild.com/discord)
+- Discord: [BrainDeadGuild](https://BrainDeadGuild.com/discord)
