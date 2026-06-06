@@ -1,0 +1,8 @@
+# ComfyUI-BrainDead dependencies
+# ComfyUI Manager installs these automatically on node pack install.
+
+# MoGe — monocular geometry estimation for Pixal3D camera FOV
+# Pinned sub-deps required by moge v2 (git versions with .pt submodule)
+utils3d @ git+https://github.com/EasternJournalist/utils3d.git@3fab839f0be9931dac7c8488eb0e1600c236e183
+pipeline @ git+https://github.com/EasternJournalist/pipeline.git@866f059d2a05cde05e4a52211ec5051fd5f276d6
+moge @ git+https://github.com/microsoft/MoGe.git

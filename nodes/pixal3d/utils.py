@@ -126,7 +126,13 @@ def get_moge_model():
     if _moge_model is not None:
         return _moge_model
     print(f"[BD Pixal3D] Loading MoGe-2 for camera estimation ({MOGE_MODEL_NAME})...")
-    _moge_model = MoGeModel.from_pretrained(MOGE_MODEL_NAME).cuda()
+    # Try local cache first — avoids DNS lookup when HuggingFace is unreachable.
+    # Falls back to network download if model is not yet cached.
+    try:
+        _moge_model = MoGeModel.from_pretrained(MOGE_MODEL_NAME, local_files_only=True).cuda()
+    except Exception:
+        print(f"[BD Pixal3D] MoGe not in local cache, downloading from HuggingFace...")
+        _moge_model = MoGeModel.from_pretrained(MOGE_MODEL_NAME).cuda()
     _moge_model.eval()
     return _moge_model
 
