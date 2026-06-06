@@ -146,6 +146,9 @@ Smart caching with **lazy evaluation** — upstream nodes are completely SKIPPED
 5. `BD Get Context Path` outputs a STRING path for ANY save node — works with ComfyUI's built-in SaveImage and third-party packs
 
 ### Character Nodes (`🧠BrainDead/Character`)
+
+![Character consistency workflow](docs/images/nodes/character.png)
+
 Advanced tools for maintaining character consistency with Qwen-Image models.
 
 | Node | Description |
@@ -287,6 +290,9 @@ Iterate through multiple prompts with automatic filename generation, plus per-Ru
 - `template`: `{base}_{index:03d}_{suffix}`
 
 ### Segmentation Nodes (`🧠BrainDead/Segmentation`)
+
+![FaceWrap pipeline workflow](docs/images/nodes/facewrap.png)
+
 Character segmentation, parts pipeline, PBR map derivation, asset prep.
 
 **Parts pipeline** — single-execution character processing using the `PARTS_BUNDLE` type:
@@ -410,6 +416,9 @@ ALL into BD Derive PBR Maps with metallic_zone_mask=accessories_mask
 ```
 
 ### Pixal3D Nodes (`🧠BrainDead/Pixal3D`)
+
+![Pixal3D workflow](docs/images/nodes/pixal3d.png)
+
 Image-to-3D generation using Pixal3D (TencentARC/Pixal3D, Trellis2-based). Downloads ~10GB model weights on first run to `/srv/AI_Stuff/models/huggingface/`.
 
 | Node | Description |
@@ -429,6 +438,9 @@ BD CuMesh Simplify    BD OVoxelBake → albedo, normal, roughness, metallic
 ```
 
 ### CubePart Nodes (`🧠BrainDead/CubePart`)
+
+![CubePart workflow](docs/images/nodes/cubepart.png)
+
 Open-vocabulary, part-controllable 3D decomposition with Roblox **CubePart**. Give it a mesh and up to **8** free-text part names; it generates one clean mesh per part, canonically aligned for rigging / game engines. The `cube_part` library is vendored under `nodes/cubepart/vendor/` (self-contained — no separate pip package).
 
 | Node | Description |
@@ -464,6 +476,9 @@ parts ─→ BD Preview 3D                  # interactive three.js viewer, color
 ```
 
 ### Depth Nodes (`🧠BrainDead/Depth`)
+
+![Lotus-2 depth workflow](docs/images/nodes/lotus2.png)
+
 SOTA monocular geometry prediction.
 
 | Node | Description |
