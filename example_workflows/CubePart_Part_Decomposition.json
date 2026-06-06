@@ -68,7 +68,7 @@
       },
       "widgets_values": [
         "(none — use file_path)",
-        true,
+        "",
         true
       ],
       "title": "① Load Mesh (pick or path)"
@@ -125,16 +125,16 @@
         "Node name for S&R": "BD_CubePartSegment"
       },
       "widgets_values": [
-        "body, front left wheel, front right wheel, rear left wheel, rear right wheel, exhaust pipe, headlights, gun",
+        "body, left wheel, right wheel",
         0,
         "fixed",
         7.5,
         50,
         8.5,
+        "dpm_solver",
         4.0,
         128000,
-        128000,
-        true,
+        "",
         true,
         "",
         ""
@@ -193,8 +193,8 @@
       "widgets_values": [
         256,
         0,
-        35.0,
-        20.0,
+        "part_colors",
+        "dark",
         35.0,
         20.0
       ],
@@ -325,9 +325,9 @@
       },
       "widgets_values": [
         "default",
-        "CubePart/%name%/%name%_%suffix%",
+        "%project%/%character%/%subfolder%/%character%_%name%_v%version%%suffix%",
         "",
-        "jellyfish",
+        "",
         "01",
         "",
         "",
@@ -388,9 +388,9 @@
         "Node name for S&R": "BD_ExportMeshWithColors"
       },
       "widgets_values": [
-        "part",
+        "mesh_colored",
         "glb",
-        true,
+        "",
         true,
         ""
       ],

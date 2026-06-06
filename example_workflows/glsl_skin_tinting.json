@@ -61,8 +61,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.png",
-        "image"
+        " Letti_Moralesbody__00002__nobg.png"
       ],
       "title": "① Load base image"
     },
@@ -153,13 +152,13 @@
         "Node name for S&R": "BD_GLSLBatch"
       },
       "widgets_values": [
-        "#version 300 es\nprecision highp float;\nin vec2 v_texCoord;\nuniform sampler2D u_image0;\nuniform float u_float0;  // u_tint_r\nuniform float u_float1;  // u_tint_g\nuniform float u_float2;  // u_tint_b\nuniform float u_float3;  // u_strength (0-1)\nlayout(location=0) out vec4 fragColor0;\nvoid main(){\n    vec4 src = texture(u_image0, v_texCoord);\n    float luma = dot(src.rgb, vec3(0.299, 0.587, 0.114));\n    vec3 tint = vec3(u_float0, u_float1, u_float2);\n    // Soft-light blend: tint modulates midtones, shadows/highlights preserved\n    vec3 tinted = src.rgb * tint * 2.0;\n    float blend = u_float3 * smoothstep(0.08, 0.92, luma);\n    vec3 result = clamp(mix(src.rgb, tinted, blend), 0.0, 1.0);\n    // alpha-over: composite art on tinted layer\n    vec3 outc = mix(result, src.rgb, src.a);\n    fragColor0 = vec4(outc, 1.0);\n}\n",
-        "",
-        "u_float3=0.4",
+        "#version 300 es\nprecision highp float;\nin vec2 v_texCoord;\nuniform sampler2D u_image0;\nlayout(location=0) out vec4 fragColor0;\nvoid main(){ fragColor0 = texture(u_image0, v_texCoord); }",
         "",
         "",
-        "u_float0=0.95,0.72,0.49,0.43  // Tint R  light,medium,dark,zombie\nu_float1=0.82,0.62,0.41,0.56  // Tint G\nu_float2=0.72,0.50,0.34,0.34  // Tint B\n",
-        "light\nmedium\ndark\nzombie\n",
+        "",
+        "",
+        "",
+        "",
         0,
         0,
         0
@@ -247,11 +246,11 @@
       "widgets_values": [
         "",
         "",
-        "skin",
+        "_",
         "",
+        "png",
         false,
-        false,
-        false,
+        "",
         false,
         false,
         ""

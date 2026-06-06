@@ -63,8 +63,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.png",
-        "image"
+        " Letti_Moralesbody__00002__nobg.png"
       ],
       "title": "① Load Image (reference)"
     },
@@ -162,7 +161,7 @@
         "Node name for S&R": "BD_Trellis2GetConditioning"
       },
       "widgets_values": [
-        true,
+        "1024_cascade",
         "flash_attn",
         "keep_loaded",
         true,
@@ -294,8 +293,7 @@
         "fixed",
         7.5,
         12,
-        false,
-        null
+        false
       ],
       "title": "⑤ Shape → Textured Mesh (PBR)"
     },

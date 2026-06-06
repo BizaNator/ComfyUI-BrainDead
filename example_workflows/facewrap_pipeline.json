@@ -62,8 +62,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.png",
-        "image"
+        " Letti_Moralesbody__00002__nobg.png"
       ],
       "title": "① Load 4-view head batch"
     },
@@ -162,7 +161,7 @@
       },
       "widgets_values": [
         "mediapipe_canonical",
-        1.0,
+        "",
         1.0
       ],
       "title": "③ Face Fit (canonical mesh)"

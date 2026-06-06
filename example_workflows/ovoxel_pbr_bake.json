@@ -70,7 +70,7 @@
       },
       "widgets_values": [
         "(none — use file_path)",
-        true,
+        "",
         true
       ],
       "title": "1. Load Mesh (pick or path)"
@@ -236,7 +236,7 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "OVoxel/albedo"
+        "ComfyUI"
       ],
       "title": "Save Albedo"
     },
@@ -266,7 +266,7 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "OVoxel/normal"
+        "ComfyUI"
       ],
       "title": "Save Normal"
     },
@@ -296,7 +296,7 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "OVoxel/roughness"
+        "ComfyUI"
       ],
       "title": "Save Roughness"
     },
@@ -326,7 +326,7 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "OVoxel/metallic"
+        "ComfyUI"
       ],
       "title": "Save Metallic"
     },
@@ -369,9 +369,9 @@
         "Node name for S&R": "BD_ExportMeshWithColors"
       },
       "widgets_values": [
-        "ovoxel_baked",
+        "mesh_colored",
         "glb",
-        true,
+        "",
         true,
         "",
         "",

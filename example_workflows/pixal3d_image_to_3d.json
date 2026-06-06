@@ -61,8 +61,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.png",
-        "image"
+        " Letti_Moralesbody__00002__nobg.png"
       ],
       "title": "① Load Image"
     },
@@ -112,8 +111,8 @@
         "Node name for S&R": "BD_Pixal3DPreprocess"
       },
       "widgets_values": [
-        0.2,
-        1.0,
+        "black",
+        "auto_moge",
         0.2,
         1.0,
         0
@@ -164,19 +163,19 @@
       "widgets_values": [
         42,
         "fixed",
+        "1024_cascade",
         49152,
         7.5,
         0.7,
         25,
         5.0,
-        5.0,
+        7.5,
         0.5,
         25,
         3.0,
-        3.0,
         1.0,
+        0.0,
         25,
-        3.0,
         3.0,
         "TencentARC/Pixal3D"
       ],
@@ -271,9 +270,9 @@
         "Node name for S&R": "BD_ExportMeshWithColors"
       },
       "widgets_values": [
-        "pixal3d_output",
+        "mesh_colored",
         "glb",
-        true,
+        "",
         true,
         "",
         "",

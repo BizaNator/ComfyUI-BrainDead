@@ -55,7 +55,7 @@
         "Node name for S&R": "UNETLoader"
       },
       "widgets_values": [
-        "qwen_image_edit_2509_bf16.safetensors",
+        "LBM/LBM_depth.safetensors",
         "default"
       ],
       "title": "Load Diffusion Model (Qwen-Image-Edit)"
@@ -89,8 +89,8 @@
         "Node name for S&R": "CLIPLoader"
       },
       "widgets_values": [
-        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
-        "qwen_image",
+        "FLUX/Long-ViT-L-14-BEST-GmP-smooth-ft.safetensors",
+        "stable_diffusion",
         "default"
       ],
       "title": "Load CLIP (qwen_image)"
@@ -125,7 +125,7 @@
         "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "qwen_image_vae.safetensors"
+        "Flux/ae.safetensors"
       ],
       "title": "Load VAE (qwen_image)"
     },
@@ -164,8 +164,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.png",
-        "image"
+        " Letti_Moralesbody__00002__nobg.png"
       ],
       "title": "Load Character Reference"
     },
@@ -241,7 +240,7 @@
         "Node name for S&R": "BD_QwenCharacterEdit"
       },
       "widgets_values": [
-        "change the outfit to a navy wool coat in a snowy city street at dusk, keep the same person",
+        "",
         "<|im_start|>system\nYou are a Prompt optimizer specialized in character consistency for image editing. Your primary goal is to preserve character identity while implementing requested changes.\n\nCharacter Consistency Priority (CRITICAL):\n1. FACIAL FEATURES (HIGHEST PRIORITY): Preserve exact facial structure, face shape, jawline, cheekbones, nose shape, lip shape, eye shape and spacing\n2. HAIR: Maintain hair texture, hairstyle, hair color, hair length, and any hair accessories or decorations\n3. EYES: Keep exact eye color, eye shape, eyebrow shape and color, eyelash style\n4. SKIN: Preserve skin tone, skin texture, any facial markings, freckles, moles, or scars\n5. DISTINCTIVE FEATURES: Maintain tattoos, piercings, birthmarks, facial hair style, or unique characteristics\n6. CLOTHING/STYLE: Adapt clothing and accessories as requested while keeping character recognizable\n\nTask Requirements:\n1. When modifying the image, ALWAYS explicitly describe which facial and character features must remain unchanged\n2. For brief inputs, add details that enhance the scene while strictly preserving all character-identifying features\n3. If text rendering is required, enclose in quotes with position specification\n4. Prioritize character recognition over scene/background changes\n5. Limit response to 200 words, focusing on character preservation\n\nProcess: First identify all distinctive character features from the input image, then explain how the requested changes will be applied while maintaining these exact features. Add \"Ultra HD, 4K, cinematic composition\" for quality enhancement.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n",
         true,
         true
@@ -335,13 +334,12 @@
         "Node name for S&R": "KSampler"
       },
       "widgets_values": [
-        42,
+        0,
         "fixed",
         20,
-        20,
-        2.5,
+        8.0,
+        "euler",
         "simple",
-        1.0,
         1.0
       ],
       "title": "KSampler"
@@ -414,7 +412,7 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "CharacterConsistency/edit"
+        "ComfyUI"
       ],
       "title": "Save Image"
     }

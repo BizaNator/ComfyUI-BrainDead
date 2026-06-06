@@ -61,8 +61,7 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.png",
-        "image"
+        " Letti_Moralesbody__00002__nobg.png"
       ],
       "title": "① Load Image"
     },
@@ -127,26 +126,26 @@
         "Node name for S&R": "BD_SAM3MultiPrompt"
       },
       "widgets_values": [
-        "head\ntorso\nleft arm\nright arm\nleft leg\nright leg",
+        "skin\nface\nneck\narm\nleg\nhand\nfoot",
         "",
-        1.0,
+        "union",
         1.0,
         0.5,
         0.5,
+        "off",
+        0.7,
         0.3,
+        "adaptive_lab",
         25.0,
-        0.3,
+        0.5,
         50,
         true,
-        0.5,
-        true,
-        true,
         64,
-        0,
+        "white",
         true,
-        false,
-        0.0,
-        false,
+        0.5,
+        "Auto",
+        0,
         0,
         false,
         false,
@@ -234,15 +233,14 @@
         "Node name for S&R": "BD_PartsBuilder"
       },
       "widgets_values": [
-        5,
+        "all",
         5,
         "native",
         "pad_to_square",
-        1024,
+        "alpha",
         64,
         "",
-        1024,
-        "#888888",
+        "",
         1024,
         "#888888"
       ],
@@ -366,7 +364,7 @@
       },
       "widgets_values": [
         "parts",
-        "SAM3_Parts",
+        "",
         true,
         "",
         true,
