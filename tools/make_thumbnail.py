@@ -44,7 +44,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 W, H = 1180, 680
 BG = (24, 24, 30)
-ACCENT = (170, 120, 255)
+ACCENT = (170, 120, 255)          # purple — dot, top bar, bullets, BD node title bars
+WORDMARK = (22, 163, 74)          # braindead.tv green (#16a34a) — "BrainDead" text only
 TITLE = (240, 240, 245)
 SUB = (200, 200, 210)
 BODY = (188, 188, 198)
@@ -238,7 +239,7 @@ def make(out_path, cfg):
     x = 64
     d.rectangle([0, 0, W, 6], fill=ACCENT + (255,))
     d.ellipse([x, 58, x + 24, 82], fill=ACCENT + (255,))
-    d.text((x + 36, 52), "BrainDead", font=_font(34, True), fill=ACCENT + (255,))
+    d.text((x + 36, 52), "BrainDead", font=_font(34, True), fill=WORDMARK + (255,))
     d.text((x, 104), title, font=_font(56, True), fill=TITLE + (255,))
     if subtitle:
         d.text((x, 176), subtitle, font=_font(30, True), fill=SUB + (255,))

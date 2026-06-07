@@ -84,7 +84,9 @@ CONFIGS = {
         "title": "Face Segmentation", "subtitle": "MediaPipe + SAM3 anatomy masks",
         "bullets": ["Load Image -> BD MP SAM3 Face Segment", "25+ anatomy masks (eyes, lips, brows, skin...)",
                     "BD MP Face Infill -> UV-ready socket fill", "Per-part mask previews"],
-        "chips": ["eyes", "lips", "brows", "skin", "teeth"]},
+        "chips": ["eyes", "lips", "brows", "skin", "teeth"],
+        # real workflow screenshot used as the background instead of the auto node-graph
+        "background": "screenshots/face_segmentation_bg.png"},
     "channel_operations": {
         "title": "Channel Operations", "subtitle": "Pack / unpack / merge image channels",
         "bullets": ["Load Image -> BD Unpack Channels (R/G/B/A)", "BD Pack Channels -> round-trip recombine",
@@ -105,6 +107,9 @@ def main():
         if not os.path.exists(os.path.join(EW, name + ".json")):
             skipped.append(name); continue
         out = os.path.join(EW, name + ".jpg")
+        cfg = dict(cfg)
+        if cfg.get("background") and not os.path.isabs(cfg["background"]):
+            cfg["background"] = os.path.join(EW, cfg["background"])  # resolve vs example_workflows/
         make(out, cfg)
         if deploy and os.path.isdir(STABLE_EW):
             shutil.copy2(out, os.path.join(STABLE_EW, name + ".jpg"))
