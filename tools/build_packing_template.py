@@ -82,8 +82,8 @@ C = lambda i: chr(0x2460 + i - 1)  # ① ...
 # ── column layout ──
 load = add("LoadImage", (40, 80), (300, 314), {"image": "example.png"}, title="① Load Image")
 rbg  = add("BD_RemoveBackground", (380, 80), (320, 200),
-           {"prompts": "subject\nperson\nforeground", "crop_to_content": False,
-            "edge_refine": "guided"}, title="② BD Remove Background")
+           {"prompts": "subject\nperson\nforeground", "negative_prompts": "background",
+            "crop_to_content": False, "edge_refine": "guided"}, title="② BD Remove Background")
 sam  = add("BD_SAM3MultiPrompt", (740, 80), (320, 200),
            {"prompts": "lips\nteeth\ntongue"}, title="③ SAM3 Isolate Parts (lips/teeth/tongue)")
 
@@ -95,8 +95,8 @@ for k, (label, y) in enumerate(zip(chan, ys)):
     mi = add("BD_MaskBatchIndex", (1100, y), (250, 110), {"index": k},
              title=f"{C(4 + k)} Pick mask [{k}] ({label})")
     gs = add("BD_ImageToGreyscale", (1380, y), (250, 130),
-             {"mode": "luminance", "mask_mode": "apply_within"},
-             title=f"Greyscale ({label})")
+             {"mode": "luminance", "mask_mode": "cutout"},
+             title=f"Greyscale cutout ({label})")
     nm = add("BD_NormalizeLuma", (1660, y), (250, 180),
              {"apply_to_mask_only": True}, title=f"Normalize Luma ({label})")
     cm = add("BD_CenterMedianLuma", (1940, y), (250, 180),

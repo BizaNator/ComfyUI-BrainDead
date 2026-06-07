@@ -124,7 +124,7 @@
       "widgets_values": [
         "subject\nperson\nforeground",
         "closed_form",
-        "",
+        "background",
         "constrain",
         true,
         8,

@@ -121,7 +121,7 @@
       "widgets_values": [
         "subject\nperson\nforeground",
         "closed_form",
-        "",
+        "background",
         "constrain",
         true,
         8,
@@ -340,10 +340,10 @@
       "properties": {
         "Node name for S&R": "BD_ImageToGreyscale"
       },
-      "title": "Greyscale (R \u00b7 lips)",
+      "title": "Greyscale cutout (R \u00b7 lips)",
       "widgets_values": [
         "luminance",
-        "apply_within"
+        "cutout"
       ]
     },
     {
@@ -568,10 +568,10 @@
       "properties": {
         "Node name for S&R": "BD_ImageToGreyscale"
       },
-      "title": "Greyscale (G \u00b7 teeth)",
+      "title": "Greyscale cutout (G \u00b7 teeth)",
       "widgets_values": [
         "luminance",
-        "apply_within"
+        "cutout"
       ]
     },
     {
@@ -796,10 +796,10 @@
       "properties": {
         "Node name for S&R": "BD_ImageToGreyscale"
       },
-      "title": "Greyscale (B \u00b7 tongue)",
+      "title": "Greyscale cutout (B \u00b7 tongue)",
       "widgets_values": [
         "luminance",
-        "apply_within"
+        "cutout"
       ]
     },
     {

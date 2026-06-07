@@ -158,9 +158,10 @@ class BD_RemoveBackground(io.ComfyNode):
                             "Typical: 'person', 'character', 'product', 'foreground object'.",
                 ),
                 io.String.Input(
-                    "negative_prompts", default="", multiline=True, optional=True,
+                    "negative_prompts", default="background", multiline=True, optional=True,
                     tooltip="One prompt per line. SAM3 runs each → unioned → subtracted from positive mask. "
-                            "Useful to punch out backgrounds that bleed into the positive mask.",
+                            "Useful to punch out backgrounds that bleed into the positive mask. "
+                            "Defaults to 'background' since that reliably helps SAM3 drop the backdrop.",
                 ),
                 io.Mask.Input(
                     "external_mask", optional=True,
@@ -335,7 +336,7 @@ class BD_RemoveBackground(io.ComfyNode):
 
     @classmethod
     def execute(cls, image, prompts,
-                negative_prompts="",
+                negative_prompts="background",
                 external_mask=None,
                 mask_mode="constrain",
                 invert_external_mask=True,
