@@ -92,7 +92,7 @@ sam  = add("BD_SAM3MultiPrompt", (740, 80), (320, 200),
 chan = ["R", "G", "B"]
 tint = [("#322", "#533"), ("#232", "#353"), ("#223", "#335")]   # R / G / B node colouring
 ys = [40, 300, 560]
-idx_nodes, grey_nodes, norm_nodes, cen_nodes = [], [], [], []
+idx_nodes, grey_nodes, norm_nodes, cen_nodes, crop_nodes = [], [], [], [], []
 for k, (label, y) in enumerate(zip(chan, ys)):
     col, bg = tint[k]
     mi = add("BD_MaskBatchIndex", (1100, y), (250, 110), {"index": k},
@@ -105,26 +105,31 @@ for k, (label, y) in enumerate(zip(chan, ys)):
     cm = add("BD_CenterMedianLuma", (1940, y), (250, 180),
              {"apply_to_mask_only": True, "calc_from_mask": True},
              title=f"Center Median ({label})", color=col, bgcolor=bg)
-    idx_nodes.append(mi); grey_nodes.append(gs); norm_nodes.append(nm); cen_nodes.append(cm)
+    cc = add("BD_CropAndCenter", (2220, y), (250, 180),
+             {"anchor": "center"},   # canvas 0 = original size → all parts re-pivot to centre
+             title=f"Crop & Center ({label})", color=col, bgcolor=bg)
+    idx_nodes.append(mi); grey_nodes.append(gs); norm_nodes.append(nm)
+    cen_nodes.append(cm); crop_nodes.append(cc)
 
-pack = add("BD_PackChannels", (2220, 80), (300, 260), {}, title="⑦ BD Pack Channels (R/G/B)")
-atlas = add("BD_AtlasPack", (2220, 420), (300, 320),
+pack = add("BD_PackChannels", (2500, 80), (300, 260), {}, title="⑦ BD Pack Channels (R/G/B)")
+atlas = add("BD_AtlasPack", (2500, 420), (300, 320),
             {"columns": 3, "fit_mode": "contain", "padding": 8, "background_hex": "#000000"},
             title="⑧ BD Atlas Pack (grid)")
-save = add("SaveImage", (2560, 80), (300, 270), {"filename_prefix": "packing/rgb_pack"},
+save = add("SaveImage", (2840, 80), (300, 270), {"filename_prefix": "packing/rgb_pack"},
            title="⑨ Save RGB Pack")
-prev_atlas = add("PreviewImage", (2560, 420), (300, 300), {}, title="⑩ Atlas Preview")
-prev_dbg = add("PreviewImage", (2560, 740), (300, 240), {}, title="Pack Debug (R/G/B/A)")
+prev_atlas = add("PreviewImage", (2840, 420), (300, 300), {}, title="⑩ Atlas Preview")
+prev_dbg = add("PreviewImage", (2840, 740), (300, 240), {}, title="Pack Debug (R/G/B/A)")
 
 md = ("## Game-Engine Packing\n\n"
       "Remove BG → **SAM3** isolates parts (shirt / pants / jacket) → per part: "
-      "**greyscale cutout → normalize luma → center median** (each part's luma balanced "
-      "*within its own mask*, black outside) → **BD Pack Channels**: R=shirt, G=pants, "
-      "B=jacket in one RGB mask texture.\n\n"
-      "Each channel holds **only its part** (cutout greyscale) so they don't bleed.\n\n"
+      "**greyscale cutout → normalize luma → center median → crop & center** → "
+      "**BD Pack Channels**: R=shirt, G=pants, B=jacket in one RGB mask texture.\n\n"
+      "**Crop & Center** re-pivots each part to the canvas centre (original size), so the "
+      "channels **overlap on a shared pivot** — what game engines need for extraction. "
+      "Each channel still holds only its part (cutout greyscale) so they don't bleed.\n\n"
       "*BD Atlas Pack here just demos tiling the parts into a grid — in practice you'd "
       "atlas finished **packed** textures or **flipbook** frames, not raw channels.*")
-about = add("MarkdownNote", (40, 440), (340, 300), {"__md__": md},
+about = add("MarkdownNote", (40, 440), (340, 320), {"__md__": md},
             title="ℹ️ About — 🧠 BrainDead Game-Engine Packing")
 
 # ── wiring ──
@@ -139,14 +144,16 @@ for k in range(3):
     link(idx_nodes[k], "mask", norm_nodes[k], "mask")
     link(norm_nodes[k], "image", cen_nodes[k], "image")
     link(idx_nodes[k], "mask", cen_nodes[k], "mask")
-# pack R/G/B
-link(cen_nodes[0], "image", pack, "red_image")
-link(cen_nodes[1], "image", pack, "green_image")
-link(cen_nodes[2], "image", pack, "blue_image")
+    link(cen_nodes[k], "image", crop_nodes[k], "image")
+    link(idx_nodes[k], "mask", crop_nodes[k], "mask")   # exact bbox from the part mask
+# pack R/G/B  (from the re-pivoted parts)
+link(crop_nodes[0], "image", pack, "red_image")
+link(crop_nodes[1], "image", pack, "green_image")
+link(crop_nodes[2], "image", pack, "blue_image")
 # atlas image_1/2/3
-link(cen_nodes[0], "image", atlas, "image_1")
-link(cen_nodes[1], "image", atlas, "image_2")
-link(cen_nodes[2], "image", atlas, "image_3")
+link(crop_nodes[0], "image", atlas, "image_1")
+link(crop_nodes[1], "image", atlas, "image_2")
+link(crop_nodes[2], "image", atlas, "image_3")
 # outputs
 link(pack, "image", save, "images")
 link(atlas, "atlas", prev_atlas, "images")
