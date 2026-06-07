@@ -115,7 +115,9 @@ CONFIGS = {
                     "SAM3 finds metal zones -> metallic",
                     "Derive PBR -> albedo/normal/rough/metal/AO",
                     "Packed ORM + ARM for game engines"],
-        "chips": ["albedo", "normal", "rough", "metal", "AO"]},
+        "chips": ["albedo", "normal", "rough", "metal", "AO"],
+        # real workflow screenshot used as the background instead of the auto node-graph
+        "background": "screenshots/pbr_from_image_bg.png"},
 }
 
 

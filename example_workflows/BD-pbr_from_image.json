@@ -1,179 +1,94 @@
 {
   "id": "bd-pbr",
   "revision": 0,
-  "last_node_id": 20,
-  "last_link_id": 17,
+  "last_node_id": 24,
+  "last_link_id": 25,
   "nodes": [
-    {
-      "id": 1,
-      "type": "LoadImage",
-      "pos": [
-        40,
-        80
-      ],
-      "size": [
-        330,
-        200
-      ],
-      "flags": {},
-      "order": 1,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            1,
-            2,
-            5,
-            8,
-            9
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": null,
-          "slot_index": 1
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "LoadImage"
-      },
-      "widgets_values": [
-        null
-      ],
-      "title": "\u2460 Load Image"
-    },
-    {
-      "id": 2,
-      "type": "BD_RemoveBackground",
-      "pos": [
-        360,
-        80
-      ],
-      "size": [
-        330,
-        200
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 1
-        },
-        {
-          "name": "external_mask",
-          "type": "MASK",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "rgba",
-          "type": "IMAGE",
-          "links": null,
-          "slot_index": 0
-        },
-        {
-          "name": "mask",
-          "type": "MASK",
-          "links": [
-            4,
-            7,
-            12
-          ],
-          "slot_index": 1
-        },
-        {
-          "name": "rgb_white_bg",
-          "type": "IMAGE",
-          "links": null,
-          "slot_index": 2
-        },
-        {
-          "name": "rgb_black_bg",
-          "type": "IMAGE",
-          "links": null,
-          "slot_index": 3
-        },
-        {
-          "name": "crop_box",
-          "type": "STRING",
-          "links": null,
-          "slot_index": 4
-        },
-        {
-          "name": "sticker",
-          "type": "IMAGE",
-          "links": null,
-          "slot_index": 5
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "BD_RemoveBackground"
-      },
-      "widgets_values": [
-        "person\ncharacter\nsubject\nforeground",
-        "closed_form",
-        "",
-        "constrain",
-        true,
-        8,
-        8,
-        4,
-        0.0,
-        true,
-        0,
-        "none",
-        "small",
-        0.0,
-        0.0,
-        false,
-        0.1,
-        0.04,
-        false,
-        0,
-        "#ffffff",
-        false,
-        16,
-        0,
-        "none",
-        0.5,
-        false
-      ],
-      "title": "\u2461 BD Remove Background (silhouette)"
-    },
     {
       "id": 3,
       "type": "BD_Lotus2ModelLoader",
       "pos": [
         360,
-        540
+        560
       ],
       "size": [
-        330,
+        360,
         200
       ],
       "flags": {},
-      "order": 3,
+      "order": 0,
       "mode": 0,
-      "inputs": [],
-      "outputs": [
+      "inputs": [
         {
-          "name": "model",
-          "type": "LOTUS2_MODEL",
-          "links": [
-            3
-          ],
-          "slot_index": 0
+          "localized_name": "task",
+          "name": "task",
+          "type": "COMBO",
+          "widget": {
+            "name": "task"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "dtype",
+          "name": "dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "dtype"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "flux_repo_id",
+          "name": "flux_repo_id",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "flux_repo_id"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "lotus2_weights_dir",
+          "name": "lotus2_weights_dir",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "lotus2_weights_dir"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cpu_offload",
+          "name": "cpu_offload",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "cpu_offload"
+          },
+          "link": null
         }
       ],
+      "outputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "LOTUS2_MODEL",
+          "slot_index": 0,
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "\u2462 Lotus-2 Model Loader (depth)",
       "properties": {
         "Node name for S&R": "BD_Lotus2ModelLoader"
       },
@@ -184,8 +99,7 @@
         "black-forest-labs/FLUX.1-dev",
         "",
         false
-      ],
-      "title": "\u2462 Lotus-2 Model Loader (depth)"
+      ]
     },
     {
       "id": 4,
@@ -195,51 +109,105 @@
         480
       ],
       "size": [
-        330,
+        360,
         200
       ],
       "flags": {},
-      "order": 4,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "model",
           "name": "model",
           "type": "LOTUS2_MODEL",
           "link": 3
         },
         {
+          "localized_name": "image",
           "name": "image",
           "type": "IMAGE",
           "link": 2
         },
         {
+          "localized_name": "mask",
           "name": "mask",
+          "shape": 7,
           "type": "MASK",
           "link": 4
+        },
+        {
+          "localized_name": "num_inference_steps",
+          "name": "num_inference_steps",
+          "type": "INT",
+          "widget": {
+            "name": "num_inference_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "process_res",
+          "name": "process_res",
+          "type": "INT",
+          "widget": {
+            "name": "process_res"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "guidance_scale",
+          "name": "guidance_scale",
+          "type": "FLOAT",
+          "widget": {
+            "name": "guidance_scale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "timestep_core_predictor",
+          "name": "timestep_core_predictor",
+          "type": "INT",
+          "widget": {
+            "name": "timestep_core_predictor"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bg_fill",
+          "name": "bg_fill",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "bg_fill"
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "map",
           "name": "map",
           "type": "IMAGE",
+          "slot_index": 0,
           "links": [
             10
-          ],
-          "slot_index": 0
+          ]
         },
         {
+          "localized_name": "raw_linear",
           "name": "raw_linear",
           "type": "IMAGE",
-          "links": null,
-          "slot_index": 1
+          "slot_index": 1,
+          "links": null
         },
         {
+          "localized_name": "colorized_preview",
           "name": "colorized_preview",
           "type": "IMAGE",
-          "links": null,
-          "slot_index": 2
+          "slot_index": 2,
+          "links": null
         }
       ],
+      "title": "\u2463 Lotus-2 Predict (depth)",
       "properties": {
         "Node name for S&R": "BD_Lotus2Predict"
       },
@@ -249,34 +217,93 @@
         3.5,
         1,
         "auto"
-      ],
-      "title": "\u2463 Lotus-2 Predict (depth)"
+      ]
     },
     {
       "id": 5,
       "type": "BD_Lotus2ModelLoader",
       "pos": [
         360,
-        820
+        840
       ],
       "size": [
-        330,
+        360,
         200
       ],
       "flags": {},
-      "order": 5,
+      "order": 1,
       "mode": 0,
-      "inputs": [],
-      "outputs": [
+      "inputs": [
         {
-          "name": "model",
-          "type": "LOTUS2_MODEL",
-          "links": [
-            6
-          ],
-          "slot_index": 0
+          "localized_name": "task",
+          "name": "task",
+          "type": "COMBO",
+          "widget": {
+            "name": "task"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "dtype",
+          "name": "dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "dtype"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "flux_repo_id",
+          "name": "flux_repo_id",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "flux_repo_id"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "lotus2_weights_dir",
+          "name": "lotus2_weights_dir",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "lotus2_weights_dir"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cpu_offload",
+          "name": "cpu_offload",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "cpu_offload"
+          },
+          "link": null
         }
       ],
+      "outputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "LOTUS2_MODEL",
+          "slot_index": 0,
+          "links": [
+            6
+          ]
+        }
+      ],
+      "title": "\u2464 Lotus-2 Model Loader (normal)",
       "properties": {
         "Node name for S&R": "BD_Lotus2ModelLoader"
       },
@@ -287,8 +314,7 @@
         "black-forest-labs/FLUX.1-dev",
         "",
         false
-      ],
-      "title": "\u2464 Lotus-2 Model Loader (normal)"
+      ]
     },
     {
       "id": 6,
@@ -298,51 +324,105 @@
         760
       ],
       "size": [
-        330,
+        360,
         200
       ],
       "flags": {},
-      "order": 6,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "model",
           "name": "model",
           "type": "LOTUS2_MODEL",
           "link": 6
         },
         {
+          "localized_name": "image",
           "name": "image",
           "type": "IMAGE",
           "link": 5
         },
         {
+          "localized_name": "mask",
           "name": "mask",
+          "shape": 7,
           "type": "MASK",
           "link": 7
+        },
+        {
+          "localized_name": "num_inference_steps",
+          "name": "num_inference_steps",
+          "type": "INT",
+          "widget": {
+            "name": "num_inference_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "process_res",
+          "name": "process_res",
+          "type": "INT",
+          "widget": {
+            "name": "process_res"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "guidance_scale",
+          "name": "guidance_scale",
+          "type": "FLOAT",
+          "widget": {
+            "name": "guidance_scale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "timestep_core_predictor",
+          "name": "timestep_core_predictor",
+          "type": "INT",
+          "widget": {
+            "name": "timestep_core_predictor"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bg_fill",
+          "name": "bg_fill",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "bg_fill"
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "map",
           "name": "map",
           "type": "IMAGE",
+          "slot_index": 0,
           "links": [
             11
-          ],
-          "slot_index": 0
+          ]
         },
         {
+          "localized_name": "raw_linear",
           "name": "raw_linear",
           "type": "IMAGE",
-          "links": null,
-          "slot_index": 1
+          "slot_index": 1,
+          "links": null
         },
         {
+          "localized_name": "colorized_preview",
           "name": "colorized_preview",
           "type": "IMAGE",
-          "links": null,
-          "slot_index": 2
+          "slot_index": 2,
+          "links": null
         }
       ],
+      "title": "\u2465 Lotus-2 Predict (normal)",
       "properties": {
         "Node name for S&R": "BD_Lotus2Predict"
       },
@@ -352,8 +432,167 @@
         3.5,
         1,
         "auto"
+      ]
+    },
+    {
+      "id": 10,
+      "type": "SaveImage",
+      "pos": [
+        1520,
+        360
       ],
-      "title": "\u2465 Lotus-2 Predict (normal)"
+      "size": [
+        360,
+        280
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 15
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [],
+      "title": "\u2469 Save Normal",
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "pbr/normal"
+      ]
+    },
+    {
+      "id": 11,
+      "type": "SaveImage",
+      "pos": [
+        1520,
+        640
+      ],
+      "size": [
+        360,
+        280
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 16
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [],
+      "title": "\u246a Save ORM",
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "pbr/packed_orm"
+      ]
+    },
+    {
+      "id": 12,
+      "type": "SaveImage",
+      "pos": [
+        1520,
+        920
+      ],
+      "size": [
+        360,
+        280
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 17
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [],
+      "title": "\u246b Save ARM",
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "pbr/packed_arm"
+      ]
+    },
+    {
+      "id": 9,
+      "type": "SaveImage",
+      "pos": [
+        1520,
+        80
+      ],
+      "size": [
+        360,
+        280
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 14
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [],
+      "title": "\u2468 Save Albedo",
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "pbr/albedo"
+      ]
     },
     {
       "id": 7,
@@ -363,204 +602,1162 @@
         80
       ],
       "size": [
-        330,
-        200
+        360,
+        800
       ],
       "flags": {},
-      "order": 7,
+      "order": 5,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "image",
           "name": "image",
           "type": "IMAGE",
           "link": 8
         },
         {
+          "localized_name": "color_reference_mask",
           "name": "color_reference_mask",
+          "shape": 7,
           "type": "MASK",
           "link": null
         },
         {
+          "localized_name": "silhouette_mask",
           "name": "silhouette_mask",
+          "shape": 7,
           "type": "MASK",
+          "link": null
+        },
+        {
+          "localized_name": "prompts",
+          "name": "prompts",
+          "type": "STRING",
+          "widget": {
+            "name": "prompts"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "negative_prompts",
+          "name": "negative_prompts",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "negative_prompts"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "combine_mode",
+          "name": "combine_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "combine_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vote_threshold",
+          "name": "vote_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "vote_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vote_pos_min",
+          "name": "vote_pos_min",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "vote_pos_min"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vote_neg_min",
+          "name": "vote_neg_min",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "vote_neg_min"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "color_filter",
+          "name": "color_filter",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "color_filter"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "color_strength",
+          "name": "color_strength",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "color_strength"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "color_threshold",
+          "name": "color_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "color_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "color_mode",
+          "name": "color_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "color_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "adaptive_tolerance",
+          "name": "adaptive_tolerance",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "adaptive_tolerance"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "adaptive_sample_threshold",
+          "name": "adaptive_sample_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "adaptive_sample_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "adaptive_min_samples",
+          "name": "adaptive_min_samples",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "adaptive_min_samples"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "enforce_silhouette",
+          "name": "enforce_silhouette",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enforce_silhouette"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "include_dilate_radius",
+          "name": "include_dilate_radius",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "include_dilate_radius"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "masked_image_bg",
+          "name": "masked_image_bg",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "masked_image_bg"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "invert_negatives_in_per_prompt",
+          "name": "invert_negatives_in_per_prompt",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_negatives_in_per_prompt"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "confidence_threshold",
+          "name": "confidence_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "confidence_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "mask_blur",
+          "name": "mask_blur",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "mask_blur"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "mask_offset",
+          "name": "mask_offset",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "mask_offset"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "unload_model",
+          "name": "unload_model",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "unload_model"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "invert_combined",
+          "name": "invert_combined",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_combined"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "mask_threshold",
+          "name": "mask_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "mask_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "silhouette_composite_enable",
+          "name": "silhouette_composite_enable",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "silhouette_composite_enable"
+          },
           "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "combined_mask",
           "name": "combined_mask",
           "type": "MASK",
+          "slot_index": 0,
           "links": [
             13
-          ],
-          "slot_index": 0
+          ]
         },
         {
+          "localized_name": "masked_image",
           "name": "masked_image",
           "type": "IMAGE",
-          "links": null,
-          "slot_index": 1
+          "slot_index": 1,
+          "links": null
         },
         {
+          "localized_name": "per_prompt_masks",
           "name": "per_prompt_masks",
           "type": "MASK",
-          "links": null,
-          "slot_index": 2
+          "slot_index": 2,
+          "links": [
+            22
+          ]
         },
         {
+          "localized_name": "status",
           "name": "status",
           "type": "STRING",
-          "links": null,
-          "slot_index": 3
+          "slot_index": 3,
+          "links": null
         },
         {
+          "localized_name": "silhouette_composite",
           "name": "silhouette_composite",
           "type": "MASK",
-          "links": null,
-          "slot_index": 4
+          "slot_index": 4,
+          "links": []
         }
       ],
+      "title": "\u2466 SAM3 Multi-Prompt (metallic zones)",
       "properties": {
         "Node name for S&R": "BD_SAM3MultiPrompt"
       },
       "widgets_values": [
         "metal\nmetallic\nbuckle\nbadge\nbutton\nzipper\njewelry",
-        "",
+        "skin\ncloth\nleather\n",
         "union",
-        1.0,
+        1,
         0.5,
         0.5,
-        "off",
+        "exclude",
         0.7,
         0.3,
         "adaptive_lab",
-        25.0,
+        25,
         0.5,
         50,
         true,
         64,
         "black",
         true,
-        0.5,
+        0.6,
         "Auto",
         0,
         0,
         false,
         false,
-        0.0,
+        0,
         false
-      ],
-      "title": "\u2466 SAM3 Multi-Prompt (metallic zones)"
+      ]
     },
     {
-      "id": 8,
-      "type": "BD_DerivePBR",
+      "id": 2,
+      "type": "BD_RemoveBackground",
       "pos": [
-        1180,
-        300
+        360,
+        80
       ],
       "size": [
-        330,
-        200
+        360,
+        880
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "image",
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        },
+        {
+          "localized_name": "external_mask",
+          "name": "external_mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "localized_name": "prompts",
+          "name": "prompts",
+          "type": "STRING",
+          "widget": {
+            "name": "prompts"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "matting_mode",
+          "name": "matting_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "matting_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "negative_prompts",
+          "name": "negative_prompts",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "negative_prompts"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "mask_mode",
+          "name": "mask_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "mask_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "invert_external_mask",
+          "name": "invert_external_mask",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_external_mask"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "matting_erode",
+          "name": "matting_erode",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "matting_erode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "matting_dilate",
+          "name": "matting_dilate",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "matting_dilate"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "fill_holes_radius",
+          "name": "fill_holes_radius",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "fill_holes_radius"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "edge_blur",
+          "name": "edge_blur",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "edge_blur"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "decontaminate",
+          "name": "decontaminate",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "decontaminate"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "edge_shrink",
+          "name": "edge_shrink",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "edge_shrink"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "edge_refine",
+          "name": "edge_refine",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "edge_refine"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vitmatte_model",
+          "name": "vitmatte_model",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "vitmatte_model"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sharpen",
+          "name": "sharpen",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "sharpen"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bg_clean",
+          "name": "bg_clean",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "bg_clean"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "key_gaps",
+          "name": "key_gaps",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "key_gaps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "key_tolerance",
+          "name": "key_tolerance",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "key_tolerance"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "key_max_area",
+          "name": "key_max_area",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "key_max_area"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "key_enclosed",
+          "name": "key_enclosed",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "key_enclosed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sticker_outline",
+          "name": "sticker_outline",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "sticker_outline"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sticker_color",
+          "name": "sticker_color",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "sticker_color"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "crop_to_content",
+          "name": "crop_to_content",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "crop_to_content"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "crop_padding",
+          "name": "crop_padding",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "crop_padding"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "output_size",
+          "name": "output_size",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "output_size"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "output_size_mode",
+          "name": "output_size_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "output_size_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "mask_threshold",
+          "name": "mask_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "mask_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "unload_model",
+          "name": "unload_model",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "unload_model"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "rgba",
+          "name": "rgba",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": null
+        },
+        {
+          "localized_name": "mask",
+          "name": "mask",
+          "type": "MASK",
+          "slot_index": 1,
+          "links": [
+            4,
+            7,
+            12
+          ]
+        },
+        {
+          "localized_name": "rgb_white_bg",
+          "name": "rgb_white_bg",
+          "type": "IMAGE",
+          "slot_index": 2,
+          "links": [
+            23
+          ]
+        },
+        {
+          "localized_name": "rgb_black_bg",
+          "name": "rgb_black_bg",
+          "type": "IMAGE",
+          "slot_index": 3,
+          "links": []
+        },
+        {
+          "localized_name": "crop_box",
+          "name": "crop_box",
+          "type": "STRING",
+          "slot_index": 4,
+          "links": null
+        },
+        {
+          "localized_name": "sticker",
+          "name": "sticker",
+          "type": "IMAGE",
+          "slot_index": 5,
+          "links": [
+            25
+          ]
+        }
+      ],
+      "title": "\u2461 BD Remove Background (silhouette)",
+      "properties": {
+        "Node name for S&R": "BD_RemoveBackground"
+      },
+      "widgets_values": [
+        "person\ncharacter\nsubject\nforeground",
+        "closed_form",
+        "background",
+        "constrain",
+        true,
+        8,
+        8,
+        4,
+        0,
+        true,
+        1,
+        "vitmatte",
+        "small",
+        0,
+        0,
+        true,
+        0.1,
+        0.06,
+        false,
+        16,
+        "#ffffff",
+        false,
+        16,
+        0,
+        "none",
+        0.5,
+        false
+      ]
+    },
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        0,
+        80
+      ],
+      "size": [
+        360,
+        320
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "image",
+          "name": "image",
+          "type": "COMBO",
+          "widget": {
+            "name": "image"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "choose file to upload",
+          "name": "upload",
+          "type": "IMAGEUPLOAD",
+          "widget": {
+            "name": "upload"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "IMAGE",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            1,
+            2,
+            5,
+            8
+          ]
+        },
+        {
+          "localized_name": "MASK",
+          "name": "MASK",
+          "type": "MASK",
+          "slot_index": 1,
+          "links": null
+        }
+      ],
+      "title": "\u2460 Load Image",
+      "properties": {
+        "Node name for S&R": "LoadImage",
+        "#sdppp_variant": "default",
+        "#sdppp_simple_content": "canvas",
+        "#sdppp_simple_mask": "canvas",
+        "#sdppp_simple_boundary": "canvas",
+        "#sdppp_label": ""
+      },
+      "widgets_values": [
+        "Officer_Leilani_Makoa.png",
+        "image"
+      ]
+    },
+    {
+      "id": 20,
+      "type": "MarkdownNote",
+      "pos": [
+        0,
+        440
+      ],
+      "size": [
+        360,
+        360
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead Full PBR",
+      "properties": {},
+      "widgets_values": [
+        "# BrainDead \u2014 Image \u2192 Full PBR\n\nTurn any character/image into game-ready **PBR maps** (albedo, normal, roughness, metallic, AO + packed ORM/ARM).\n\n**Flow:** Load Image \u2192 BD Remove Background (silhouette) ; full image \u2192 Lotus-2 **Depth** + **Normal** (masked, neutral bg) ; BD SAM3 Multi-Prompt finds **metal** zones \u2192 BD Derive PBR Maps \u2192 albedo / normal / roughness / metallic / AO / packed ORM+ARM.\n\nNotes: feed the FULL image to Lotus-2 (best detail, no halo) \u2014 the subject mask cleans the bg AFTER. AO is derived from depth; metallic = low-sat/high-lum INSIDE the SAM3 metal zone. Lotus-2 + SAM3 auto-download on first run.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 24,
+      "type": "PreviewImage",
+      "pos": [
+        760,
+        1000
+      ],
+      "size": [
+        360,
+        280
       ],
       "flags": {},
       "order": 8,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 25
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "Sticker Preview"
+    },
+    {
+      "id": 8,
+      "type": "BD_DerivePBR",
+      "pos": [
+        1160,
+        320
+      ],
+      "size": [
+        360,
+        600
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "image",
           "name": "image",
           "type": "IMAGE",
-          "link": 9
+          "link": 23
         },
         {
+          "localized_name": "depth",
           "name": "depth",
           "type": "IMAGE",
           "link": 10
         },
         {
+          "localized_name": "normal_map",
           "name": "normal_map",
+          "shape": 7,
           "type": "IMAGE",
           "link": 11
         },
         {
+          "localized_name": "silhouette_mask",
           "name": "silhouette_mask",
+          "shape": 7,
           "type": "MASK",
           "link": 12
         },
         {
+          "localized_name": "aux_shading_alpha",
           "name": "aux_shading_alpha",
+          "shape": 7,
           "type": "MASK",
           "link": null
         },
         {
+          "localized_name": "aux_detail_texture",
           "name": "aux_detail_texture",
+          "shape": 7,
           "type": "IMAGE",
           "link": null
         },
         {
+          "localized_name": "metallic_zone_mask",
           "name": "metallic_zone_mask",
+          "shape": 7,
           "type": "MASK",
           "link": 13
+        },
+        {
+          "localized_name": "invert_shading_alpha",
+          "name": "invert_shading_alpha",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_shading_alpha"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shading_to_roughness",
+          "name": "shading_to_roughness",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "shading_to_roughness"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shading_to_ao",
+          "name": "shading_to_ao",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "shading_to_ao"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "detail_to_roughness",
+          "name": "detail_to_roughness",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "detail_to_roughness"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "depth_sharpen",
+          "name": "depth_sharpen",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "depth_sharpen"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "roughness_mode",
+          "name": "roughness_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "roughness_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "roughness_default",
+          "name": "roughness_default",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "roughness_default"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "roughness_strength",
+          "name": "roughness_strength",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "roughness_strength"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "metallic_mode",
+          "name": "metallic_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "metallic_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "metallic_default",
+          "name": "metallic_default",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "metallic_default"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "metallic_lum_threshold",
+          "name": "metallic_lum_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "metallic_lum_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "metallic_sat_threshold",
+          "name": "metallic_sat_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "metallic_sat_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ao_strength",
+          "name": "ao_strength",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "ao_strength"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ao_blur",
+          "name": "ao_blur",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "ao_blur"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "normal_strength",
+          "name": "normal_strength",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "normal_strength"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "albedo_treatment",
+          "name": "albedo_treatment",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "albedo_treatment"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "albedo_edge_pad_pixels",
+          "name": "albedo_edge_pad_pixels",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "albedo_edge_pad_pixels"
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "albedo",
           "name": "albedo",
           "type": "IMAGE",
+          "slot_index": 0,
           "links": [
             14
-          ],
-          "slot_index": 0
+          ]
         },
         {
+          "localized_name": "normal",
           "name": "normal",
           "type": "IMAGE",
+          "slot_index": 1,
           "links": [
             15
-          ],
-          "slot_index": 1
+          ]
         },
         {
+          "localized_name": "roughness",
           "name": "roughness",
           "type": "MASK",
-          "links": null,
-          "slot_index": 2
+          "slot_index": 2,
+          "links": null
         },
         {
+          "localized_name": "metallic",
           "name": "metallic",
           "type": "MASK",
-          "links": null,
-          "slot_index": 3
+          "slot_index": 3,
+          "links": null
         },
         {
+          "localized_name": "ao",
           "name": "ao",
           "type": "MASK",
-          "links": null,
-          "slot_index": 4
+          "slot_index": 4,
+          "links": null
         },
         {
+          "localized_name": "packed_orm",
           "name": "packed_orm",
           "type": "IMAGE",
+          "slot_index": 5,
           "links": [
-            16
-          ],
-          "slot_index": 5
+            16,
+            18
+          ]
         },
         {
+          "localized_name": "packed_arm",
           "name": "packed_arm",
           "type": "IMAGE",
+          "slot_index": 6,
           "links": [
             17
-          ],
-          "slot_index": 6
+          ]
         },
         {
+          "localized_name": "status",
           "name": "status",
           "type": "STRING",
-          "links": null,
-          "slot_index": 7
+          "slot_index": 7,
+          "links": null
         }
       ],
+      "title": "\u2467 BD Derive PBR Maps",
       "properties": {
         "Node name for S&R": "BD_DerivePBR"
       },
@@ -569,163 +1766,176 @@
         0.4,
         0.5,
         0.5,
-        0.0,
+        0,
         "combined",
         0.5,
-        1.0,
+        1,
         "low_sat_high_lum",
-        0.0,
+        0,
         0.6,
         0.2,
         0.7,
-        2.0,
-        2.0,
-        "silhouette_clip",
+        2,
+        2,
+        "edge_pad",
         32
-      ],
-      "title": "\u2467 BD Derive PBR Maps"
+      ]
     },
     {
-      "id": 9,
-      "type": "SaveImage",
+      "id": 23,
+      "type": "MaskPreview",
       "pos": [
-        1600,
-        80
+        1160,
+        0
       ],
       "size": [
-        330,
-        200
+        320,
+        280
       ],
       "flags": {},
       "order": 9,
       "mode": 0,
       "inputs": [
         {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 14
+          "localized_name": "mask",
+          "name": "mask",
+          "type": "MASK",
+          "link": 22
         }
       ],
       "outputs": [],
       "properties": {
-        "Node name for S&R": "SaveImage"
+        "Node name for S&R": "MaskPreview"
       },
-      "widgets_values": [
-        "pbr/albedo"
-      ],
-      "title": "\u2468 Save Albedo"
+      "widgets_values": [],
+      "title": "Metallic Zone Mask"
     },
     {
-      "id": 10,
-      "type": "SaveImage",
+      "id": 21,
+      "type": "BD_UnpackChannels",
       "pos": [
-        1600,
-        360
+        1160,
+        960
       ],
       "size": [
-        330,
-        200
+        280,
+        240
       ],
       "flags": {},
-      "order": 10,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
-          "name": "images",
+          "localized_name": "image",
+          "name": "image",
           "type": "IMAGE",
-          "link": 15
+          "link": 18
+        },
+        {
+          "localized_name": "alpha_default",
+          "name": "alpha_default",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "alpha_default"
+          },
+          "link": null
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "localized_name": "red_image",
+          "name": "red_image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "localized_name": "green_image",
+          "name": "green_image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "localized_name": "blue_image",
+          "name": "blue_image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "localized_name": "alpha_image",
+          "name": "alpha_image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "localized_name": "red_mask",
+          "name": "red_mask",
+          "type": "MASK",
+          "links": null
+        },
+        {
+          "localized_name": "green_mask",
+          "name": "green_mask",
+          "type": "MASK",
+          "links": null
+        },
+        {
+          "localized_name": "blue_mask",
+          "name": "blue_mask",
+          "type": "MASK",
+          "links": null
+        },
+        {
+          "localized_name": "alpha_mask",
+          "name": "alpha_mask",
+          "type": "MASK",
+          "links": null
+        },
+        {
+          "localized_name": "debug_preview",
+          "name": "debug_preview",
+          "type": "IMAGE",
+          "links": [
+            19
+          ]
+        }
+      ],
       "properties": {
-        "Node name for S&R": "SaveImage"
+        "Node name for S&R": "BD_UnpackChannels"
       },
       "widgets_values": [
-        "pbr/normal"
+        1
       ],
-      "title": "\u2469 Save Normal"
+      "title": "\u246c BD Unpack Channels (ORM)"
     },
     {
-      "id": 11,
-      "type": "SaveImage",
+      "id": 22,
+      "type": "PreviewImage",
       "pos": [
-        1600,
+        1880,
         640
       ],
       "size": [
-        330,
-        200
+        360,
+        520
       ],
       "flags": {},
-      "order": 11,
+      "order": 16,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "images",
           "name": "images",
           "type": "IMAGE",
-          "link": 16
+          "link": 19
         }
       ],
       "outputs": [],
       "properties": {
-        "Node name for S&R": "SaveImage"
+        "Node name for S&R": "PreviewImage"
       },
-      "widgets_values": [
-        "pbr/packed_orm"
-      ],
-      "title": "\u246a Save ORM"
-    },
-    {
-      "id": 12,
-      "type": "SaveImage",
-      "pos": [
-        1600,
-        920
-      ],
-      "size": [
-        330,
-        200
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 17
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "SaveImage"
-      },
-      "widgets_values": [
-        "pbr/packed_arm"
-      ],
-      "title": "\u246b Save ARM"
-    },
-    {
-      "id": 20,
-      "type": "MarkdownNote",
-      "pos": [
-        40,
-        540
-      ],
-      "size": [
-        300,
-        360
-      ],
-      "flags": {},
-      "order": 20,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead Full PBR",
-      "properties": {},
-      "widgets_values": [
-        "# BrainDead \u2014 Image \u2192 Full PBR\n\nTurn any character/image into game-ready **PBR maps** (albedo, normal, roughness, metallic, AO + packed ORM/ARM).\n\n**Flow:** Load Image \u2192 BD Remove Background (silhouette) ; full image \u2192 Lotus-2 **Depth** + **Normal** (masked, neutral bg) ; BD SAM3 Multi-Prompt finds **metal** zones \u2192 BD Derive PBR Maps \u2192 albedo / normal / roughness / metallic / AO / packed ORM+ARM.\n\nNotes: feed the FULL image to Lotus-2 (best detail, no halo) \u2014 the subject mask cleans the bg AFTER. AO is derived from depth; metallic = low-sat/high-lum INSIDE the SAM3 metal zone. Lotus-2 + SAM3 auto-download on first run.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)"
-      ]
+      "widgets_values": [],
+      "title": "\u246d Unpacked ORM Channel"
     }
   ],
   "links": [
@@ -794,14 +2004,6 @@
       "IMAGE"
     ],
     [
-      9,
-      1,
-      0,
-      8,
-      0,
-      "IMAGE"
-    ],
-    [
       10,
       4,
       0,
@@ -864,10 +2066,58 @@
       12,
       0,
       "IMAGE"
+    ],
+    [
+      18,
+      8,
+      5,
+      21,
+      0,
+      "IMAGE"
+    ],
+    [
+      19,
+      21,
+      8,
+      22,
+      0,
+      "IMAGE"
+    ],
+    [
+      22,
+      7,
+      2,
+      23,
+      0,
+      "MASK"
+    ],
+    [
+      23,
+      2,
+      2,
+      8,
+      0,
+      "IMAGE"
+    ],
+    [
+      25,
+      2,
+      5,
+      24,
+      0,
+      "IMAGE"
     ]
   ],
   "groups": [],
   "config": {},
-  "extra": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7627768444385489,
+      "offset": [
+        109.58189160464886,
+        224.73988316009334
+      ]
+    }
+  },
   "version": 0.4
 }
