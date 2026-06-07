@@ -397,6 +397,14 @@ class BD_DerivePBR(io.ComfyNode):
 
         packed_orm = np.stack([ao, roughness, metallic], axis=-1)
         packed_arm = np.stack([ao, roughness, metallic], axis=-1)
+        if silhouette_mask is not None:
+            # Clip the packed maps to the subject so the background is clean black.
+            # The AO channel is forced to 1.0 in the background above (correct for a
+            # standalone AO map), but that leaves a bright halo in the packed ORM/ARM —
+            # so multiply the whole pack by the silhouette to zero the background.
+            s3 = np.stack([sil_arr] * 3, axis=-1)
+            packed_orm = packed_orm * s3
+            packed_arm = packed_arm * s3
 
         albedo_arr = rgb.copy()
         albedo_treatment_str = albedo_treatment

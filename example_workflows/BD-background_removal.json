@@ -1,44 +1,22 @@
 {
-  "id": "bd-background-removal-template",
+  "id": "bd-background-removal",
   "revision": 0,
-  "last_node_id": 12,
+  "last_node_id": 10,
   "last_link_id": 8,
   "nodes": [
     {
       "id": 1,
-      "type": "MarkdownNote",
+      "type": "LoadImage",
       "pos": [
-        40,
-        40
+        60,
+        80
       ],
       "size": [
-        420,
-        500
+        300,
+        310
       ],
       "flags": {},
       "order": 0,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "title": "\u2139\ufe0f About \u2014 BrainDead Remove Background",
-      "properties": {},
-      "widgets_values": [
-        "# \ud83e\udde0 BrainDead \u2014 Remove Background\n\nSelf-contained background removal in one node. SAM3 text-grounded segmentation finds the subject, optional pymatting refines hair/edge transparency, then outputs RGBA + white/black composites.\n\n## Flow\n1. **LoadImage** \u2014 load any image.\n2. **BD Remove Background** \u2014 SAM3 segments by text prompt \u2192 hole fill \u2192 matting \u2192 crop \u2192 RGBA output.\n\n## Key Settings\n- **prompts** \u2014 one SAM3 prompt per line. Union-combined. Try: `person`, `character`, `product`, `animal`.\n- **negative_prompts** \u2014 punch out regions that bleed into the subject (e.g. `background`, `wall`).\n- **matting_mode: closed_form** \u2014 pymatting edge refinement. Best for hair and soft edges. Requires `pip install pymatting`.\n- **matting_mode: none** \u2014 hard mask from SAM3 only. Fastest.\n- **mask_mode** (with external_mask input):\n  - `constrain` \u2014 intersect SAM3 with your mask (rough silhouette clamp)\n  - `subtract` \u2014 cut an already-masked region out of SAM3 result\n  - `use_directly` \u2014 skip SAM3, apply hole-fill + matting to your mask only\n- **crop_to_content** \u2014 trims the canvas to the subject bounding box + padding.\n- **output_size** \u2014 set to 512 or 1024 with `pad_square` to get a fixed-size output.\n\n## Outputs\n- **rgba** \u2014 4-channel RGBA (plug into BD_PackChannels or 3D pipelines)\n- **mask** \u2014 alpha mask only (wire to BD_MaskBatchIndex, BD_FillMaskHoles, etc.)\n- **rgb_white_bg** \u2014 composited over white (good for 3D UV bake preview)\n- **rgb_black_bg** \u2014 composited over black\n- **crop_box** \u2014 `x0,y0,x1,y1` of the crop in the original image coordinates\n\n## Models (auto-load)\n- SAM3 + CLIP: loaded from `/srv/AI_Stuff/models/sam/` on first run.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
-      ]
-    },
-    {
-      "id": 2,
-      "type": "LoadImage",
-      "pos": [
-        40,
-        580
-      ],
-      "size": [
-        315,
-        130
-      ],
-      "flags": {},
-      "order": 1,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -61,29 +39,34 @@
         "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.png"
-      ],
-      "title": "\u2460 Load Image"
+        "example.png",
+        "image"
+      ]
     },
     {
-      "id": 3,
+      "id": 2,
       "type": "BD_RemoveBackground",
       "pos": [
-        510,
-        40
+        420,
+        80
       ],
       "size": [
-        420,
+        330,
         560
       ],
       "flags": {},
-      "order": 2,
+      "order": 1,
       "mode": 0,
       "inputs": [
         {
           "name": "image",
           "type": "IMAGE",
           "link": 1
+        },
+        {
+          "name": "external_mask",
+          "type": "MASK",
+          "link": null
         }
       ],
       "outputs": [
@@ -99,7 +82,7 @@
           "name": "mask",
           "type": "MASK",
           "links": [
-            5
+            6
           ],
           "slot_index": 1
         },
@@ -124,6 +107,14 @@
           "type": "STRING",
           "links": null,
           "slot_index": 4
+        },
+        {
+          "name": "sticker",
+          "type": "IMAGE",
+          "links": [
+            5
+          ],
+          "slot_index": 5
         }
       ],
       "properties": {
@@ -134,32 +125,44 @@
         "closed_form",
         "",
         "constrain",
+        true,
         8,
         8,
         4,
         0.0,
+        true,
+        0,
+        "none",
+        "small",
+        0.0,
+        0.0,
+        false,
+        0.1,
+        0.04,
+        false,
+        8,
+        "#ffffff",
         true,
         16,
         0,
         "none",
         0.5,
         false
-      ],
-      "title": "\u2461 BD Remove Background"
+      ]
     },
     {
-      "id": 4,
+      "id": 3,
       "type": "PreviewImage",
       "pos": [
-        990,
-        40
+        800,
+        80
       ],
       "size": [
-        310,
-        280
+        300,
+        300
       ],
       "flags": {},
-      "order": 3,
+      "order": 2,
       "mode": 0,
       "inputs": [
         {
@@ -171,23 +174,21 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      },
-      "widgets_values": [],
-      "title": "\u2462 RGBA Output"
+      }
     },
     {
-      "id": 5,
+      "id": 4,
       "type": "PreviewImage",
       "pos": [
-        990,
-        360
+        800,
+        420
       ],
       "size": [
-        310,
-        280
+        300,
+        300
       ],
       "flags": {},
-      "order": 4,
+      "order": 3,
       "mode": 0,
       "inputs": [
         {
@@ -199,23 +200,21 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      },
-      "widgets_values": [],
-      "title": "\u2463 White BG Composite"
+      }
     },
     {
-      "id": 6,
+      "id": 5,
       "type": "PreviewImage",
       "pos": [
-        990,
-        680
+        1130,
+        80
       ],
       "size": [
-        310,
-        280
+        300,
+        300
       ],
       "flags": {},
-      "order": 5,
+      "order": 4,
       "mode": 0,
       "inputs": [
         {
@@ -227,51 +226,53 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      },
-      "widgets_values": [],
-      "title": "\u2464 Black BG Composite"
+      }
+    },
+    {
+      "id": 6,
+      "type": "PreviewImage",
+      "pos": [
+        1130,
+        420
+      ],
+      "size": [
+        300,
+        300
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      }
     },
     {
       "id": 7,
-      "type": "MarkdownNote",
+      "type": "BD_MaskBatchIndex",
       "pos": [
-        40,
-        740
+        800,
+        760
       ],
       "size": [
-        420,
-        260
+        280,
+        110
       ],
       "flags": {},
       "order": 6,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "title": "\u2139\ufe0f BD Mask Batch Index \u2014 Channel Extraction",
-      "properties": {},
-      "widgets_values": [
-        "## BD Mask Batch Index\n\nUse **BD_MaskBatchIndex** when you have a batch of masks (e.g. from `BD_SAM3MultiPrompt` `per_prompt_masks`) and need to extract a single mask by index to feed into channel-packing or per-part processing.\n\n```\nBD_SAM3MultiPrompt\n  \u2514\u2500 per_prompt_masks (N,H,W)\n       \u2514\u2500 BD_MaskBatchIndex [index=0] \u2192 mask (1,H,W)\n            \u2514\u2500 BD_PackChannels [R channel]\n```\n\n**index** supports negative values (\u22121 = last mask). Clamped to [0, N\u22121] automatically.\n**invert** flips the mask before output \u2014 useful to punch out a region instead of selecting it.\n\nThis node is the bridge between SAM3's multi-prompt batch output and any single-mask input such as `BD_PackChannels`, `BD_RemoveBackground (external_mask)`, `BD_FillMaskHoles`, etc.\n"
-      ]
-    },
-    {
-      "id": 8,
-      "type": "BD_MaskBatchIndex",
-      "pos": [
-        510,
-        640
-      ],
-      "size": [
-        340,
-        160
-      ],
-      "flags": {},
-      "order": 7,
       "mode": 0,
       "inputs": [
         {
           "name": "masks",
           "type": "MASK",
-          "link": 5
+          "link": 6
         }
       ],
       "outputs": [
@@ -279,7 +280,7 @@
           "name": "mask",
           "type": "MASK",
           "links": [
-            6
+            7
           ],
           "slot_index": 0
         },
@@ -296,50 +297,27 @@
       "widgets_values": [
         0,
         false
-      ],
-      "title": "\u2465 BD Mask Batch Index"
-    },
-    {
-      "id": 9,
-      "type": "MarkdownNote",
-      "pos": [
-        510,
-        830
-      ],
-      "size": [
-        340,
-        120
-      ],
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "title": "\u2139\ufe0f Tip",
-      "properties": {},
-      "widgets_values": [
-        "**BD Remove Background \u2192 mask** is a single (1,H,W) mask so BD_MaskBatchIndex here just passes it through (index 0 of 1). Its real power is with SAM3 `per_prompt_masks` batch output (N masks)."
       ]
     },
     {
-      "id": 10,
+      "id": 8,
       "type": "MaskToImage",
       "pos": [
-        900,
-        640
+        1100,
+        760
       ],
       "size": [
-        240,
-        80
+        230,
+        40
       ],
       "flags": {},
-      "order": 9,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
           "name": "mask",
           "type": "MASK",
-          "link": 6
+          "link": 7
         }
       ],
       "outputs": [
@@ -347,176 +325,132 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            7
+            8
           ],
           "slot_index": 0
         }
       ],
       "properties": {
         "Node name for S&R": "MaskToImage"
-      },
-      "widgets_values": [],
-      "title": "Mask \u2192 Image"
+      }
     },
     {
-      "id": 11,
+      "id": 9,
       "type": "PreviewImage",
       "pos": [
-        1290,
-        640
+        1360,
+        760
       ],
       "size": [
-        310,
-        280
+        300,
+        300
       ],
       "flags": {},
-      "order": 10,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 7
+          "link": 8
         }
       ],
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      },
-      "widgets_values": [],
-      "title": "\u2466 Alpha Mask Preview"
+      }
     },
     {
-      "id": 12,
+      "id": 10,
       "type": "MarkdownNote",
       "pos": [
-        510,
-        980
+        60,
+        420
       ],
       "size": [
-        340,
-        100
+        330,
+        330
       ],
       "flags": {},
-      "order": 11,
+      "order": 9,
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "\u2139\ufe0f Wire to external_mask",
-      "properties": {},
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
       "widgets_values": [
-        "Connect **BD_MaskBatchIndex \u2192 mask** to **BD_RemoveBackground \u2192 external_mask** with `mask_mode: constrain` to clamp SAM3 results to a pre-segmented silhouette."
+        "## BD Background Removal\\n\\n**SAM3 + pymatting** subject cutout with alpha matting, decontamination, and edge keying.\\n\\n- **rgba** - transparent cutout\\n- **rgb_white_bg / rgb_black_bg** - flattened composites\\n- **sticker** - white outline (set `sticker_outline` > 0)\\n- **mask** -> BD Mask Batch Index -> MaskToImage to inspect\\n\\nTips: enable **key_gaps** to clear open background gaps between limbs; **decontaminate** removes color halos; raise **matting_erode/dilate** for cleaner edges."
       ]
     }
   ],
   "links": [
     [
       1,
-      2,
-      0,
-      3,
-      0,
-      "IMAGE"
-    ],
-    [
-      2,
-      3,
-      0,
-      4,
-      0,
-      "IMAGE"
-    ],
-    [
-      3,
-      3,
-      2,
-      5,
-      0,
-      "IMAGE"
-    ],
-    [
-      4,
-      3,
-      3,
-      6,
-      0,
-      "IMAGE"
-    ],
-    [
-      5,
-      3,
       1,
-      8,
       0,
-      "MASK"
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      2,
+      2,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      4,
+      2,
+      3,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      5,
+      2,
+      5,
+      6,
+      0,
+      "IMAGE"
     ],
     [
       6,
-      8,
-      0,
-      10,
+      2,
+      1,
+      7,
       0,
       "MASK"
     ],
     [
       7,
-      10,
+      7,
       0,
-      11,
+      8,
+      0,
+      "MASK"
+    ],
+    [
+      8,
+      8,
+      0,
+      9,
       0,
       "IMAGE"
     ]
   ],
-  "groups": [
-    {
-      "id": 1,
-      "title": "\u2460 Input",
-      "bounding": [
-        20,
-        555,
-        380,
-        200
-      ],
-      "color": "#3f789e",
-      "font_size": 14
-    },
-    {
-      "id": 2,
-      "title": "\u2461 Remove Background \u2014 Main Node",
-      "bounding": [
-        485,
-        20,
-        465,
-        600
-      ],
-      "color": "#8e4a3c",
-      "font_size": 14
-    },
-    {
-      "id": 3,
-      "title": "\u2462 Output Previews",
-      "bounding": [
-        965,
-        20,
-        355,
-        960
-      ],
-      "color": "#4a7a4a",
-      "font_size": 14
-    },
-    {
-      "id": 4,
-      "title": "\u2463 BD Mask Batch Index (channel extraction demo)",
-      "bounding": [
-        485,
-        610,
-        825,
-        490
-      ],
-      "color": "#5a5a8e",
-      "font_size": 14
-    }
-  ],
+  "groups": [],
   "config": {},
   "extra": {},
   "version": 0.4

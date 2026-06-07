@@ -573,7 +573,7 @@
         0.7,
         2.0,
         2.0,
-        "edge_pad",
+        "silhouette_clip",
         32
       ]
     },
