@@ -32,7 +32,7 @@ GALLERY_SLUG = {
     "BD-facewrap_pipeline": "facewrap", "BD-glsl_skin_tinting": "glsl",
     "BD-character_consistency": "character", "BD-background_removal": "bgremoval",
     "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
-    "BD-game_engine_packing": "packing",
+    "BD-game_engine_packing": "packing", "BD-atlas_flipbook": "flipbook",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -128,6 +128,14 @@ CONFIGS = {
                     "Each channel holds only its part"],
         "chips": ["R", "G", "B", "pack"],
         "background": "screenshots/game_engine_packing_bg.png"},
+    "BD-atlas_flipbook": {
+        "title": "Atlas / Flipbook", "subtitle": "tile frames / packed textures into a sprite sheet",
+        "bullets": ["Load frames -> Image Batch -> BD Atlas Pack",
+                    "Grid sheet (auto cols x rows, padding)",
+                    "Sprite strip (rows=1) for UV-animated shaders",
+                    "layout JSON = per-cell UV rects for the engine",
+                    "Or wire packed textures into image_1..image_8"],
+        "chips": ["grid", "strip", "UV", "flipbook"]},
 }
 
 
