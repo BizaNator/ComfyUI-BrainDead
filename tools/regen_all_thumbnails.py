@@ -121,12 +121,13 @@ CONFIGS = {
         "background": "screenshots/pbr_from_image_bg.png"},
     "BD-game_engine_packing": {
         "title": "Game-Engine Packing", "subtitle": "isolate -> balance luma -> channel + atlas pack",
-        "bullets": ["Remove BG -> SAM3 isolates parts",
-                    "Per part: greyscale -> normalize -> center median",
-                    "BD Pack Channels -> R/G/B in one texture",
-                    "BD Atlas Pack -> grid atlas (cols x rows, pad)",
-                    "layout JSON has per-cell UV rects"],
-        "chips": ["R", "G", "B", "atlas", "UV"]},
+        "bullets": ["Remove BG -> SAM3 isolates parts (shirt/pants/jacket)",
+                    "Per part: greyscale cutout -> normalize -> center median",
+                    "BD Pack Channels -> R/G/B in one texture (no bleed)",
+                    "Atlas more typically used on packed images / flipbooks",
+                    "Each channel holds only its part"],
+        "chips": ["R", "G", "B", "pack"],
+        "background": "screenshots/game_engine_packing_bg.png"},
 }
 
 

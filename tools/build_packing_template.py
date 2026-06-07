@@ -43,13 +43,15 @@ def in_conn_names(t):
     return [k for k in order if isinstance(alld[k][0], str) and alld[k][0] in CONN]
 
 nid = 0; lid = 0; nodes = []; links = []
-def add(type_, pos, size, overrides=None, title=None):
+def add(type_, pos, size, overrides=None, title=None, color=None, bgcolor=None):
     global nid; nid += 1
     if type_ == "MarkdownNote":   # frontend-only node, not in object_info
         n = {"id": nid, "type": type_, "pos": list(pos), "size": list(size), "flags": {},
              "order": nid - 1, "mode": 0, "inputs": [], "outputs": [],
              "properties": {}, "widgets_values": [overrides["__md__"]]}
         if title: n["title"] = title
+        if color: n["color"] = color
+        if bgcolor: n["bgcolor"] = bgcolor
         nodes.append(n); return n
     widgets = [overrides.get(k, d) if overrides else d for k, d in widget_defaults(type_)]
     conns = in_conn_names(type_)
@@ -60,10 +62,9 @@ def add(type_, pos, size, overrides=None, title=None):
                      for i, o in enumerate(out_names(type_))],
          "properties": {"Node name for S&R": type_}}
     if title: n["title"] = title
-    if type_ != "MarkdownNote":
-        n["widgets_values"] = widgets
-    else:
-        n["widgets_values"] = [overrides["__md__"]]
+    if color: n["color"] = color
+    if bgcolor: n["bgcolor"] = bgcolor
+    n["widgets_values"] = widgets
     nodes.append(n); return n
 
 def link(src, oname, dst, iname):
@@ -85,22 +86,25 @@ rbg  = add("BD_RemoveBackground", (380, 80), (320, 200),
            {"prompts": "subject\nperson\nforeground", "negative_prompts": "background",
             "crop_to_content": False, "edge_refine": "guided"}, title="② BD Remove Background")
 sam  = add("BD_SAM3MultiPrompt", (740, 80), (320, 200),
-           {"prompts": "lips\nteeth\ntongue"}, title="③ SAM3 Isolate Parts (lips/teeth/tongue)")
+           {"prompts": "shirt\npants\njacket"}, title="③ SAM3 Isolate Parts (shirt/pants/jacket)")
 
-# 3 parallel object chains R(lips) G(teeth) B(tongue)
-chan = ["R · lips", "G · teeth", "B · tongue"]
+# 3 parallel object chains, generic R/G/B with per-channel tint (red/green/blue)
+chan = ["R", "G", "B"]
+tint = [("#322", "#533"), ("#232", "#353"), ("#223", "#335")]   # R / G / B node colouring
 ys = [40, 300, 560]
 idx_nodes, grey_nodes, norm_nodes, cen_nodes = [], [], [], []
 for k, (label, y) in enumerate(zip(chan, ys)):
+    col, bg = tint[k]
     mi = add("BD_MaskBatchIndex", (1100, y), (250, 110), {"index": k},
-             title=f"{C(4 + k)} Pick mask [{k}] ({label})")
+             title=f"{C(4 + k)} Pick mask [{k}] ({label})", color=col, bgcolor=bg)
     gs = add("BD_ImageToGreyscale", (1380, y), (250, 130),
              {"mode": "luminance", "mask_mode": "cutout"},
-             title=f"Greyscale cutout ({label})")
+             title=f"Greyscale cutout ({label})", color=col, bgcolor=bg)
     nm = add("BD_NormalizeLuma", (1660, y), (250, 180),
-             {"apply_to_mask_only": True}, title=f"Normalize Luma ({label})")
+             {"apply_to_mask_only": True}, title=f"Normalize Luma ({label})", color=col, bgcolor=bg)
     cm = add("BD_CenterMedianLuma", (1940, y), (250, 180),
-             {"apply_to_mask_only": True, "calc_from_mask": True}, title=f"Center Median ({label})")
+             {"apply_to_mask_only": True, "calc_from_mask": True},
+             title=f"Center Median ({label})", color=col, bgcolor=bg)
     idx_nodes.append(mi); grey_nodes.append(gs); norm_nodes.append(nm); cen_nodes.append(cm)
 
 pack = add("BD_PackChannels", (2220, 80), (300, 260), {}, title="⑦ BD Pack Channels (R/G/B)")
@@ -113,12 +117,13 @@ prev_atlas = add("PreviewImage", (2560, 420), (300, 300), {}, title="⑩ Atlas P
 prev_dbg = add("PreviewImage", (2560, 740), (300, 240), {}, title="Pack Debug (R/G/B/A)")
 
 md = ("## Game-Engine Packing\n\n"
-      "Remove BG → **SAM3** isolates parts → per part: **greyscale → normalize luma → "
-      "center median** (each object's luma balanced *within its own mask*) → packed two ways:\n\n"
-      "- **BD Pack Channels** — R=lips, G=teeth, B=tongue in one RGB texture\n"
-      "- **BD Atlas Pack** — the same balanced parts tiled into a grid atlas (cols×rows, "
-      "padding, `layout` JSON has per-cell UV rects)\n\n"
-      "Swap the SAM3 prompts + add channels/cells for your own parts (e.g. the LipViseme atlas).")
+      "Remove BG → **SAM3** isolates parts (shirt / pants / jacket) → per part: "
+      "**greyscale cutout → normalize luma → center median** (each part's luma balanced "
+      "*within its own mask*, black outside) → **BD Pack Channels**: R=shirt, G=pants, "
+      "B=jacket in one RGB mask texture.\n\n"
+      "Each channel holds **only its part** (cutout greyscale) so they don't bleed.\n\n"
+      "*BD Atlas Pack here just demos tiling the parts into a grid — in practice you'd "
+      "atlas finished **packed** textures or **flipbook** frames, not raw channels.*")
 about = add("MarkdownNote", (40, 440), (340, 300), {"__md__": md},
             title="ℹ️ About — 🧠 BrainDead Game-Engine Packing")
 
