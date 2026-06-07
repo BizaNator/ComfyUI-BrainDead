@@ -52,6 +52,11 @@ BODY = (188, 188, 198)
 GREY = (150, 150, 160)
 FOOTER = "BrainDeadGuild.com  ·  BrainDead.TV  ·  github.com/BizaNator/ComfyUI-BrainDead"
 _FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans%s.ttf"
+# Brand watermark — bottom-right corner of every thumbnail. Lives in the repo
+# (tools/assets/) so it's always available at build time.
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "bizanator_logo.png")
+LOGO_H = 60          # rendered height (px); aspect preserved
+LOGO_MARGIN = 18     # px from the right + bottom edges
 _CHIP_COLORS = [(210, 150, 110), (120, 120, 230), (150, 150, 155), (90, 90, 100),
                 (110, 190, 140), (200, 140, 200), (200, 190, 110), (120, 200, 210)]
 
@@ -265,8 +270,20 @@ def make(out_path, cfg):
     d.rectangle([0, H - 56, W, H], fill=(16, 16, 20, 255))
     d.text((x, H - 42), FOOTER, font=_font(20), fill=GREY + (255,))
 
+    _watermark(base)
     base.convert("RGB").save(out_path, "JPEG", quality=88)
     return out_path
+
+
+def _watermark(base):
+    """Composite the BizaNator brand logo in the bottom-right corner."""
+    try:
+        logo = Image.open(LOGO_PATH).convert("RGBA")
+    except Exception:
+        return
+    w = max(1, round(logo.width * LOGO_H / logo.height))
+    logo = logo.resize((w, LOGO_H), Image.LANCZOS)
+    base.alpha_composite(logo, dest=(W - w - LOGO_MARGIN, H - LOGO_H - LOGO_MARGIN))
 
 
 def main():
