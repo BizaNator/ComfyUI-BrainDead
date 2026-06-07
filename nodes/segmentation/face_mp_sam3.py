@@ -62,34 +62,9 @@ from .face_mp_shared import (
 
 _MODEL_PATH = _find_mediapipe_model()
 _SAM3_SIZE = 1008  # SAM3 works in a 1008×1008 preprocessed space
-# Standalone VitMatte: load straight from the HF repo id — transformers auto-downloads
-# to the HF cache (HF_HOME) if absent. No dependency on any other custom-node pack's
-# model dir, so this node stands alone.
-_VITMATTE_REPOS = {
-    "small": "hustvl/vitmatte-small-composition-1k",
-    "base":  "hustvl/vitmatte-base-composition-1k",
-}
-_VITMATTE = {}  # cache by variant: {variant: (model, proc, device)}
-
-
-def _load_vitmatte(variant: str = "small"):
-    """Lazy-load + cache VitMatte (transformers), auto-downloading from the HF hub on
-    first use. Returns (model, proc, device); (None, None, None) on failure."""
-    if variant in _VITMATTE:
-        return _VITMATTE[variant]
-    try:
-        import torch as _t
-        from transformers import VitMatteForImageMatting, VitMatteImageProcessor
-        repo = _VITMATTE_REPOS.get(variant, _VITMATTE_REPOS["small"])
-        dev = "cuda" if _t.cuda.is_available() else "cpu"
-        print(f"[BD MP SAM3] loading VitMatte '{variant}' ({repo}) — downloads to HF cache if missing", flush=True)
-        proc = VitMatteImageProcessor.from_pretrained(repo)
-        model = VitMatteForImageMatting.from_pretrained(repo).to(dev).eval()
-        _VITMATTE[variant] = (model, proc, dev)
-    except Exception as e:
-        print(f"[BD MP SAM3] VitMatte load failed ({e})", flush=True)
-        _VITMATTE[variant] = (None, None, None)
-    return _VITMATTE[variant]
+# VitMatte loader lives in the shared matting lib (auto-downloads from HF, cached,
+# shared with BD_RemoveBackground — no duplicated loader).
+from .matting import load_vitmatte as _load_vitmatte
 
 
 # ── Feature → (positive landmark source, sibling-negative sources) ──────────────
