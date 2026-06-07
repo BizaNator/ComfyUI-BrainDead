@@ -242,6 +242,23 @@ class BD_RemoveBackground(io.ComfyNode):
                     tooltip="Zero any alpha below this value to kill faint background ghosting / noise "
                             "(e.g. 0.05). 0 = off.",
                 ),
+                io.Boolean.Input(
+                    "key_gaps", default=False, optional=True,
+                    tooltip="Punch out background-coloured ISLANDS left inside the mask — the bits of "
+                            "original background showing through gaps (between legs, fingers, handles). "
+                            "Samples the bg colour from the removed area and removes only small matching "
+                            "islands, so large same-coloured SUBJECT areas (white clothing) are kept.",
+                ),
+                io.Float.Input(
+                    "key_tolerance", default=0.10, min=0.01, max=0.4, step=0.01, optional=True,
+                    tooltip="key_gaps colour-match tolerance (LAB). Higher catches more (risks subject); "
+                            "lower is safer. ~0.08–0.15 for a clean white/solid background.",
+                ),
+                io.Float.Input(
+                    "key_max_area", default=0.04, min=0.0, max=0.5, step=0.01, optional=True,
+                    tooltip="key_gaps only removes bg-coloured islands smaller than this fraction of the "
+                            "frame (protects large subject areas). ~0.03–0.06 for small gaps.",
+                ),
                 io.Int.Input(
                     "sticker_outline", default=0, min=0, max=128, optional=True,
                     tooltip="Die-cut STICKER mode: add a coloured trim border of N px around the "
@@ -317,6 +334,9 @@ class BD_RemoveBackground(io.ComfyNode):
                 vitmatte_model="small",
                 sharpen=0.0,
                 bg_clean=0.0,
+                key_gaps=False,
+                key_tolerance=0.10,
+                key_max_area=0.04,
                 sticker_outline=0,
                 sticker_color="#ffffff",
                 crop_to_content=True,
@@ -418,6 +438,12 @@ class BD_RemoveBackground(io.ComfyNode):
             combined = matting.guided_refine(combined, image)
         elif edge_refine == "vitmatte":
             combined = matting.vitmatte_refine(combined, image, variant=vitmatte_model)
+
+        # ── Key out bg-coloured gaps inside the mask (between legs/fingers) ─
+        if key_gaps:
+            combined = matting.key_background(
+                combined, image,
+                tolerance=float(key_tolerance), max_area_frac=float(key_max_area))
 
         # ── Fringe shrink + crisp/clean the matte ─────────────────────────
         if int(edge_shrink) > 0:

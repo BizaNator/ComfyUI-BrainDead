@@ -139,6 +139,63 @@ def vitmatte_refine(alpha: torch.Tensor, image: torch.Tensor,
     return torch.from_numpy(out.astype(np.float32)).unsqueeze(0)
 
 
+# ── background colour key (punch out bg-coloured gaps between legs/fingers) ────
+def key_background(alpha: torch.Tensor, image: torch.Tensor,
+                   tolerance: float = 0.10, max_area_frac: float = 0.04,
+                   bg_color=None) -> torch.Tensor:
+    """Remove background-coloured ISLANDS sitting *inside* the mask — the bits of
+    original background showing through gaps (between legs, fingers, handles).
+
+    Samples the bg colour from the removed region (alpha<0.1) unless `bg_color` is
+    given, finds in-mask pixels close to it (LAB distance < tolerance), and zeros
+    only connected islands smaller than `max_area_frac` of the frame — so large
+    same-coloured SUBJECT areas (e.g. white clothing) are preserved. (1,H,W)."""
+    if not HAS_CV2:
+        return alpha
+    a = alpha[0].cpu().numpy().astype(np.float32)
+    inside = a > 0.5
+    if not inside.any():
+        return alpha
+    img = image[0, :, :, :3].cpu().numpy().astype(np.float32)
+    if bg_color is not None:
+        bg = np.asarray(bg_color, np.float32)
+    else:
+        out = a < 0.1
+        bg = (np.median(img[out].reshape(-1, 3), axis=0) if out.any()
+              else np.array([1.0, 1.0, 1.0], np.float32))
+    lab = cv2.cvtColor((np.clip(img, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2LAB).astype(np.float32)
+    bg_lab = cv2.cvtColor((np.clip(bg, 0, 1)[None, None] * 255).astype(np.uint8),
+                          cv2.COLOR_RGB2LAB).astype(np.float32)[0, 0]
+    dist = np.linalg.norm(lab - bg_lab[None, None, :], axis=-1) / 255.0
+    bg_like = (dist < float(tolerance))            # all bg-coloured pixels (whole frame)
+    if not (bg_like & inside).any():
+        return alpha
+    H, W = a.shape
+    n, lbl, stats, _ = cv2.connectedComponentsWithStats(bg_like.astype(np.uint8), 8)
+
+    # (1) bg-colour reachable from the image border = outer background + OPEN gaps
+    #     (e.g. between the legs, open to the bottom) — remove its in-mask part, any size.
+    border = np.concatenate([lbl[0, :], lbl[-1, :], lbl[:, 0], lbl[:, -1]])
+    border_labels = set(int(v) for v in np.unique(border) if v != 0)
+    flood = np.isin(lbl, list(border_labels)) if border_labels else np.zeros_like(bg_like)
+    remove = flood & inside
+
+    # (2) ENCLOSED bg-colour islands inside the mask (e.g. between fingers in a fist):
+    #     remove only those smaller than max_area_frac so large SUBJECT areas (white
+    #     clothing) are preserved.
+    enclosed = (bg_like & inside & ~flood).astype(np.uint8)
+    if enclosed.any():
+        n2, lbl2, stats2, _ = cv2.connectedComponentsWithStats(enclosed, 8)
+        max_area = float(max_area_frac) * H * W
+        for i in range(1, n2):
+            if stats2[i, cv2.CC_STAT_AREA] <= max_area:
+                remove |= (lbl2 == i)
+
+    out_a = a.copy()
+    out_a[remove] = 0.0
+    return torch.from_numpy(out_a).unsqueeze(0)
+
+
 # ── alpha cleanup ──────────────────────────────────────────────────────────────
 def clean_alpha(alpha: torch.Tensor, sharpen: float = 0.0, floor: float = 0.0) -> torch.Tensor:
     """Crisp/denoise the matte. `floor` zeros faint background alpha (kills ghosting);
