@@ -99,9 +99,17 @@ python3 tools/make_thumbnail.py example_workflows/<name>.jpg '{
 ```
 Fields: `title` (required), `subtitle`, `bullets` (3–7 short `A -> B` lines), `chips` (optional tags),
 `footnote` (optional grey line). Output is JPEG q88 — name it `<same_snake_case_basename>.jpg`.
-Rules baked in (don't re-derive): **no emoji glyphs**, `.jpg` only, 1180×680. If you genuinely need
-a rendered result or node-graph image, you may compose one, but it must still be `<name>.jpg` 1180×680
-and pass the showing rules above.
+
+**Background (combines the card with "the actual nodes"):**
+- By default it **auto-draws the node graph** from the sibling `<name>.json` (faded LiteGraph-style
+  boxes + wires behind the card) — so write the `.json` first, then run the generator pointed at
+  `<name>.jpg` and it just works. Override with `"workflow": "path.json"`.
+- Provide `"background": "path.jpg"` to use a **screenshot or result image** instead (cover-fit +
+  darkened). This wins over the node graph — use it when you have a nice output/result render.
+- Set `"no_graph": true` for a pure clean card (no background).
+
+Rules baked in (don't re-derive): **no emoji glyphs** (sanitized), `.jpg` only, 1180×680, JPEG q88,
+left scrim keeps text readable over any background. Always `<same_snake_case_basename>.jpg`.
 
 ### 5. Embed model auto-download metadata (required when the workflow has loader nodes)
 For **every** standard loader node (`UNETLoader`, `VAELoader`, `CLIPLoader`, checkpoint loaders, etc.),
