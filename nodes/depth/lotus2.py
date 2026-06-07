@@ -520,6 +520,28 @@ def _colorize_depth(depth_01: torch.Tensor) -> torch.Tensor:
         return depth_01
 
 
+def _mask_outputs(tensors, mask, fill_rgb):
+    """Mask each (B,H,W,3) output with the subject mask, filling the background with
+    fill_rgb (or, if fill_rgb is None, append alpha → RGBA). mask: subject=1."""
+    m = mask
+    if m.dim() == 2:
+        m = m.unsqueeze(0)
+    out = []
+    for t in tensors:
+        B, H, W, _ = t.shape
+        mm = m
+        if mm.shape[-2:] != (H, W):
+            mm = F.interpolate(mm.unsqueeze(1).float(), size=(H, W),
+                               mode="bilinear", align_corners=False).squeeze(1)
+        a = mm.to(t.dtype).clamp(0, 1).unsqueeze(-1)  # (B,H,W,1)
+        if fill_rgb is None:
+            out.append(torch.cat([t, a], dim=-1))     # RGBA
+        else:
+            f = torch.tensor(fill_rgb, dtype=t.dtype).view(1, 1, 1, 3)
+            out.append((t * a + f * (1 - a)).clamp(0, 1))
+    return out
+
+
 class BD_Lotus2Predict(io.ComfyNode):
     """Run Lotus-2 inference on an image. Outputs map (RGB), raw [0,1], and colorized preview."""
 
@@ -549,6 +571,21 @@ class BD_Lotus2Predict(io.ComfyNode):
                 io.Float.Input("guidance_scale", default=3.5, min=0.0, max=10.0, step=0.1),
                 io.Int.Input("timestep_core_predictor", default=1, min=0, max=1000,
                              tooltip="Core predictor stage's effective timestep (default 1)."),
+                io.Mask.Input("mask", optional=True,
+                              tooltip="Optional subject mask (e.g. from BD Remove Background). "
+                                      "BEST PRACTICE: feed the FULL original image to `image` (so the "
+                                      "model keeps scene context + detail and avoids silhouette halos), "
+                                      "and pass the subject mask here to clean the background AFTER. "
+                                      "Subject=1, background=0."),
+                io.Combo.Input("bg_fill",
+                               options=["auto", "keep", "black", "white", "normal_neutral", "transparent"],
+                               default="auto", optional=True,
+                               tooltip="How to fill the background where mask=0:\n"
+                                       "  auto    — DEPTH→black (far), NORMAL→#8080ff (flat, facing camera)\n"
+                                       "  black/white/normal_neutral — force that fill\n"
+                                       "  transparent — output RGBA (alpha=mask)\n"
+                                       "  keep    — don't mask. (NEVER use white for depth bg, or black/white "
+                                       "for normal — they're invalid far/flat values.)"),
             ],
             outputs=[
                 io.Image.Output(display_name="map"),
@@ -559,7 +596,8 @@ class BD_Lotus2Predict(io.ComfyNode):
 
     @classmethod
     def execute(cls, model, image, num_inference_steps=10, process_res=1024,
-                guidance_scale=3.5, timestep_core_predictor=1) -> io.NodeOutput:
+                guidance_scale=3.5, timestep_core_predictor=1,
+                mask=None, bg_fill="auto") -> io.NodeOutput:
         if not isinstance(model, dict) or "pipeline" not in model:
             raise ValueError("BD_Lotus2Predict: 'model' must come from BD_Lotus2ModelLoader.")
         pipeline = model["pipeline"]
@@ -588,6 +626,22 @@ class BD_Lotus2Predict(io.ComfyNode):
         else:
             raw_rgb = map_01
             preview = map_01
+
+        # ── Mask the background with the correct neutral value per task ────
+        if mask is not None and bg_fill != "keep":
+            if bg_fill == "auto":
+                fill = (0.0, 0.0, 0.0) if task == "depth" else (0.5, 0.5, 1.0)
+            elif bg_fill == "black":
+                fill = (0.0, 0.0, 0.0)
+            elif bg_fill == "white":
+                fill = (1.0, 1.0, 1.0)
+            elif bg_fill == "normal_neutral":
+                fill = (0.5, 0.5, 1.0)
+            else:  # transparent
+                fill = None
+            map_01, raw_rgb, preview = _mask_outputs([map_01, raw_rgb, preview], mask, fill)
+            print(f"[BD Lotus2 Predict] masked background (bg_fill={bg_fill}, "
+                  f"{'black/far' if task=='depth' else '#8080ff/flat' if fill else 'transparent'})", flush=True)
 
         print(f"[BD Lotus2 Predict] task={task} steps={num_inference_steps} "
               f"process_res={process_res} → out {tuple(map_01.shape)}", flush=True)

@@ -180,6 +180,13 @@ class BD_RemoveBackground(io.ComfyNode):
                             "  use_directly  — skip SAM3 entirely, use external_mask as the alpha "
                             "(prompts ignored). Useful for hole-fill + matting on a pre-made mask.",
                 ),
+                io.Boolean.Input(
+                    "invert_external_mask", default=True, optional=True,
+                    tooltip="Invert external_mask before use. Default ON because ComfyUI's LoadImage "
+                            "MASK output is the INVERSE of the subject (subject=0, background=1) — so "
+                            "without inverting, constrain/subtract/use_directly act on the wrong region. "
+                            "Turn OFF if your mask already has subject=1 (e.g. straight from SAM3).",
+                ),
                 io.Combo.Input(
                     "matting_mode",
                     options=["none", "closed_form"],
@@ -259,6 +266,13 @@ class BD_RemoveBackground(io.ComfyNode):
                     tooltip="key_gaps only removes bg-coloured islands smaller than this fraction of the "
                             "frame (protects large subject areas). ~0.03–0.06 for small gaps.",
                 ),
+                io.Boolean.Input(
+                    "key_enclosed", default=False, optional=True,
+                    tooltip="key_gaps: also remove ENCLOSED bg-coloured islands (e.g. between fingers in "
+                            "a fist) that aren't connected to the outer background. OFF by default so "
+                            "interior details NOT touching the background (white nametag, buttons) are "
+                            "kept. Open gaps (between legs, around an arm) are always removed.",
+                ),
                 io.Int.Input(
                     "sticker_outline", default=0, min=0, max=128, optional=True,
                     tooltip="Die-cut STICKER mode: add a coloured trim border of N px around the "
@@ -324,6 +338,7 @@ class BD_RemoveBackground(io.ComfyNode):
                 negative_prompts="",
                 external_mask=None,
                 mask_mode="constrain",
+                invert_external_mask=True,
                 matting_mode="closed_form",
                 matting_erode=8, matting_dilate=8,
                 fill_holes_radius=4,
@@ -337,6 +352,7 @@ class BD_RemoveBackground(io.ComfyNode):
                 key_gaps=False,
                 key_tolerance=0.10,
                 key_max_area=0.04,
+                key_enclosed=False,
                 sticker_outline=0,
                 sticker_color="#ffffff",
                 crop_to_content=True,
@@ -370,6 +386,8 @@ class BD_RemoveBackground(io.ComfyNode):
                     e = F.interpolate(e.unsqueeze(0), size=(H, W),
                                       mode="bilinear", align_corners=False).squeeze(0)
                     print(f"[BD RemoveBackground] resized external_mask to {H}×{W}.", flush=True)
+                if invert_external_mask:
+                    e = 1.0 - e   # ComfyUI LoadImage MASK is inverted vs subject
                 ext = e
 
         # ── Skip SAM3 if use_directly ──────────────────────────────────────
@@ -443,7 +461,8 @@ class BD_RemoveBackground(io.ComfyNode):
         if key_gaps:
             combined = matting.key_background(
                 combined, image,
-                tolerance=float(key_tolerance), max_area_frac=float(key_max_area))
+                tolerance=float(key_tolerance), max_area_frac=float(key_max_area),
+                include_enclosed=bool(key_enclosed))
 
         # ── Fringe shrink + crisp/clean the matte ─────────────────────────
         if int(edge_shrink) > 0:
@@ -454,11 +473,16 @@ class BD_RemoveBackground(io.ComfyNode):
         combined = _edge_blur(combined, float(edge_blur))
 
         # ── Crop to content ───────────────────────────────────────────────
+        # Reserve room for the sticker outline so it isn't clipped off (the
+        # outline is dilated outward from the subject after the crop).
+        eff_pad = int(crop_padding)
+        if int(sticker_outline) > 0:
+            eff_pad = max(eff_pad, int(sticker_outline) + 4)
         alpha_bhw = combined.unsqueeze(0)  # (1,1,H,W) for crop
         img_out = image
         if crop_to_content:
             img_out, alpha_bhw, crop_box = _crop_to_content(
-                image, combined, int(crop_padding),
+                image, combined, eff_pad,
                 int(output_size), output_size_mode,
             )
             combined = alpha_bhw

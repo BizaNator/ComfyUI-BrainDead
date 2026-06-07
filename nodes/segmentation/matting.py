@@ -142,14 +142,18 @@ def vitmatte_refine(alpha: torch.Tensor, image: torch.Tensor,
 # ── background colour key (punch out bg-coloured gaps between legs/fingers) ────
 def key_background(alpha: torch.Tensor, image: torch.Tensor,
                    tolerance: float = 0.10, max_area_frac: float = 0.04,
-                   bg_color=None) -> torch.Tensor:
-    """Remove background-coloured ISLANDS sitting *inside* the mask — the bits of
-    original background showing through gaps (between legs, fingers, handles).
+                   include_enclosed: bool = False, bg_color=None) -> torch.Tensor:
+    """Remove background showing through gaps in the mask.
+
+    By default removes ONLY bg-coloured regions reachable from the image border —
+    i.e. OPEN gaps (between legs, around an arm) connected to the real background.
+    Enclosed bg-coloured islands (between fingers in a fist) are removed only when
+    `include_enclosed=True`, and even then only those smaller than `max_area_frac`.
+    This protects legitimate interior details (a white nametag, buttons) that are
+    enclosed by the subject and NOT connected to the background.
 
     Samples the bg colour from the removed region (alpha<0.1) unless `bg_color` is
-    given, finds in-mask pixels close to it (LAB distance < tolerance), and zeros
-    only connected islands smaller than `max_area_frac` of the frame — so large
-    same-coloured SUBJECT areas (e.g. white clothing) are preserved. (1,H,W)."""
+    given; matches in LAB within `tolerance`. (1,H,W)."""
     if not HAS_CV2:
         return alpha
     a = alpha[0].cpu().numpy().astype(np.float32)
@@ -180,16 +184,17 @@ def key_background(alpha: torch.Tensor, image: torch.Tensor,
     flood = np.isin(lbl, list(border_labels)) if border_labels else np.zeros_like(bg_like)
     remove = flood & inside
 
-    # (2) ENCLOSED bg-colour islands inside the mask (e.g. between fingers in a fist):
-    #     remove only those smaller than max_area_frac so large SUBJECT areas (white
-    #     clothing) are preserved.
-    enclosed = (bg_like & inside & ~flood).astype(np.uint8)
-    if enclosed.any():
-        n2, lbl2, stats2, _ = cv2.connectedComponentsWithStats(enclosed, 8)
-        max_area = float(max_area_frac) * H * W
-        for i in range(1, n2):
-            if stats2[i, cv2.CC_STAT_AREA] <= max_area:
-                remove |= (lbl2 == i)
+    # (2) ENCLOSED bg-colour islands inside the mask (e.g. between fingers) — opt-in,
+    #     and only those smaller than max_area_frac. OFF by default so interior
+    #     details (white nametag, buttons) that are NOT background stay intact.
+    if include_enclosed:
+        enclosed = (bg_like & inside & ~flood).astype(np.uint8)
+        if enclosed.any():
+            n2, lbl2, stats2, _ = cv2.connectedComponentsWithStats(enclosed, 8)
+            max_area = float(max_area_frac) * H * W
+            for i in range(1, n2):
+                if stats2[i, cv2.CC_STAT_AREA] <= max_area:
+                    remove |= (lbl2 == i)
 
     out_a = a.copy()
     out_a[remove] = 0.0
