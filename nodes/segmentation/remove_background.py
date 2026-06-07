@@ -304,12 +304,28 @@ class BD_RemoveBackground(io.ComfyNode):
         H, W = image.shape[1], image.shape[2]
 
         # ── Normalise external mask ────────────────────────────────────────
+        # Accept a mask if one is meaningfully provided, otherwise ignore it — so
+        # templates can wire LoadImage's MASK output unconditionally. LoadImage
+        # emits a tiny 64×64 placeholder (all-zeros) when the image has no alpha;
+        # using that in `constrain` mode would crash (size mismatch) or blank the
+        # output, so we drop empty/full placeholders and resize any real mask.
         ext = None
         if external_mask is not None:
-            ext = external_mask.detach().cpu().float()
-            if ext.ndim == 2:
-                ext = ext.unsqueeze(0)
-            ext = ext[:1]  # (1,H,W) — first mask from any batch
+            e = external_mask.detach().cpu().float()
+            if e.ndim == 2:
+                e = e.unsqueeze(0)
+            e = e[:1]  # (1,h,w) — first mask from any batch
+            emin, emax = float(e.min()), float(e.max())
+            if emax <= 1e-6 or emin >= 1.0 - 1e-6:
+                # all-zeros (no subject) or all-ones (no constraint) placeholder
+                print("[BD RemoveBackground] external_mask is an empty/full placeholder "
+                      "(e.g. LoadImage with no alpha) — ignoring it, using SAM3.", flush=True)
+            else:
+                if e.shape[-2:] != (H, W):
+                    e = F.interpolate(e.unsqueeze(0), size=(H, W),
+                                      mode="bilinear", align_corners=False).squeeze(0)
+                    print(f"[BD RemoveBackground] resized external_mask to {H}×{W}.", flush=True)
+                ext = e
 
         # ── Skip SAM3 if use_directly ──────────────────────────────────────
         if mask_mode == "use_directly" and ext is not None:
