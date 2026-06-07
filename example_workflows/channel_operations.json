@@ -1,0 +1,353 @@
+{
+  "id": "bd-channel-operations-template",
+  "revision": 0,
+  "last_node_id": 8,
+  "last_link_id": 9,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [40, 40],
+      "size": [420, 600],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ℹ️ About — BrainDead Channel Operations",
+      "properties": {},
+      "widgets_values": [
+        "# 🧠 BrainDead — Channel Operations\n\nThree nodes for packing, unpacking, and merging image channels. Essential for PBR map creation, mask-to-channel workflows, and RGBA compositing.\n\n## BD_UnpackChannels\nSplits any image into its R, G, B, A channels — as both `IMAGE` (greyscale preview) and `MASK` (float tensor). The `debug_preview` output shows all 4 channels as a 2×2 grid.\n\n**Use when:** You need individual channels from a packed ORM texture, or want to use one channel of an image as a mask for BD_PackChannels.\n\n## BD_PackChannels\nBuilds a new image where each channel (R/G/B/A) can come from:\n- An **IMAGE** (luminance extracted via luma standard)\n- A **MASK** (used directly as the channel value)\n- A **default float** (constant fill: 0.0 = black, 1.0 = white)\n\nThe `debug_preview` output shows the resulting R, G, B, A as a 2×2 grid.\n\n**Use when:** Creating ORM maps (Occlusion/Roughness/Metallic), skin shader channel maps, or any custom multi-channel texture from separate greyscale sources.\n\n**Example ORM setup:**\n```\nRed   ← AO mask or image\nGreen ← Roughness mask or image\nBlue  ← Metallic mask or image\nAlpha ← default 1.0\n```\n\n## BD_ChannelMerge\nCopies channel data **from** a source image **into** specific channels of a base image. Source can be a single channel (R/G/B/A) or computed luminance.\n\n**target_channels:** which channel(s) to write into (R, G, B, A, RG, RGB, RGBA…)\n**source_from:** how to extract from source (luma_bt709, channel_R, channel_G…)\n**blend_mode:** replace / add / multiply / screen / overlay / etc.\n\n**Use when:** Injecting a roughness map into the green channel of an existing texture, or baking an AO pass into the red channel without recreating the whole image.\n\n## This Workflow\nRound-trip: **Unpack** an image → extract R/G/B as masks → **Pack** them back → **Merge** the result into the original's R channel.\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [40, 680],
+      "size": [315, 130],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [1, 7],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": ["example.png"],
+      "title": "① Load Image"
+    },
+    {
+      "id": 3,
+      "type": "BD_UnpackChannels",
+      "pos": [510, 40],
+      "size": [340, 180],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "red_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "green_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "blue_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "alpha_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "red_mask",
+          "type": "MASK",
+          "links": [3],
+          "slot_index": 4
+        },
+        {
+          "name": "green_mask",
+          "type": "MASK",
+          "links": [4],
+          "slot_index": 5
+        },
+        {
+          "name": "blue_mask",
+          "type": "MASK",
+          "links": [5],
+          "slot_index": 6
+        },
+        {
+          "name": "alpha_mask",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 7
+        },
+        {
+          "name": "debug_preview",
+          "type": "IMAGE",
+          "links": [2],
+          "slot_index": 8
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_UnpackChannels"
+      },
+      "widgets_values": [1.0],
+      "title": "② BD Unpack Channels"
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [910, 40],
+      "size": [310, 280],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 2
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "③ Unpack Debug (R/G/B/A grid)"
+    },
+    {
+      "id": 5,
+      "type": "BD_PackChannels",
+      "pos": [510, 260],
+      "size": [380, 560],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "red_mask",
+          "type": "MASK",
+          "link": 3
+        },
+        {
+          "name": "green_mask",
+          "type": "MASK",
+          "link": 4
+        },
+        {
+          "name": "blue_mask",
+          "type": "MASK",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [8],
+          "slot_index": 0
+        },
+        {
+          "name": "alpha",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "debug_preview",
+          "type": "IMAGE",
+          "links": [6],
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PackChannels"
+      },
+      "widgets_values": [
+        0.0,
+        false,
+        0.0,
+        false,
+        0.0,
+        false,
+        false,
+        1.0,
+        false,
+        0,
+        0,
+        "bt709"
+      ],
+      "title": "④ BD Pack Channels"
+    },
+    {
+      "id": 6,
+      "type": "PreviewImage",
+      "pos": [910, 360],
+      "size": [310, 280],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 6
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "⑤ Pack Debug (R/G/B/A grid)"
+    },
+    {
+      "id": 7,
+      "type": "BD_ChannelMerge",
+      "pos": [510, 860],
+      "size": [380, 260],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "base",
+          "type": "IMAGE",
+          "link": 7
+        },
+        {
+          "name": "source",
+          "type": "IMAGE",
+          "link": 8
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [9],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_ChannelMerge"
+      },
+      "widgets_values": [
+        "R",
+        "luma_bt709",
+        "replace",
+        1.0,
+        true,
+        false,
+        "bt709"
+      ],
+      "title": "⑥ BD Channel Merge (pack → base R channel)"
+    },
+    {
+      "id": 8,
+      "type": "PreviewImage",
+      "pos": [910, 680],
+      "size": [310, 280],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 9
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "⑦ Merge Result"
+    }
+  ],
+  "links": [
+    [1, 2, 0, 3, 0, "IMAGE"],
+    [2, 3, 8, 4, 0, "IMAGE"],
+    [3, 3, 4, 5, 1, "MASK"],
+    [4, 3, 5, 5, 5, "MASK"],
+    [5, 3, 6, 5, 9, "MASK"],
+    [6, 5, 2, 6, 0, "IMAGE"],
+    [7, 2, 0, 7, 0, "IMAGE"],
+    [8, 5, 0, 7, 1, "IMAGE"],
+    [9, 7, 0, 8, 0, "IMAGE"]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "① Input",
+      "bounding": [20, 655, 380, 180],
+      "color": "#3f789e",
+      "font_size": 14
+    },
+    {
+      "id": 2,
+      "title": "② Unpack — split image into R/G/B/A channels",
+      "bounding": [485, 20, 460, 240],
+      "color": "#8e4a3c",
+      "font_size": 14
+    },
+    {
+      "id": 3,
+      "title": "③ Pack — build new image from masks/channels",
+      "bounding": [485, 240, 460, 640],
+      "color": "#6a4a8e",
+      "font_size": 14
+    },
+    {
+      "id": 4,
+      "title": "④ Channel Merge — inject source channel into base",
+      "bounding": [485, 840, 460, 300],
+      "color": "#4a6a4a",
+      "font_size": 14
+    },
+    {
+      "id": 5,
+      "title": "⑤ Previews",
+      "bounding": [885, 20, 360, 980],
+      "color": "#4a5a6a",
+      "font_size": 14
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

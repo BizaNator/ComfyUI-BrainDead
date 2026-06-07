@@ -1,0 +1,449 @@
+{
+  "id": "bd-mask-tools-template",
+  "revision": 0,
+  "last_node_id": 12,
+  "last_link_id": 12,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [40, 40],
+      "size": [420, 820],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ℹ️ About — BrainDead Mask Tools",
+      "properties": {},
+      "widgets_values": [
+        "# 🧠 BrainDead — Mask Tools\n\nFour standalone mask utility nodes for common image prep tasks.\n\n## BD_LuminanceMask\nExtracts the **brightest** and **darkest** regions of an image as masks.\n- **top_percent** — top N% of pixels by brightness → highlight mask\n- **bottom_percent** — bottom N% → shadow mask\n- **soft_edge** — feather the threshold boundary\n- **gradient_mode** — output a smooth gradient instead of a binary threshold\n- **exclude_above / exclude_below** — clip pure whites/blacks from the selection (avoids blown highlights or crushed blacks)\n\n**Use when:** Generating shadow/highlight masks for lighting adjustments, PBR bake inputs, or selective color grading.\n\n## BD_MaskFlatten\nComposites a masked image onto a solid color or another image.\n- **flatten_mode: alpha_composite** — standard alpha blend over background\n- **flatten_mode: grayscale** — convert result to greyscale\n- **flatten_mode: image_to_red / green / blue** — paste luminance into a single colour channel\n- **background_color** — preset backgrounds: white, black, checker, magenta, custom hex\n- **mask_threshold** — binarise the mask at this value before flatten\n\n**Use when:** Preparing a no-BG character for 3D pipelines, creating a flat-shaded skin layer, or previewing a mask against a clean background.\n\n## BD_CropToMask\nCrops an image to the bounding box of its mask content.\n- **padding_pct** — adds a percentage of extra space around the crop (0.15 = 15%)\n- **fixed_size_px** — ignore bounding box, use a fixed crop size centred on the mask\n- **square** — force a square crop\n- **output_size** — resize the crop to this final size\n- **resize_mode: fit** — letterbox to output_size; **stretch** — fill exactly\n- **channel** — which image channel to use as the mask signal (R, G, B, A, all)\n\n**Use when:** Extracting a face/object from a segmentation mask, preparing square inputs for diffusion models, or isolating a subject.\n\n## BD_FillMaskHoles\nFills interior holes in a binary mask.\n- **closing_radius** — morphological closing (dilate + erode) to seal near-touching boundary gaps before fill\n- **smooth_edges** — Gaussian blur on the output for soft feathering\n\n**Use when:** SAM3 detected the subject perimeter but left internal gaps (mouth interior, eye whites, clothing texture holes). Run before BD_PackChannels or BD_RemoveBackground.\n\n---\n**BrainDeadGuild** — created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [40, 900],
+      "size": [315, 130],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [1, 2, 3],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [4, 5, 6],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": ["example.png"],
+      "title": "① Load Image (use PNG with alpha for best mask demos)"
+    },
+    {
+      "id": 3,
+      "type": "BD_LuminanceMask",
+      "pos": [510, 40],
+      "size": [360, 300],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "highlight_mask",
+          "type": "IMAGE",
+          "links": [7],
+          "slot_index": 0
+        },
+        {
+          "name": "dark_mask",
+          "type": "IMAGE",
+          "links": [8],
+          "slot_index": 1
+        },
+        {
+          "name": "threshold_hi",
+          "type": "FLOAT",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "threshold_lo",
+          "type": "FLOAT",
+          "links": null,
+          "slot_index": 3
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_LuminanceMask"
+      },
+      "widgets_values": [
+        "bt709",
+        10.0,
+        8.0,
+        1.0,
+        0.0,
+        0.03,
+        0.03,
+        0.0,
+        false,
+        1.0
+      ],
+      "title": "② BD Luminance Mask"
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [930, 40],
+      "size": [310, 280],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 7
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "③ Highlight Mask (top 10% bright)"
+    },
+    {
+      "id": 5,
+      "type": "PreviewImage",
+      "pos": [930, 360],
+      "size": [310, 280],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 8
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "④ Shadow Mask (bottom 8% dark)"
+    },
+    {
+      "id": 6,
+      "type": "BD_MaskFlatten",
+      "pos": [510, 380],
+      "size": [360, 340],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 2
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [9],
+          "slot_index": 0
+        },
+        {
+          "name": "alpha_used",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_MaskFlatten"
+      },
+      "widgets_values": [
+        "white",
+        "#808080",
+        "alpha_composite",
+        1.0,
+        false,
+        0.0,
+        0
+      ],
+      "title": "⑤ BD Mask Flatten (→ white BG)"
+    },
+    {
+      "id": 7,
+      "type": "PreviewImage",
+      "pos": [930, 680],
+      "size": [310, 280],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 9
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "⑥ Flatten Result"
+    },
+    {
+      "id": 8,
+      "type": "BD_CropToMask",
+      "pos": [510, 760],
+      "size": [360, 300],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 3
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cropped",
+          "type": "IMAGE",
+          "links": [10],
+          "slot_index": 0
+        },
+        {
+          "name": "crop_box",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_CropToMask"
+      },
+      "widgets_values": [
+        "R",
+        0.05,
+        0.15,
+        0,
+        true,
+        512,
+        "fit",
+        "full_image"
+      ],
+      "title": "⑦ BD Crop to Mask (512px square, 15% pad)"
+    },
+    {
+      "id": 9,
+      "type": "PreviewImage",
+      "pos": [930, 980],
+      "size": [310, 280],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 10
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "⑧ Crop Result (512px)"
+    },
+    {
+      "id": 10,
+      "type": "BD_FillMaskHoles",
+      "pos": [510, 1100],
+      "size": [360, 220],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "filled_mask",
+          "type": "MASK",
+          "links": [11],
+          "slot_index": 0
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_FillMaskHoles"
+      },
+      "widgets_values": [0.5, 4, 0],
+      "title": "⑨ BD Fill Mask Holes"
+    },
+    {
+      "id": 11,
+      "type": "MaskToImage",
+      "pos": [930, 1100],
+      "size": [240, 80],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 11
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [12],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MaskToImage"
+      },
+      "widgets_values": [],
+      "title": "Mask → Image"
+    },
+    {
+      "id": 12,
+      "type": "PreviewImage",
+      "pos": [1220, 1100],
+      "size": [310, 280],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 12
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "⑩ Filled Mask (holes closed)"
+    }
+  ],
+  "links": [
+    [1, 2, 0, 3, 0, "IMAGE"],
+    [2, 2, 0, 6, 0, "IMAGE"],
+    [3, 2, 0, 8, 0, "IMAGE"],
+    [4, 2, 1, 6, 1, "MASK"],
+    [5, 2, 1, 8, 1, "MASK"],
+    [6, 2, 1, 10, 0, "MASK"],
+    [7, 3, 0, 4, 0, "IMAGE"],
+    [8, 3, 1, 5, 0, "IMAGE"],
+    [9, 6, 0, 7, 0, "IMAGE"],
+    [10, 8, 0, 9, 0, "IMAGE"],
+    [11, 10, 0, 11, 0, "MASK"],
+    [12, 11, 0, 12, 0, "IMAGE"]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "① Input",
+      "bounding": [20, 875, 380, 180],
+      "color": "#3f789e",
+      "font_size": 14
+    },
+    {
+      "id": 2,
+      "title": "② Luminance Mask — extract highlights & shadows",
+      "bounding": [485, 20, 460, 360],
+      "color": "#8e6a2a",
+      "font_size": 14
+    },
+    {
+      "id": 3,
+      "title": "③ Mask Flatten — composite onto background",
+      "bounding": [485, 360, 460, 380],
+      "color": "#8e4a3c",
+      "font_size": 14
+    },
+    {
+      "id": 4,
+      "title": "④ Crop to Mask — tight crop with padding",
+      "bounding": [485, 740, 460, 360],
+      "color": "#4a6a8e",
+      "font_size": 14
+    },
+    {
+      "id": 5,
+      "title": "⑤ Fill Mask Holes — close interior gaps",
+      "bounding": [485, 1080, 460, 280],
+      "color": "#4a8e4a",
+      "font_size": 14
+    },
+    {
+      "id": 6,
+      "title": "⑥ Previews",
+      "bounding": [905, 20, 650, 1420],
+      "color": "#5a5a5a",
+      "font_size": 14
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

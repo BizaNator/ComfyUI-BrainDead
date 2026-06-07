@@ -16,15 +16,8 @@ import torch
 from comfy_api.latest import io
 
 
-def _to_hw(mask: torch.Tensor) -> np.ndarray:
-    m = mask.detach().cpu().float()
-    if m.ndim == 3:
-        m = m[0]
-    return m.numpy().astype(np.float32)
-
-
 def _from_hw(arr: np.ndarray) -> torch.Tensor:
-    return torch.from_numpy(arr.astype(np.float32)).unsqueeze(0)
+    return torch.from_numpy(arr.astype(np.float32))
 
 
 def _fill(arr: np.ndarray, threshold: float, closing_radius: int,
@@ -97,20 +90,32 @@ class BD_FillMaskHoles(io.ComfyNode):
     @classmethod
     def execute(cls, mask, threshold=0.5, closing_radius=4,
                 smooth_edges=0) -> io.NodeOutput:
-        arr = _to_hw(mask)
-        original_coverage = float((arr >= threshold).mean()) * 100.0
+        m = mask.detach().cpu().float()
+        if m.ndim == 2:
+            m = m.unsqueeze(0)  # (H,W) → (1,H,W)
 
-        filled = _fill(arr, float(threshold), int(closing_radius), int(smooth_edges))
+        N = m.shape[0]
+        results = []
+        total_gained = 0.0
 
-        filled_coverage = float((filled > 0.5).mean()) * 100.0
-        gained = filled_coverage - original_coverage
+        for i in range(N):
+            arr = m[i].numpy().astype(np.float32)
+            orig_pct = float((arr >= threshold).mean()) * 100.0
+            filled = _fill(arr, float(threshold), int(closing_radius), int(smooth_edges))
+            filled_pct = float((filled > 0.5).mean()) * 100.0
+            total_gained += filled_pct - orig_pct
+            results.append(_from_hw(filled))
+
+        filled_batch = torch.stack(results, dim=0)  # (N, H, W)
+
+        avg_gained = total_gained / N
         status = (
-            f"fill_holes: {original_coverage:.2f}% → {filled_coverage:.2f}% "
-            f"(+{gained:.2f}%) closing={closing_radius}px smooth={smooth_edges}"
+            f"fill_holes: {N} mask(s), avg +{avg_gained:.2f}% filled "
+            f"closing={closing_radius}px smooth={smooth_edges}"
         )
         print(f"[BD FillMaskHoles] {status}", flush=True)
 
-        return io.NodeOutput(_from_hw(filled), status)
+        return io.NodeOutput(filled_batch, status)
 
 
 FILL_MASK_HOLES_V3_NODES = [BD_FillMaskHoles]

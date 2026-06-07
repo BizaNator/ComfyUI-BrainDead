@@ -46,8 +46,12 @@ Workflows here ship with the node pack and appear in ComfyUI's
 | `trellis2_shape_to_texture` | Load Image → Remove BG → Trellis2 Conditioning → Image-to-Shape → Shape-to-Textured-Mesh → Preview 3D. |
 | `ovoxel_pbr_bake` | Load Mesh → Mesh-to-OVoxel → OVoxel Bake → albedo/normal/roughness/metallic + Export GLB. |
 | `pixal3d_image_to_3d` | Load Image → Pixal3D Preprocess (MoGe FOV) → Image-to-3D → CuMesh Simplify + OVoxel Bake. |
-| `sam3_parts_segmentation` | Load Image → SAM3 Multi-Prompt → Parts Builder → Parts Compose + Parts Export. |
+| `sam3_parts_segmentation` | Load Image → scale → Lotus2 depth → QwenVL tags → SAM3 Multi-Prompt → Parts Refine → Fill Holes → Parts Builder → PartsBatchEdit (Qwen Inpaint) → Parts Export. Mirrors the full COB_PartBuilder pipeline. |
 | `lotus2_depth_normal` | Load Image → Lotus-2 Loader → Predict (depth/normal) → previews. |
 | `facewrap_pipeline` | FaceWrap nodes end to end. |
 | `glsl_skin_tinting` | Load Image → GLSL Batch (skin tint) → Save Batch. |
 | `character_consistency` | Qwen-Image character consistency pipeline. |
+| `background_removal` | Load Image → BD Remove Background (SAM3 + pymatting) → RGBA + white/black composites + BD Mask Batch Index (channel-extraction demo). |
+| `face_segmentation` | Load Image → BD MP SAM3 Face Segment (25+ anatomy masks) → BD MP Face Infill (UV-ready socket fill) → previews. |
+| `channel_operations` | Load Image → BD Unpack Channels → BD Pack Channels (round-trip R/G/B) → BD Channel Merge (inject into single channel) → previews. |
+| `mask_tools` | Load Image → BD Luminance Mask + BD Mask Flatten + BD Crop to Mask + BD Fill Mask Holes → previews. Each node is a standalone section. |

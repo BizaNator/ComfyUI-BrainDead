@@ -1,0 +1,698 @@
+{
+  "id": "bd-face-segmentation-template",
+  "revision": 0,
+  "last_node_id": 9,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        420,
+        520
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "\u2139\ufe0f About \u2014 BrainDead Face Segmentation",
+      "properties": {},
+      "widgets_values": [
+        "# \ud83e\udde0 BrainDead \u2014 Face Segmentation\n\nFull face anatomy segmentation using MediaPipe landmark detection + SAM3 mask refinement. Produces per-region masks (skin, eyes, brows, lips, nose, hair, ears) plus a clean RGBA head cutout and socket-infilled UV-ready output.\n\n## Flow\n1. **LoadImage** \u2014 load a portrait or face image.\n2. **BD MP SAM3 Face Segment** \u2014 MediaPipe detects landmarks \u2192 SAM3 refines each region \u2192 outputs 25+ anatomy masks + RGBA cutout.\n3. **BD MP Face Infill** \u2014 fills eye/brow/lip sockets with a flat colour for UV-unwrap-ready skin maps.\n\n## BD MP SAM3 Face Segment \u2014 Key Settings\n- **angle** \u2014 `front`, `side_left`, `side_right` (changes which features are extracted).\n- **do_*** toggles \u2014 enable/disable segmentation per region.\n- **edge_refine** \u2014 `guided` / `matting` / `vitmatte` for hair-quality edge refinement.\n- **remove_background** \u2014 if True, also runs SAM3 head cutout (uses `head_prompts`).\n- **drop_eyes / drop_lips** \u2014 punch out facial features from the skin mask (default True keeps skin solid).\n- **neck_cut** \u2014 trim the neck from the head cutout mask.\n\n## BD MP Face Infill \u2014 Key Settings\n- **fill_mode** \u2014 `flat` (solid colour), `surround` (sample from surrounding skin), `inpaint` (diffusion).\n- **eye_mode** \u2014 `iris` (ellipse around iris) or `eyelid` (full eyelid region).\n- **fill_r/g/b** \u2014 flat colour to fill sockets (default white = 255,255,255).\n- **lip_mode** \u2014 `organic`, `contour`, or `plane`.\n\n## Outputs\n- **rgba** \u2014 RGBA head cutout\n- **debug_overlay** \u2014 colour-coded anatomy overlay\n- **head_cutout_clean** \u2014 clean cropped head\n- **socket_image** \u2014 skin with eye/brow/lip sockets filled (RGB, UV-ready)\n- **alpha_image** \u2014 socket fill result as RGBA\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        600
+      ],
+      "size": [
+        315,
+        130
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1,
+            2
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "\u2460 Load Image"
+    },
+    {
+      "id": 3,
+      "type": "BD_MediaPipeSAM3FaceSegment",
+      "pos": [
+        510,
+        40
+      ],
+      "size": [
+        420,
+        780
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "rgba",
+          "type": "IMAGE",
+          "links": [
+            3
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "face_oval",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "skin",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "left_eye",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "right_eye",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "eyes",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 5
+        },
+        {
+          "name": "left_brow",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 6
+        },
+        {
+          "name": "right_brow",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 7
+        },
+        {
+          "name": "brows",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 8
+        },
+        {
+          "name": "left_iris",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 9
+        },
+        {
+          "name": "right_iris",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 10
+        },
+        {
+          "name": "irises",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 11
+        },
+        {
+          "name": "lips",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 12
+        },
+        {
+          "name": "nose",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 13
+        },
+        {
+          "name": "left_ear",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 14
+        },
+        {
+          "name": "right_ear",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 15
+        },
+        {
+          "name": "ears",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 16
+        },
+        {
+          "name": "forehead",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 17
+        },
+        {
+          "name": "hair",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 18
+        },
+        {
+          "name": "head_mask",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 19
+        },
+        {
+          "name": "masked_skin",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 20
+        },
+        {
+          "name": "silhouette",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 21
+        },
+        {
+          "name": "debug_overlay",
+          "type": "IMAGE",
+          "links": [
+            4
+          ],
+          "slot_index": 22
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 23
+        },
+        {
+          "name": "head_cutout",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 24
+        },
+        {
+          "name": "head_cutout_clean",
+          "type": "IMAGE",
+          "links": [
+            5
+          ],
+          "slot_index": 25
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_MediaPipeSAM3FaceSegment"
+      },
+      "widgets_values": [
+        "front",
+        true,
+        true,
+        true,
+        true,
+        false,
+        0.3,
+        0.35,
+        0.5,
+        1,
+        48,
+        44,
+        12,
+        10,
+        true,
+        true,
+        "mouth",
+        3,
+        "off",
+        8,
+        0.0001,
+        0.5,
+        "small",
+        false,
+        "head\nface\nhair\near",
+        "neck\nshirt\nclothing\nshoulder",
+        true,
+        "transparent",
+        true,
+        true,
+        true,
+        false,
+        "off",
+        0.3,
+        false
+      ],
+      "title": "\u2461 BD MP SAM3 Face Segment"
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [
+        990,
+        40
+      ],
+      "size": [
+        310,
+        280
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 3
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "\u2462 RGBA Cutout"
+    },
+    {
+      "id": 5,
+      "type": "PreviewImage",
+      "pos": [
+        990,
+        360
+      ],
+      "size": [
+        310,
+        280
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 4
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "\u2463 Anatomy Debug Overlay"
+    },
+    {
+      "id": 8,
+      "type": "PreviewImage",
+      "pos": [
+        990,
+        680
+      ],
+      "size": [
+        310,
+        280
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "\u2464 Head Cutout (clean)"
+    },
+    {
+      "id": 6,
+      "type": "BD_FaceSocketInfill",
+      "pos": [
+        510,
+        870
+      ],
+      "size": [
+        420,
+        580
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "socket_image",
+          "type": "IMAGE",
+          "links": [
+            6
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "alpha_image",
+          "type": "IMAGE",
+          "links": [
+            7
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "socket_mask",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "left_eye",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "right_eye",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "eyes",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 5
+        },
+        {
+          "name": "left_brow",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 6
+        },
+        {
+          "name": "right_brow",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 7
+        },
+        {
+          "name": "brows",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 8
+        },
+        {
+          "name": "lips",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 9
+        },
+        {
+          "name": "nose",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 10
+        },
+        {
+          "name": "face_oval",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 11
+        },
+        {
+          "name": "lip_plane",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 12
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 13
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_FaceSocketInfill"
+      },
+      "widgets_values": [
+        "",
+        0.5,
+        true,
+        true,
+        true,
+        false,
+        true,
+        "iris",
+        2,
+        6,
+        6,
+        -1,
+        -1,
+        -1,
+        -1,
+        12,
+        6,
+        -1,
+        -1,
+        -1,
+        -1,
+        3,
+        -1,
+        -1,
+        -1,
+        -1,
+        "flat",
+        false,
+        255,
+        255,
+        255,
+        "organic"
+      ],
+      "title": "\u2465 BD MP Face Infill (UV-ready sockets)"
+    },
+    {
+      "id": 7,
+      "type": "PreviewImage",
+      "pos": [
+        990,
+        980
+      ],
+      "size": [
+        310,
+        280
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 6
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "\u2466 Socket Fill (UV-ready RGB)"
+    },
+    {
+      "id": 9,
+      "type": "PreviewImage",
+      "pos": [
+        990,
+        1300
+      ],
+      "size": [
+        310,
+        280
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 7
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "\u2467 Socket Fill RGBA"
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      4,
+      3,
+      22,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      5,
+      3,
+      25,
+      8,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      6,
+      0,
+      7,
+      0,
+      "IMAGE"
+    ],
+    [
+      7,
+      6,
+      1,
+      9,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "\u2460 Input",
+      "bounding": [
+        20,
+        575,
+        380,
+        180
+      ],
+      "color": "#3f789e",
+      "font_size": 14
+    },
+    {
+      "id": 2,
+      "title": "\u2461 SAM3 Face Segmentation (25+ anatomy masks)",
+      "bounding": [
+        485,
+        20,
+        465,
+        855
+      ],
+      "color": "#8e4a3c",
+      "font_size": 14
+    },
+    {
+      "id": 3,
+      "title": "\u2462 Socket Infill \u2014 UV-ready skin map",
+      "bounding": [
+        485,
+        845,
+        465,
+        640
+      ],
+      "color": "#6a4a8e",
+      "font_size": 14
+    },
+    {
+      "id": 4,
+      "title": "\u2463 Previews",
+      "bounding": [
+        965,
+        20,
+        360,
+        1600
+      ],
+      "color": "#4a7a4a",
+      "font_size": 14
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
