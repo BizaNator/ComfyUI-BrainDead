@@ -32,6 +32,7 @@ GALLERY_SLUG = {
     "BD-facewrap_pipeline": "facewrap", "BD-glsl_skin_tinting": "glsl",
     "BD-character_consistency": "character", "BD-background_removal": "bgremoval",
     "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
+    "BD-game_engine_packing": "packing",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -118,6 +119,14 @@ CONFIGS = {
         "chips": ["albedo", "normal", "rough", "metal", "AO"],
         # real workflow screenshot used as the background instead of the auto node-graph
         "background": "screenshots/pbr_from_image_bg.png"},
+    "BD-game_engine_packing": {
+        "title": "Game-Engine Packing", "subtitle": "isolate -> balance luma -> channel + atlas pack",
+        "bullets": ["Remove BG -> SAM3 isolates parts",
+                    "Per part: greyscale -> normalize -> center median",
+                    "BD Pack Channels -> R/G/B in one texture",
+                    "BD Atlas Pack -> grid atlas (cols x rows, pad)",
+                    "layout JSON has per-cell UV rects"],
+        "chips": ["R", "G", "B", "atlas", "UV"]},
 }
 
 
