@@ -44,7 +44,8 @@
       },
       "widgets_values": [
         null
-      ]
+      ],
+      "title": "\u2460 Load Image"
     },
     {
       "id": 2,
@@ -145,7 +146,8 @@
         "none",
         0.5,
         false
-      ]
+      ],
+      "title": "\u2461 BD Remove Background (silhouette)"
     },
     {
       "id": 3,
@@ -182,7 +184,8 @@
         "black-forest-labs/FLUX.1-dev",
         "",
         false
-      ]
+      ],
+      "title": "\u2462 Lotus-2 Model Loader (depth)"
     },
     {
       "id": 4,
@@ -246,7 +249,8 @@
         3.5,
         1,
         "auto"
-      ]
+      ],
+      "title": "\u2463 Lotus-2 Predict (depth)"
     },
     {
       "id": 5,
@@ -283,7 +287,8 @@
         "black-forest-labs/FLUX.1-dev",
         "",
         false
-      ]
+      ],
+      "title": "\u2464 Lotus-2 Model Loader (normal)"
     },
     {
       "id": 6,
@@ -347,7 +352,8 @@
         3.5,
         1,
         "auto"
-      ]
+      ],
+      "title": "\u2465 Lotus-2 Predict (normal)"
     },
     {
       "id": 7,
@@ -443,7 +449,8 @@
         false,
         0.0,
         false
-      ]
+      ],
+      "title": "\u2466 SAM3 Multi-Prompt (metallic zones)"
     },
     {
       "id": 8,
@@ -575,7 +582,8 @@
         2.0,
         "silhouette_clip",
         32
-      ]
+      ],
+      "title": "\u2467 BD Derive PBR Maps"
     },
     {
       "id": 9,
@@ -604,7 +612,8 @@
       },
       "widgets_values": [
         "pbr/albedo"
-      ]
+      ],
+      "title": "\u2468 Save Albedo"
     },
     {
       "id": 10,
@@ -633,7 +642,8 @@
       },
       "widgets_values": [
         "pbr/normal"
-      ]
+      ],
+      "title": "\u2469 Save Normal"
     },
     {
       "id": 11,
@@ -662,7 +672,8 @@
       },
       "widgets_values": [
         "pbr/packed_orm"
-      ]
+      ],
+      "title": "\u246a Save ORM"
     },
     {
       "id": 12,
@@ -691,7 +702,8 @@
       },
       "widgets_values": [
         "pbr/packed_arm"
-      ]
+      ],
+      "title": "\u246b Save ARM"
     },
     {
       "id": 20,
@@ -709,7 +721,7 @@
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "About \u2014 Full PBR",
+      "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead Full PBR",
       "properties": {},
       "widgets_values": [
         "# BrainDead \u2014 Image \u2192 Full PBR\n\nTurn any character/image into game-ready **PBR maps** (albedo, normal, roughness, metallic, AO + packed ORM/ARM).\n\n**Flow:** Load Image \u2192 BD Remove Background (silhouette) ; full image \u2192 Lotus-2 **Depth** + **Normal** (masked, neutral bg) ; BD SAM3 Multi-Prompt finds **metal** zones \u2192 BD Derive PBR Maps \u2192 albedo / normal / roughness / metallic / AO / packed ORM+ARM.\n\nNotes: feed the FULL image to Lotus-2 (best detail, no halo) \u2014 the subject mask cleans the bg AFTER. AO is derived from depth; metallic = low-sat/high-lum INSIDE the SAM3 metal zone. Lotus-2 + SAM3 auto-download on first run.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)"

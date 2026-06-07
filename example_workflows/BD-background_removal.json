@@ -41,7 +41,8 @@
       "widgets_values": [
         "example.png",
         "image"
-      ]
+      ],
+      "title": "\u2460 Load Image"
     },
     {
       "id": 2,
@@ -132,11 +133,11 @@
         0.0,
         true,
         0,
-        "none",
+        "guided",
         "small",
         0.0,
         0.0,
-        false,
+        true,
         0.1,
         0.04,
         false,
@@ -148,7 +149,8 @@
         "none",
         0.5,
         false
-      ]
+      ],
+      "title": "\u2461 BD Remove Background (SAM3 + matting)"
     },
     {
       "id": 3,
@@ -174,7 +176,8 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      }
+      },
+      "title": "\u2462 RGBA Cutout"
     },
     {
       "id": 4,
@@ -200,7 +203,8 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      }
+      },
+      "title": "\u2463 RGB White BG"
     },
     {
       "id": 5,
@@ -226,7 +230,8 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      }
+      },
+      "title": "\u2464 RGB Black BG"
     },
     {
       "id": 6,
@@ -252,7 +257,8 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      }
+      },
+      "title": "\u2465 Sticker (white outline)"
     },
     {
       "id": 7,
@@ -297,7 +303,8 @@
       "widgets_values": [
         0,
         false
-      ]
+      ],
+      "title": "\u2466 BD Mask Batch Index"
     },
     {
       "id": 8,
@@ -332,7 +339,8 @@
       ],
       "properties": {
         "Node name for S&R": "MaskToImage"
-      }
+      },
+      "title": "Mask \u2192 Image"
     },
     {
       "id": 9,
@@ -358,7 +366,8 @@
       "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewImage"
-      }
+      },
+      "title": "\u2467 Subject Mask"
     },
     {
       "id": 10,
@@ -381,7 +390,8 @@
       },
       "widgets_values": [
         "## BD Background Removal\\n\\n**SAM3 + pymatting** subject cutout with alpha matting, decontamination, and edge keying.\\n\\n- **rgba** - transparent cutout\\n- **rgb_white_bg / rgb_black_bg** - flattened composites\\n- **sticker** - white outline (set `sticker_outline` > 0)\\n- **mask** -> BD Mask Batch Index -> MaskToImage to inspect\\n\\nTips: enable **key_gaps** to clear open background gaps between limbs; **decontaminate** removes color halos; raise **matting_erode/dilate** for cleaner edges."
-      ]
+      ],
+      "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead Background Removal"
     }
   ],
   "links": [

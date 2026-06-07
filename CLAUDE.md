@@ -177,3 +177,34 @@ nodes/
     ├── texture.py          # BD_Trellis2ShapeToTexturedMesh, BD_Trellis2Retexture
     └── utils/helpers.py    # fix_normals_outward, etc.
 ```
+
+## Workflow Template Styling Convention
+
+**ALL `example_workflows/*.json` templates MUST follow a consistent node-title style.**
+Templates are the first thing users see — inconsistent titling looks unprofessional and
+makes the step order ambiguous. When you regenerate or hand-edit a template, preserve
+these rules exactly (do not drop titles when rebuilding `widgets_values`):
+
+1. **Every pipeline node gets a circled-number prefix** marking its step order, following
+   the visual flow left→right / top→bottom:
+   `①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳` (Unicode `chr(0x2460 + step - 1)`).
+   - Format: `"① Load Image"`, `"② BD Remove Background (SAM3 + matting)"`.
+   - Add a short parenthetical when the same node type appears twice
+     (e.g. `"③ Lotus-2 Model Loader (depth)"` vs `"⑤ Lotus-2 Model Loader (normal)"`).
+
+2. **Pure plumbing/adapter nodes** (e.g. `MaskToImage`, format converters) may use a
+   plain descriptive title with **no number** (e.g. `"Mask → Image"`) so the numbering
+   tracks the meaningful pipeline steps, not glue.
+
+3. **The About note** is a `MarkdownNote` titled:
+   `"ℹ️ About — 🧠 BrainDead <Pack Name>"`
+   The 🧠 brain emoji (the BrainDead brand mark, matching the `🧠BrainDead` category) is
+   **required** in the About title. Its body starts with `## <Pack Name>` and lists the
+   outputs + tips.
+
+4. **Filenames:** `BD-<snake_case_name>.json` + matching `BD-<snake_case_name>.jpg`
+   thumbnail (`.jpg` only — `.png` is not served). No spaces.
+
+5. When you only change widget values or wiring, **keep the existing `title` fields**.
+   The template builder must carry titles through; a rebuild that emits untitled nodes is
+   a regression.
