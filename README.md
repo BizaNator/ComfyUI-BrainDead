@@ -76,7 +76,33 @@ Nine ready-to-use workflows ship in [`example_workflows/`](example_workflows/) a
 <sub>Qwen-Image multi-view edit with identity lock, prompt iteration, save context</sub>
 </td>
 </tr>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/workflow_bgremoval.jpg" width="100%" alt="Background Removal"><br>
+<b>Background Removal</b><br>
+<sub>SAM3 + pymatting alpha matting → RGBA + white/black composites</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_faceseg.jpg" width="100%" alt="Face Segmentation"><br>
+<b>Face Segmentation</b><br>
+<sub>MediaPipe + SAM3 → 25+ anatomy masks → UV-ready socket fill</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_channels.jpg" width="100%" alt="Channel Operations"><br>
+<b>Channel Operations</b><br>
+<sub>Pack / unpack / merge image channels (R/G/B/A round-trip)</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/workflow_masks.jpg" width="100%" alt="Mask Tools"><br>
+<b>Mask Tools</b><br>
+<sub>Luminance mask, flatten, crop-to-mask, fill-holes</sub>
+</td>
+</tr>
 </table>
+
+> Templates appear in **Workflow → Browse Templates → ComfyUI-BrainDead** and are prefixed **`BD-`** so they're easy to find and identify as BrainDead workflow templates.
 
 ---
 
