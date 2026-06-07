@@ -159,6 +159,84 @@ def _compose_on_bg(image: torch.Tensor, alpha: torch.Tensor,
     return (rgb * a + bg * (1.0 - a)).clamp(0, 1)
 
 
+def _erode_alpha(alpha: torch.Tensor, px: int) -> torch.Tensor:
+    """Shrink the alpha edge inward by `px` — cheap fringe/halo killer. (1,H,W)."""
+    if px <= 0:
+        return alpha
+    try:
+        import cv2
+    except Exception:
+        return alpha
+    a = (alpha[0].cpu().numpy() * 255).astype(np.uint8)
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * px + 1, 2 * px + 1))
+    a = cv2.erode(a, k)
+    return torch.from_numpy(a.astype(np.float32) / 255.0).unsqueeze(0)
+
+
+def _guided_refine(alpha: torch.Tensor, image: torch.Tensor,
+                   radius: int = 8, eps: float = 1e-4) -> torch.Tensor:
+    """Edge-aware SOFT alpha refine: RGB guides an edge-aware smoothing so the
+    matte boundary snaps to real edges (no re-binarize). (1,H,W)."""
+    try:
+        import cv2
+        if not hasattr(cv2, "ximgproc"):
+            print("[BD RemoveBackground] guided refine needs cv2.ximgproc — skipping", flush=True)
+            return alpha
+    except Exception:
+        return alpha
+    guide = np.ascontiguousarray(image[0, :, :, :3].cpu().numpy().astype(np.float32))
+    src = alpha[0].cpu().numpy().astype(np.float32)
+    out = cv2.ximgproc.guidedFilter(guide, src, int(radius), float(eps))
+    return torch.from_numpy(np.clip(out, 0.0, 1.0)).unsqueeze(0)
+
+
+def _decontaminate(image: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """Estimate the TRUE foreground colour (remove background colour spill) so edge
+    pixels don't show the old background — kills the white halo on black_bg/rgba.
+    image (1,H,W,3), alpha (1,H,W) → decontaminated image (1,H,W,3)."""
+    try:
+        from pymatting import estimate_foreground_ml
+    except Exception as e:
+        print(f"[BD RemoveBackground] decontaminate needs pymatting ({e}) — skipping", flush=True)
+        return image
+    img_np = image[0, :, :, :3].detach().cpu().float().numpy()
+    a_np = alpha[0].detach().cpu().float().numpy()
+    try:
+        fg = estimate_foreground_ml(img_np, a_np)
+    except Exception as e:
+        print(f"[BD RemoveBackground] decontaminate failed ({e}) — skipping", flush=True)
+        return image
+    return torch.from_numpy(np.clip(fg, 0.0, 1.0).astype(np.float32)).unsqueeze(0)
+
+
+def _hex_rgb(s: str, default=(1.0, 1.0, 1.0)):
+    try:
+        s = s.strip().lstrip("#")
+        return (int(s[0:2], 16) / 255.0, int(s[2:4], 16) / 255.0, int(s[4:6], 16) / 255.0)
+    except Exception:
+        return default
+
+
+def _make_sticker(image: torch.Tensor, alpha: torch.Tensor,
+                  outline_px: int, color_hex: str) -> torch.Tensor:
+    """Die-cut sticker: subject + a coloured outline band, transparent outside.
+    image (1,H,W,3) (ideally already decontaminated), alpha (1,H,W) → RGBA (1,H,W,4)."""
+    import cv2
+    a = alpha[0].cpu().numpy().astype(np.float32)
+    base = (a > 0.5).astype(np.uint8)
+    if outline_px > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * outline_px + 1, 2 * outline_px + 1))
+        dil = cv2.dilate(base, k).astype(np.float32)
+    else:
+        dil = base.astype(np.float32)
+    band = np.clip(dil - a, 0.0, 1.0)[..., None]      # outline ring = dilated minus subject
+    rgb = image[0, :, :, :3].cpu().numpy().astype(np.float32)
+    col = np.array(_hex_rgb(color_hex), np.float32)[None, None, :]
+    out_rgb = np.clip(rgb * a[..., None] + col * band, 0.0, 1.0)   # subject + coloured trim
+    rgba = np.concatenate([out_rgb, dil[..., None]], axis=-1)       # alpha = full silhouette
+    return torch.from_numpy(rgba).unsqueeze(0)
+
+
 # ── node ─────────────────────────────────────────────────────────────────────
 
 class BD_RemoveBackground(io.ComfyNode):
@@ -240,6 +318,32 @@ class BD_RemoveBackground(io.ComfyNode):
                             "0 = no blur. Use after 'none' matting for quick soft edges.",
                 ),
                 io.Boolean.Input(
+                    "decontaminate", default=True, optional=True,
+                    tooltip="Estimate the true foreground colour (pymatting) to remove background "
+                            "colour spill at edges — fixes the faint white outline you see on the "
+                            "black-bg composite. Slight cost; runs on the cropped region.",
+                ),
+                io.Int.Input(
+                    "edge_shrink", default=0, min=0, max=32, optional=True,
+                    tooltip="Erode the alpha inward by N px to cut a thin fringe halo. "
+                            "Use 1–2 if a hard edge ring remains after decontaminate.",
+                ),
+                io.Combo.Input(
+                    "edge_refine", options=["none", "guided"], default="none", optional=True,
+                    tooltip="Edge-aware SOFT matte refine. 'guided' = cv2 guided filter (RGB-guided), "
+                            "snaps the boundary to real edges. Complements closed_form matting.",
+                ),
+                io.Int.Input(
+                    "sticker_outline", default=0, min=0, max=128, optional=True,
+                    tooltip="Die-cut STICKER mode: add a coloured trim border of N px around the "
+                            "subject (0 = off). The `sticker` output is RGBA with the subject + this "
+                            "outline, transparent outside.",
+                ),
+                io.String.Input(
+                    "sticker_color", default="#ffffff", optional=True,
+                    tooltip="Trim colour for the sticker outline (hex, e.g. #ffffff white, #f00078 pink).",
+                ),
+                io.Boolean.Input(
                     "crop_to_content", default=True, optional=True,
                     tooltip="Crop the output to the bounding box of the mask (plus padding). "
                             "Removes excess transparent border.",
@@ -282,6 +386,10 @@ class BD_RemoveBackground(io.ComfyNode):
                                 tooltip="Subject composited over pure black."),
                 io.String.Output(display_name="crop_box",
                                  tooltip="'x0,y0,x1,y1' bounding box of the cropped region in the original image."),
+                io.Image.Output(display_name="sticker",
+                                tooltip="RGBA die-cut sticker: subject + coloured trim outline "
+                                        "(sticker_outline/sticker_color), transparent outside. "
+                                        "When sticker_outline=0 this is the plain RGBA subject."),
             ],
         )
 
@@ -294,6 +402,11 @@ class BD_RemoveBackground(io.ComfyNode):
                 matting_erode=8, matting_dilate=8,
                 fill_holes_radius=4,
                 edge_blur=0.0,
+                decontaminate=True,
+                edge_shrink=0,
+                edge_refine="none",
+                sticker_outline=0,
+                sticker_color="#ffffff",
                 crop_to_content=True,
                 crop_padding=16,
                 output_size=0,
@@ -391,6 +504,12 @@ class BD_RemoveBackground(io.ComfyNode):
             )
             combined = torch.from_numpy(refined).unsqueeze(0)
 
+        # ── Edge-aware refine + fringe shrink ─────────────────────────────
+        if edge_refine == "guided":
+            combined = _guided_refine(combined, image)
+        if int(edge_shrink) > 0:
+            combined = _erode_alpha(combined, int(edge_shrink))
+
         # ── Edge blur ─────────────────────────────────────────────────────
         combined = _edge_blur(combined, float(edge_blur))
 
@@ -411,18 +530,25 @@ class BD_RemoveBackground(io.ComfyNode):
                 )
                 combined = alpha_bhw
 
+        # ── Decontaminate (remove bg colour spill at edges) ───────────────
+        if decontaminate:
+            img_out = _decontaminate(img_out, combined)
+
         # ── Compose outputs ───────────────────────────────────────────────
         rgba      = _compose_rgba(img_out, combined)
         white_bg  = _compose_on_bg(img_out, combined, 1.0)
         black_bg  = _compose_on_bg(img_out, combined, 0.0)
+        sticker   = _make_sticker(img_out, combined, int(sticker_outline), sticker_color)
 
         print(
             f"[BD RemoveBackground] Done. Output {rgba.shape[1]}×{rgba.shape[2]} "
-            f"matting={matting_mode} crop={crop_box}",
+            f"matting={matting_mode} decontaminate={decontaminate} "
+            f"edge_refine={edge_refine} shrink={edge_shrink} "
+            f"sticker={sticker_outline} crop={crop_box}",
             flush=True,
         )
 
-        return io.NodeOutput(rgba, combined, white_bg, black_bg, crop_box)
+        return io.NodeOutput(rgba, combined, white_bg, black_bg, crop_box, sticker)
 
 
 REMOVE_BACKGROUND_V3_NODES = [BD_RemoveBackground]
