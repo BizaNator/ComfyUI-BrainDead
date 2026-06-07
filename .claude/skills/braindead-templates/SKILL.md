@@ -111,6 +111,12 @@ Fields: `title` (required), `subtitle`, `bullets` (3–7 short `A -> B` lines), 
 Rules baked in (don't re-derive): **no emoji glyphs** (sanitized), `.jpg` only, 1180×680, JPEG q88,
 left scrim keeps text readable over any background. Always `<same_snake_case_basename>.jpg`.
 
+**Regenerate the whole set:** add a `CONFIGS` entry (title/subtitle/bullets/chips) for the new
+template in `tools/regen_all_thumbnails.py`, then run `python3 tools/regen_all_thumbnails.py --deploy`
+to rebuild + deploy every thumbnail at once (it warns about any template `.json` missing a config).
+Thumbnails are browser-cached 24h (`Cache-Control: max-age=86400`) — **hard-refresh (Ctrl+Shift+R)**
+Browse Templates to see updates; the server change alone won't show until the cache expires.
+
 ### 5. Embed model auto-download metadata (required when the workflow has loader nodes)
 For **every** standard loader node (`UNETLoader`, `VAELoader`, `CLIPLoader`, checkpoint loaders, etc.),
 add a `"models"` array to the node's `"properties"` so ComfyUI offers to download missing models on
