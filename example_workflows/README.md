@@ -55,3 +55,4 @@ Workflows here ship with the node pack and appear in ComfyUI's
 | `BD-face_segmentation` | Load Image → BD MP SAM3 Face Segment (25+ anatomy masks) → BD MP Face Infill (UV-ready socket fill) → previews. |
 | `BD-channel_operations` | Load Image → BD Unpack Channels → BD Pack Channels (round-trip R/G/B) → BD Channel Merge (inject into single channel) → previews. |
 | `BD-mask_tools` | Load Image → BD Luminance Mask + BD Mask Flatten + BD Crop to Mask + BD Fill Mask Holes → previews. Each node is a standalone section. |
+| `BD-pbr_from_image` | Remove BG → Lotus-2 Depth+Normal (masked) → SAM3 metal zone → **Derive PBR** → albedo/normal/roughness/metallic/AO + packed ORM/ARM. |

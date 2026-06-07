@@ -99,6 +99,11 @@ Nine ready-to-use workflows ship in [`example_workflows/`](example_workflows/) a
 <b>Mask Tools</b><br>
 <sub>Luminance mask, flatten, crop-to-mask, fill-holes</sub>
 </td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_pbr.jpg" width="100%" alt="Image to Full PBR"><br>
+<b>Image → Full PBR</b><br>
+<sub>Remove BG → Lotus-2 depth+normal → SAM3 metal → Derive PBR (albedo/normal/rough/metal/AO + ORM/ARM)</sub>
+</td>
 </tr>
 </table>
 

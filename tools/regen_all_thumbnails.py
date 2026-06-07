@@ -31,7 +31,7 @@ GALLERY_SLUG = {
     "BD-sam3_parts_segmentation": "sam3", "BD-lotus2_depth_normal": "lotus2",
     "BD-facewrap_pipeline": "facewrap", "BD-glsl_skin_tinting": "glsl",
     "BD-character_consistency": "character", "BD-background_removal": "bgremoval",
-    "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks",
+    "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -108,6 +108,14 @@ CONFIGS = {
         "bullets": ["BD Luminance Mask -> mask from brightness", "BD Mask Flatten -> merge a mask stack",
                     "BD Crop to Mask -> tight bounding-box crop", "BD Fill Mask Holes -> close interior gaps",
                     "Each node is a standalone section"]},
+    "BD-pbr_from_image": {
+        "title": "Image -> Full PBR", "subtitle": "albedo / normal / roughness / metallic / AO",
+        "bullets": ["Remove BG -> silhouette mask",
+                    "Lotus-2 Depth + Normal (masked, neutral bg)",
+                    "SAM3 finds metal zones -> metallic",
+                    "Derive PBR -> albedo/normal/rough/metal/AO",
+                    "Packed ORM + ARM for game engines"],
+        "chips": ["albedo", "normal", "rough", "metal", "AO"]},
 }
 
 
