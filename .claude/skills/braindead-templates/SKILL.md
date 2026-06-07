@@ -80,12 +80,28 @@ confirms every node converts and widgets map to the right inputs (it uses requir
 which matches the UI once nodes are required-first). For runnable smoke tests, set a real input and
 drop `--dry-run`.
 
-### 4. Make the thumbnail (`.jpg`)
-A landscape card (~1180×680) reads well. Two good sources:
-- A rendered **result** (e.g. composite the BD Mesh Preview grid + a title + the links footer).
-- A **node-graph screenshot** (QwenVL/QwenTTS style) — capture the canvas, or draw a stylized
-  node diagram. Save as JPEG quality ~90, keep under a few hundred KB.
-Name it `<same_snake_case_basename>.jpg` next to the `.json`.
+### 4. Make the thumbnail (`.jpg`) — ALWAYS use `tools/make_thumbnail.py`
+Do NOT hand-roll thumbnail code — every thumbnail must use the canonical generator so the whole set
+stays visually identical (1180×680 dark card: accent bar, purple "BrainDead" wordmark, big title,
+subtitle, bullet flow, optional tag chips, BrainDead footer). It also **sanitizes text** (emoji/CJK
+are dropped — DejaVu renders them as tofu boxes, a bug we hit repeatedly).
+
+```bash
+python3 tools/make_thumbnail.py example_workflows/<name>.jpg '{
+  "title": "Background Removal",
+  "subtitle": "SAM3 + pymatting alpha matting",
+  "bullets": ["Load Image -> BD Remove Background",
+              "SAM3 segments the subject from a text prompt",
+              "pymatting refines alpha at hair / fine edges",
+              "Outputs: RGBA + white & black composites"],
+  "chips": ["RGBA","white BG","black BG"]
+}'
+```
+Fields: `title` (required), `subtitle`, `bullets` (3–7 short `A -> B` lines), `chips` (optional tags),
+`footnote` (optional grey line). Output is JPEG q88 — name it `<same_snake_case_basename>.jpg`.
+Rules baked in (don't re-derive): **no emoji glyphs**, `.jpg` only, 1180×680. If you genuinely need
+a rendered result or node-graph image, you may compose one, but it must still be `<name>.jpg` 1180×680
+and pass the showing rules above.
 
 ### 5. Embed model auto-download metadata (required when the workflow has loader nodes)
 For **every** standard loader node (`UNETLoader`, `VAELoader`, `CLIPLoader`, checkpoint loaders, etc.),
