@@ -22,7 +22,7 @@ AN internally-used node pack for Biloxi Studios designed to help with character,
 
 ## Workflow Templates
 
-Nine ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
+Sixteen ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
 
 <table>
 <tr>
@@ -103,6 +103,18 @@ Nine ready-to-use workflows ship in [`example_workflows/`](example_workflows/) a
 <img src="docs/images/workflow_pbr.jpg" width="100%" alt="Image to Full PBR"><br>
 <b>Image → Full PBR</b><br>
 <sub>Remove BG → Lotus-2 depth+normal → SAM3 metal → Derive PBR (albedo/normal/rough/metal/AO + ORM/ARM)</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_packing.jpg" width="100%" alt="Game-Engine Packing"><br>
+<b>Game-Engine Packing</b><br>
+<sub>Isolate parts → balance luma → crop & center → R/G/B channel pack (shared pivot, no bleed)</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/workflow_flipbook.jpg" width="100%" alt="Atlas / Flipbook"><br>
+<b>Atlas / Flipbook</b><br>
+<sub>Tile frames / packed textures into a grid sheet or sprite strip + per-cell UV layout</sub>
 </td>
 </tr>
 </table>
