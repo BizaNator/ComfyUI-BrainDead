@@ -28,34 +28,58 @@ from comfy_api.latest import io
 _SAVE_CONTEXTS: dict[str, dict] = {}
 
 
-# --- Studio share rooting (ARTS-17, Seam 1) -------------------------------
-# Lets a save context write straight into the canonical character folders on
-# the studio share (= B:\Brains) instead of ComfyUI's output dir, so head
-# renders land at Characters/<char>/images/<subfolder>/... with no manual copy.
-STUDIO_ROOT = "/mnt/tank/Studio/Brains"
-_BASE_DIR_ALIASES = {"studio": STUDIO_ROOT, "brains": STUDIO_ROOT}
-# Guardrail: an absolute base_dir must sit under one of these roots, so a typo
-# can't redirect saves to an arbitrary location on the box.
-_ALLOWED_BASE_ROOTS = ("/mnt/tank/", "/srv/")
+# --- base_dir rooting -----------------------------------------------------
+# Lets a save context write to an arbitrary root (e.g. D:/MyImages, /mnt/data,
+# a shared drive) instead of ComfyUI's output dir, so outputs land in their
+# final home with no manual copy. Empty base_dir = ComfyUI output dir.
+#
+# Deployment-specific conveniences are configured via env vars so the node
+# ships infra-agnostic (no hardcoded paths):
+#   BD_SAVE_ALIASES        short names -> roots, ';'-separated 'name=path' pairs
+#                          e.g. "assets=/mnt/data/assets;art=D:/Art"
+#   BD_SAVE_ALLOWED_ROOTS  optional comma-separated lockdown allowlist; an
+#                          absolute base_dir must start with one of these.
+#                          Unset/empty = any absolute path is allowed (default).
+def _load_base_aliases() -> dict:
+    out = {}
+    for pair in (os.environ.get("BD_SAVE_ALIASES", "") or "").split(";"):
+        pair = pair.strip()
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            k = k.strip().lower()
+            if k:
+                out[k] = os.path.expanduser(v.strip())
+    return out
+
+
+def _load_allowed_roots() -> tuple:
+    raw = (os.environ.get("BD_SAVE_ALLOWED_ROOTS", "") or "").strip()
+    if not raw:
+        return ()  # no restriction
+    return tuple(r.strip() for r in raw.split(",") if r.strip())
 
 
 def _resolve_base_dir(base_dir: str) -> str:
     """Resolve a context's base_dir into an absolute output root.
 
-    - empty            → ComfyUI output dir (legacy default, unchanged behavior)
-    - alias            → studio share (see _BASE_DIR_ALIASES)
-    - absolute path    → used as-is, but must be under _ALLOWED_BASE_ROOTS
+    - empty          → ComfyUI output dir (default, unchanged behavior)
+    - env alias      → its configured path (BD_SAVE_ALIASES)
+    - absolute path  → used as-is (Windows drive paths like D:/MyImages work);
+                       if BD_SAVE_ALLOWED_ROOTS is set, must start with one of them
     """
     if not base_dir:
         return folder_paths.get_output_directory()
     key = base_dir.strip()
-    if key.lower() in _BASE_DIR_ALIASES:
-        return _BASE_DIR_ALIASES[key.lower()]
-    abspath = os.path.abspath(os.path.expanduser(key))
-    if not abspath.startswith(_ALLOWED_BASE_ROOTS):
+    aliases = _load_base_aliases()
+    if key.lower() in aliases:
+        return os.path.normpath(aliases[key.lower()])
+    abspath = os.path.normpath(os.path.abspath(os.path.expanduser(key)))
+    allowed = _load_allowed_roots()
+    if allowed and not abspath.startswith(tuple(os.path.normpath(r) + os.sep for r in allowed)) \
+            and abspath not in (os.path.normpath(r) for r in allowed):
         raise ValueError(
-            f"BD_SaveContext base_dir {base_dir!r} not permitted. Use an alias "
-            f"{sorted(_BASE_DIR_ALIASES)} or an absolute path under {_ALLOWED_BASE_ROOTS}."
+            f"BD_SaveContext base_dir {base_dir!r} is outside the allowed roots "
+            f"{allowed} (relax/unset BD_SAVE_ALLOWED_ROOTS to permit it)."
         )
     return abspath
 
@@ -179,13 +203,14 @@ class BD_SaveContext(io.ComfyNode):
                 io.String.Input("version", default="01", optional=True),
                 io.String.Input("project", default="", optional=True),
                 io.String.Input("base_dir", default="", optional=True,
-                                tooltip="Root directory for saves. Empty = ComfyUI output dir (default). "
-                                        "Use 'studio' (alias for the B:\\Brains share) to write straight into "
-                                        "Characters/<char>/images/... with no manual copy. Absolute paths "
-                                        "allowed under /mnt/tank or /srv. (ARTS-17, Seam 1)"),
+                                tooltip="Root directory for saves. Empty = ComfyUI output dir (default, "
+                                        "backward-compatible). Otherwise an absolute path the template "
+                                        "resolves under — works cross-platform, e.g. 'D:/MyImages' or "
+                                        "'/mnt/data/assets'. You can also use a short alias defined via the "
+                                        "BD_SAVE_ALIASES env var. Optional lockdown via BD_SAVE_ALLOWED_ROOTS."),
                 io.String.Input("subfolder", default="", optional=True,
-                                tooltip="Sub-organization within the character folder — e.g. '2d_front', "
-                                        "'mp', 'faceplate', 'whitelines'. Empty cleans up to nothing in the path."),
+                                tooltip="Sub-organization within the output folder — e.g. a category or "
+                                        "stage name. Empty cleans up to nothing in the path."),
                 io.String.Input("tag", default="", optional=True,
                                 tooltip="Generic tag — typical use: part name like 'face', 'topwear', 'arm-l'."),
                 io.String.Input(
