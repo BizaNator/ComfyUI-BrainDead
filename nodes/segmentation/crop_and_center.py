@@ -191,7 +191,15 @@ class BD_CropAndCenter(io.ComfyNode):
             pw = min(bw - sx, cw - dx)
             ph = min(bh - sy, ch - dy)
             if pw > 0 and ph > 0:
-                canvas[dy:dy + ph, dx:dx + pw, :] = crop[sy:sy + ph, sx:sx + pw, :]
+                reg_rgb = crop[sy:sy + ph, sx:sx + pw, :3]
+                reg_m = cmask[sy:sy + ph, sx:sx + pw].clamp(0, 1).unsqueeze(-1)   # (ph, pw, 1)
+                bg_t = torch.tensor(bg, dtype=torch.float32)
+                # FLATTEN TO THE MASK: content shows only inside the mask, background fills
+                # the rest of the bbox — so the output is cropped to the mask shape, not a
+                # rectangular paste of everything inside the bounding box.
+                canvas[dy:dy + ph, dx:dx + pw, :3] = reg_rgb * reg_m + bg_t * (1.0 - reg_m)
+                if C >= 4:
+                    canvas[dy:dy + ph, dx:dx + pw, 3] = cmask[sy:sy + ph, sx:sx + pw]
                 mcanvas[dy:dy + ph, dx:dx + pw] = cmask[sy:sy + ph, sx:sx + pw]
 
             out_imgs.append(canvas.clamp(0, 1))
