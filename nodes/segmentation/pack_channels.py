@@ -6,8 +6,8 @@ Inverse of channel splitting. Common use cases:
 - Normal map repackaging: separate XYZ channels into RGB
 - Combining grayscale outputs from segmentation/depth/normal nodes
 
-Each channel slot accepts EITHER an IMAGE or a MASK input (or both — MASK wins
-since it's already single-channel and unambiguous). When IMAGE is provided,
+Each channel slot accepts an IMAGE, a MASK, or BOTH. When both are wired the
+MASK masks the IMAGE (image luminance × mask). Mask-only = the mask is the channel. When IMAGE is provided,
 its luminance is computed (BT.709: 0.2126 R + 0.7152 G + 0.0722 B). When neither is
 provided, the channel is filled with default_value.
 
@@ -57,32 +57,41 @@ def _resolve_channel(image: torch.Tensor | None, mask: torch.Tensor | None,
       alpha — use the alpha channel if image is RGBA, else fall back to luminance
               (default for ALPHA output slot)
     """
+    # Resolve the mask channel (if wired) and the image channel (if wired) independently,
+    # then combine: IMAGE + MASK both wired → mask MASKS the image (image × mask). Mask only
+    # → the mask is the channel. Image only → the image's luminance/channel. Neither → default.
+    mask_ch = None
     if mask is not None:
-        ch = mask
-        if ch.ndim == 4:
-            ch = ch.squeeze(0) if ch.shape[0] == 1 else ch[..., 0]
-        if ch.ndim == 2:
-            ch = ch.unsqueeze(0)
-        ch = _resize_to(ch.float(), h, w, mode="bilinear")
-    elif image is not None:
+        mk = mask
+        if mk.ndim == 4:
+            mk = mk.squeeze(0) if mk.shape[0] == 1 else mk[..., 0]
+        if mk.ndim == 2:
+            mk = mk.unsqueeze(0)
+        mask_ch = _resize_to(mk.float(), h, w, mode="bilinear")
+
+    img_ch = None
+    if image is not None:
         img = image if image.ndim == 4 else image.unsqueeze(0)
         img = _resize_to(img.float(), h, w, mode="bilinear")
         nchan = img.shape[-1]
         if image_source == "red":
-            ch = img[..., 0]
+            img_ch = img[..., 0]
         elif image_source == "green":
-            ch = img[..., 1] if nchan >= 2 else img[..., 0]
+            img_ch = img[..., 1] if nchan >= 2 else img[..., 0]
         elif image_source == "blue":
-            ch = img[..., 2] if nchan >= 3 else img[..., 0]
-        elif image_source == "alpha":
-            if nchan >= 4:
-                ch = img[..., 3]
-            else:
-                weights = get_luma_weights(luma_standard).to(img.device).to(img.dtype)
-                ch = (img[..., :3] * weights).sum(dim=-1)
+            img_ch = img[..., 2] if nchan >= 3 else img[..., 0]
+        elif image_source == "alpha" and nchan >= 4:
+            img_ch = img[..., 3]
         else:
             weights = get_luma_weights(luma_standard).to(img.device).to(img.dtype)
-            ch = (img[..., :3] * weights).sum(dim=-1)
+            img_ch = (img[..., :3] * weights).sum(dim=-1)
+
+    if img_ch is not None and mask_ch is not None:
+        ch = img_ch * mask_ch                 # mask masks the image
+    elif mask_ch is not None:
+        ch = mask_ch                          # mask only → mask is the channel
+    elif img_ch is not None:
+        ch = img_ch                           # image only → its luminance/channel
     else:
         ch = torch.full((b, h, w), float(default_value), dtype=dtype, device=device)
 
@@ -157,7 +166,7 @@ class BD_PackChannels(io.ComfyNode):
             description=(
                 "Combine up to 4 source images/masks into the RGBA channels of one output. "
                 "Each channel slot accepts an IMAGE (auto-converted to luminance grayscale) "
-                "or a MASK (used directly). When both wired for a slot, MASK wins. When "
+                "or a MASK. When BOTH are wired the mask masks the image (image × mask). When "
                 "neither is wired, the channel is filled with the channel's default_value. "
                 "Toggle output_alpha to get a 4-channel RGBA image; default is RGB only."
             ),
@@ -165,7 +174,7 @@ class BD_PackChannels(io.ComfyNode):
                 io.Image.Input("red_image", optional=True,
                                tooltip="IMAGE source for the RED channel — its grayscale luminance becomes R."),
                 io.Mask.Input("red_mask", optional=True,
-                              tooltip="MASK source for the RED channel (wins over red_image if both provided)."),
+                              tooltip="MASK for the RED channel. If red_image is also wired, this MASKS it (image × mask); alone, the mask IS the channel."),
                 io.Float.Input("red_default", default=0.0, min=0.0, max=1.0, step=0.05, optional=True,
                                tooltip="Value to fill RED with when neither red_image nor red_mask is wired."),
                 io.Boolean.Input("red_invert", default=False, optional=True,

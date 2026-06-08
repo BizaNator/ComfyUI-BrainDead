@@ -32,6 +32,11 @@ from .face_mp_sam3 import _fill_holes, _refine_feature_mask
 
 _MODEL_PATH = find_mediapipe_model()
 
+# MediaPipe face-oval LOWER contour = the jawline, ordered left ear → jaw → chin → jaw → right ear.
+# Used by jaw_mode='landmark_jawline' to cut the head along the real jaw instead of the neck parser.
+_JAWLINE_IDX = [234, 93, 132, 58, 172, 136, 150, 149, 176, 148, 152,
+                377, 400, 378, 379, 365, 397, 288, 361, 323, 454]
+
 
 def _smooth_silhouette(mask_u8: np.ndarray, px: int) -> np.ndarray:
     """Round the silhouette boundary into a smooth curve — kills the lumpy SegFormer blockiness
@@ -110,6 +115,14 @@ class BD_HeadCutout(io.ComfyNode):
                 io.Combo.Input("vitmatte_model", options=["small", "base"], default="small", optional=True),
                 io.Float.Input("mask_threshold", default=0.5, min=0.0, max=1.0, step=0.05, optional=True,
                                tooltip="SAM3 text-segmentation threshold."),
+                io.Combo.Input("jaw_mode", options=["neck_parser", "landmark_jawline"], default="neck_parser",
+                               optional=True,
+                               tooltip="How to cut the bottom of the head:\n"
+                                       "  neck_parser    — SegFormer face-parser removes the real neck/clothing "
+                                       "(chin-safe, default). Best when hair/clothing is complex.\n"
+                                       "  landmark_jawline — cut along the MediaPipe jawline (under-ear → jaw → "
+                                       "chin) for a clean anatomical S-curve regardless of what's below. Best for "
+                                       "a tight, consistent jaw cut. Both respect the smooth setting."),
             ],
             outputs=[
                 io.Image.Output(display_name="head_cutout"),
@@ -122,7 +135,8 @@ class BD_HeadCutout(io.ComfyNode):
     def execute(cls, image, head_prompts="head\nface\nhair\near",
                 exclude_prompts="neck\nshirt\nclothing\nshoulder", neck_cut=True,
                 cutout_bg="transparent", smooth=12, edge_refine="off", refine_radius=8, refine_eps=1e-4,
-                refine_threshold=0.5, vitmatte_model="small", mask_threshold=0.5) -> io.NodeOutput:
+                refine_threshold=0.5, vitmatte_model="small", mask_threshold=0.5,
+                jaw_mode="neck_parser") -> io.NodeOutput:
         if image.ndim == 3:
             image = image.unsqueeze(0)
         B, H, W, C = image.shape
@@ -185,9 +199,28 @@ class BD_HeadCutout(io.ComfyNode):
         if not head_sil.any():
             return _bail("empty head silhouette")
 
-        # ── chin-safe neck removal (SegFormer Neck/Clothing/Necklace) ──
         cut_info = ""
-        if neck_cut:
+        if jaw_mode == "landmark_jawline":
+            # ── cut along the MediaPipe jawline (under-ear → jaw → chin) ──
+            pts = np.array([[min(W - 1, max(0, int(lm[i].x * W))),
+                             min(H - 1, max(0, int(lm[i].y * H)))] for i in _JAWLINE_IDX], dtype=np.int32)
+            # polygon = jawline curve closed along the image bottom → everything BELOW the jaw
+            below = np.zeros((H, W), np.uint8)
+            cv2.fillPoly(below, [np.vstack([pts, [[W - 1, H - 1], [0, H - 1]]])], 255)
+            head_sil[below > 0] = 0
+            # keep the head's connected component (drop any stray bits below the cut)
+            nlbl, lab, stats, _ = cv2.connectedComponentsWithStats((head_sil > 0).astype(np.uint8), 8)
+            if nlbl > 1:
+                ys, xs = np.where(face_oval > 0)
+                seed = int(lab[int(ys.mean()), int(xs.mean())]) if len(xs) else 0
+                if seed == 0:
+                    seed = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+                head_sil = (lab == seed).astype(np.uint8) * 255
+            cut_info = " | jaw:landmark"
+            if not head_sil.any():
+                return _bail("empty head after jawline cut")
+        # ── chin-safe neck removal (SegFormer Neck/Clothing/Necklace) ──
+        elif neck_cut:
             parts = []
             nc = None
             try:
