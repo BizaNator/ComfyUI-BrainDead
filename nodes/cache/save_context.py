@@ -219,7 +219,7 @@ class BD_SaveContext(io.ComfyNode):
                 ),
                 io.Boolean.Input("auto_increment", default=True, optional=True,
                                  tooltip="Append _NNN to avoid overwriting. Applies to ALL save nodes using this context."),
-                io.Int.Input("increment_padding", default=3, min=1, max=10, step=1, optional=True),
+                io.Int.Input("increment_padding", default=3, min=0, max=10, step=1, optional=True),
                 io.Boolean.Input("strict", default=False, optional=True,
                                  tooltip="If True, save nodes raise an error when the template contains undefined "
                                          "%variables% at save time."),
@@ -246,6 +246,19 @@ class BD_SaveContext(io.ComfyNode):
 
         # Validate base_dir now so the user sees errors at registration, not save time.
         resolved_base = _resolve_base_dir(base_dir)
+
+        # Be tolerant of bad/misaligned widget values so a single off input can't
+        # prune the whole save chain. increment_padding < 1 (incl. False/0 from a
+        # widget-order shift) falls back to the sensible default rather than failing
+        # ComfyUI's min-validation; auto_increment/strict coerce to bool.
+        try:
+            increment_padding = int(increment_padding)
+        except (TypeError, ValueError):
+            increment_padding = 3
+        if increment_padding < 1:
+            increment_padding = 3
+        auto_increment = bool(auto_increment)
+        strict = bool(strict)
 
         _SAVE_CONTEXTS[context_id] = {
             "template": template,
