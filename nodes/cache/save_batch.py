@@ -111,6 +111,18 @@ class BD_SaveBatch(io.ComfyNode):
                         "regardless — this setting only controls the baking and sidecar steps."
                     ),
                 ),
+                io.Boolean.Input(
+                    "embed_alpha", default=True, optional=True,
+                    tooltip=(
+                        "Embed the alpha channel into the saved MAIN image (RGBA). Default True = "
+                        "existing behavior. Set False to write the main image as RGB only — its RGB is "
+                        "saved as-is (e.g. the subject flattened on pure black / white / a Voronoi "
+                        "edge-fill) WITHOUT using the alpha as transparency. The alpha is still produced "
+                        "for save_alpha_separately (sidecar _alpha.png) and the preview_alpha output, so "
+                        "you can keep the mask as a separate file while the image stays fully opaque. "
+                        "Added last so it does not shift existing workflows' widget order."
+                    ),
+                ),
             ],
             outputs=[
                 io.Int.Output(display_name="saved_count",
@@ -176,7 +188,8 @@ class BD_SaveBatch(io.ComfyNode):
                 save_alpha_separately: bool = False,
                 alpha_mask: torch.Tensor | None = None,
                 invert_alpha: bool = False,
-                alpha_slots: str = "") -> io.NodeOutput:
+                alpha_slots: str = "",
+                embed_alpha: bool = True) -> io.NodeOutput:
 
         # Coerce input to (B, H, W, C)
         if images.ndim == 3:
@@ -253,7 +266,12 @@ class BD_SaveBatch(io.ComfyNode):
                 frame_mask = get_frame_mask(alpha_mask, i, H, W) if apply_alpha_this_slot else None
                 single_to_save = apply_alpha_to_frame(single, frame_mask, invert_alpha)
 
-                final_path, data_type = BD_SaveFile._detect_type_and_save(single_to_save, filepath)
+                # The alpha sidecar + preview_alpha below still read single_to_save's alpha;
+                # embed_alpha only controls whether the MAIN file keeps it (RGBA) or drops it (RGB).
+                main_frame = (single_to_save[..., :3]
+                              if (not embed_alpha and single_to_save.shape[-1] == 4)
+                              else single_to_save)
+                final_path, data_type = BD_SaveFile._detect_type_and_save(main_frame, filepath)
                 saved_paths.append(final_path)
                 rel_final = os.path.relpath(final_path).replace("\\", "/")
                 alpha_note = ""
