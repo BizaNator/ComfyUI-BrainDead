@@ -28,6 +28,38 @@ from comfy_api.latest import io
 _SAVE_CONTEXTS: dict[str, dict] = {}
 
 
+# --- Studio share rooting (ARTS-17, Seam 1) -------------------------------
+# Lets a save context write straight into the canonical character folders on
+# the studio share (= B:\Brains) instead of ComfyUI's output dir, so head
+# renders land at Characters/<char>/images/<subfolder>/... with no manual copy.
+STUDIO_ROOT = "/mnt/tank/Studio/Brains"
+_BASE_DIR_ALIASES = {"studio": STUDIO_ROOT, "brains": STUDIO_ROOT}
+# Guardrail: an absolute base_dir must sit under one of these roots, so a typo
+# can't redirect saves to an arbitrary location on the box.
+_ALLOWED_BASE_ROOTS = ("/mnt/tank/", "/srv/")
+
+
+def _resolve_base_dir(base_dir: str) -> str:
+    """Resolve a context's base_dir into an absolute output root.
+
+    - empty            → ComfyUI output dir (legacy default, unchanged behavior)
+    - alias            → studio share (see _BASE_DIR_ALIASES)
+    - absolute path    → used as-is, but must be under _ALLOWED_BASE_ROOTS
+    """
+    if not base_dir:
+        return folder_paths.get_output_directory()
+    key = base_dir.strip()
+    if key.lower() in _BASE_DIR_ALIASES:
+        return _BASE_DIR_ALIASES[key.lower()]
+    abspath = os.path.abspath(os.path.expanduser(key))
+    if not abspath.startswith(_ALLOWED_BASE_ROOTS):
+        raise ValueError(
+            f"BD_SaveContext base_dir {base_dir!r} not permitted. Use an alias "
+            f"{sorted(_BASE_DIR_ALIASES)} or an absolute path under {_ALLOWED_BASE_ROOTS}."
+        )
+    return abspath
+
+
 def _resolve_template(template: str, vars_dict: dict, strict: bool = False) -> tuple[str, list]:
     """Resolve %var% tokens. Defined-but-empty vars resolve to empty string;
     undefined vars stay as %var% literal (visible warning)."""
@@ -80,15 +112,18 @@ def _next_increment(folder: str, base: str, ext: str) -> int:
 
 
 def _resolve_save_path(template: str, vars_dict: dict, suffix: str,
-                       ext: str, auto_increment: bool, increment_padding: int) -> tuple[str, str]:
+                       ext: str, auto_increment: bool, increment_padding: int,
+                       output_base: str = None) -> tuple[str, str]:
     """Resolve template + suffix into (full_filepath, relative_subpath).
-    Empty %var% segments are cleaned (// → /, leading/trailing / stripped)."""
+    Empty %var% segments are cleaned (// → /, leading/trailing / stripped).
+    output_base roots the save (defaults to ComfyUI's output dir)."""
     full_template = template + suffix
     resolved, unresolved = _resolve_template(full_template, vars_dict)
     resolved = resolved.replace("\\", "/")
     resolved = _clean_path(resolved)
 
-    output_base = folder_paths.get_output_directory()
+    if output_base is None:
+        output_base = folder_paths.get_output_directory()
     if "/" in resolved:
         subdir, base = resolved.rsplit("/", 1)
         folder = os.path.join(output_base, subdir)
@@ -143,9 +178,14 @@ class BD_SaveContext(io.ComfyNode):
                 io.String.Input("name", default="", optional=True),
                 io.String.Input("version", default="01", optional=True),
                 io.String.Input("project", default="", optional=True),
+                io.String.Input("base_dir", default="", optional=True,
+                                tooltip="Root directory for saves. Empty = ComfyUI output dir (default). "
+                                        "Use 'studio' (alias for the B:\\Brains share) to write straight into "
+                                        "Characters/<char>/images/... with no manual copy. Absolute paths "
+                                        "allowed under /mnt/tank or /srv. (ARTS-17, Seam 1)"),
                 io.String.Input("subfolder", default="", optional=True,
-                                tooltip="Sub-organization within the character folder — e.g. 'parts', "
-                                        "'pbr', 'mannequin'. Empty cleans up to nothing in the path."),
+                                tooltip="Sub-organization within the character folder — e.g. '2d_front', "
+                                        "'mp', 'faceplate', 'whitelines'. Empty cleans up to nothing in the path."),
                 io.String.Input("tag", default="", optional=True,
                                 tooltip="Generic tag — typical use: part name like 'face', 'topwear', 'arm-l'."),
                 io.String.Input(
@@ -171,7 +211,7 @@ class BD_SaveContext(io.ComfyNode):
 
     @classmethod
     def execute(cls, context_id, template, character="", name="", version="01",
-                project="", subfolder="", tag="", custom_vars="",
+                project="", subfolder="", tag="", custom_vars="", base_dir="",
                 auto_increment=True, increment_padding=3, strict=False) -> io.NodeOutput:
         vars_dict = {
             "character": character, "name": name, "version": version,
@@ -179,9 +219,13 @@ class BD_SaveContext(io.ComfyNode):
         }
         vars_dict.update(_parse_custom_vars(custom_vars))
 
+        # Validate base_dir now so the user sees errors at registration, not save time.
+        resolved_base = _resolve_base_dir(base_dir)
+
         _SAVE_CONTEXTS[context_id] = {
             "template": template,
             "vars": vars_dict,
+            "base_dir": base_dir,
             "auto_increment": auto_increment,
             "increment_padding": increment_padding,
             "strict": strict,
@@ -192,11 +236,13 @@ class BD_SaveContext(io.ComfyNode):
         # save nodes (BD_SaveFile, BD_PartsExport). It's expected to be
         # unresolved at registration — only flag genuinely missing vars.
         unresolved_real = [u for u in unresolved if u != "suffix"]
+        base_label = f"{base_dir} → {resolved_base}" if base_dir else f"(ComfyUI output dir) {resolved_base}"
         status = (
             f"context_id='{context_id}' registered\n"
+            f"  base_dir: {base_label}\n"
             f"  template: {template}\n"
             f"  vars: {vars_dict}\n"
-            f"  preview (no suffix): {preview}"
+            f"  preview (no suffix): {os.path.join(resolved_base, _clean_path(preview.replace(chr(92), '/')))}"
         )
         if unresolved_real:
             status += f"\n  WARNING: undefined in template: {sorted(set(unresolved_real))}"
@@ -265,6 +311,7 @@ def resolve_context_path(context_id: str, suffix: str, ext: str,
         template, vars_dict, suffix="",
         ext=ext, auto_increment=ctx["auto_increment"],
         increment_padding=ctx["increment_padding"],
+        output_base=_resolve_base_dir(ctx.get("base_dir", "")),
     )
 
 
@@ -361,7 +408,7 @@ class BD_GetContextPath(io.ComfyNode):
         resolved = resolved.replace("\\", "/")
         resolved = _clean_path(resolved)
 
-        output_base = folder_paths.get_output_directory()
+        output_base = _resolve_base_dir(ctx.get("base_dir", ""))
         if "/" in resolved:
             subdir, base = resolved.rsplit("/", 1)
             directory = os.path.join(output_base, subdir)
