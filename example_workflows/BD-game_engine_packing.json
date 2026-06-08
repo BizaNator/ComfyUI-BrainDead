@@ -540,11 +540,11 @@
       "bgcolor": "#533",
       "widgets_values": [
         "center",
-        0,
-        0,
+        1024,
+        1024,
         0,
         0.02,
-        false,
+        true,
         "#000000"
       ]
     },
@@ -841,11 +841,11 @@
       "bgcolor": "#353",
       "widgets_values": [
         "center",
-        0,
-        0,
+        1024,
+        1024,
         0,
         0.02,
-        false,
+        true,
         "#000000"
       ]
     },
@@ -1142,11 +1142,11 @@
       "bgcolor": "#335",
       "widgets_values": [
         "center",
-        0,
-        0,
+        1024,
+        1024,
         0,
         0.02,
-        false,
+        true,
         "#000000"
       ]
     },

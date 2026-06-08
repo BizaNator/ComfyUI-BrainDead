@@ -106,7 +106,7 @@ for k, (label, y) in enumerate(zip(chan, ys)):
              {"apply_to_mask_only": True, "calc_from_mask": True},
              title=f"Center Median ({label})", color=col, bgcolor=bg)
     cc = add("BD_CropAndCenter", (2220, y), (250, 180),
-             {"anchor": "center"},   # canvas 0 = original size → all parts re-pivot to centre
+             {"anchor": "center", "canvas_width": 1024, "canvas_height": 1024, "scale_to_fit": True},  # re-pivot parts on a common canvas
              title=f"Crop & Center ({label})", color=col, bgcolor=bg)
     idx_nodes.append(mi); grey_nodes.append(gs); norm_nodes.append(nm)
     cen_nodes.append(cm); crop_nodes.append(cc)

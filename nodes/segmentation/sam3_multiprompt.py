@@ -347,11 +347,14 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                 ),
                 io.Boolean.Input(
                     "enforce_silhouette", default=True, optional=True,
-                    tooltip="When True (and silhouette_mask is provided AND non-blank): EVERY SAM3 result "
-                            "(positive and negative) is multiplied by the silhouette immediately after inference, "
-                            "BEFORE union/subtract. So per_prompt_masks, combined_mask, and masked_image all "
-                            "reflect 'what SAM3 found INSIDE the character only' — background noise is removed "
-                            "everywhere, not just the final output. Set False to see raw SAM3 output including background hallucinations.",
+                    tooltip="When True (and silhouette_mask is non-blank): EVERY SAM3 result (positive and "
+                            "negative) AND the colour filter are clamped to the silhouette immediately after "
+                            "inference — combined_mask reflects 'what SAM3 found INSIDE the character only'.\n"
+                            "When False: the silhouette does NOT restrict SAM3 or any mask function (raw SAM3 "
+                            "output, including outside the outline). The silhouette is still available — wire "
+                            "silhouette_composite_enable to punch the detected regions OUT of the silhouette "
+                            "(silhouette − combined) via the silhouette_composite output. So: enforce ON = clamp; "
+                            "enforce OFF = don't clamp, optionally use the outline only for the composite.",
                 ),
                 io.Int.Input(
                     "include_dilate_radius", default=64, min=0, max=512, step=8, optional=True,
@@ -595,7 +598,8 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
             combined, color_debug = _apply_skin_color_filter(
                 combined, image, mode=color_filter,
                 threshold=color_threshold, strength=color_strength,
-                silhouette_mask=silhouette_mask,
+                silhouette_mask=sil_active,   # enforce-gated: when enforce_silhouette is off,
+                                              # the colour filter is NOT restricted to the silhouette
                 include_dilate_radius=include_dilate_radius,
                 negative_exclude_zone=neg_exclude,
                 color_mode=color_mode,
@@ -604,7 +608,7 @@ class BD_SAM3MultiPrompt(io.ComfyNode):
                 adaptive_min_samples=adaptive_min_samples,
             )
             cov_after = 100.0 * combined.float().mean().item()
-            zone_str = "silhouette" if silhouette_mask is not None else f"dilate={include_dilate_radius}px"
+            zone_str = "silhouette" if sil_active is not None else f"dilate={include_dilate_radius}px"
             neg_str = f", neg_exclude={int((neg_exclude > 0.5).sum().item())}px" if neg_exclude is not None else ""
             adaptive_str = ""
             if color_debug.get("adaptive") and not color_debug["adaptive"].get("skipped"):
