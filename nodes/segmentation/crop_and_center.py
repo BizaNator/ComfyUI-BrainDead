@@ -97,8 +97,10 @@ class BD_CropAndCenter(io.ComfyNode):
                 io.Float.Input("threshold", default=0.02, min=0.0, max=1.0, step=0.01, optional=True,
                                tooltip="Pixel value above which a pixel counts as content (for bbox detection)."),
                 io.Boolean.Input("scale_to_fit", default=False, optional=True,
-                                 tooltip="If the cropped content is larger than the canvas, scale it down to fit "
-                                         "(preserves aspect). Off = keep original scale and clip any overflow."),
+                                 tooltip="On = scale the cropped content to FIT the canvas (longest side → canvas), "
+                                         "preserving aspect — scales UP small content and DOWN oversized content, "
+                                         "then places it at the anchor. Off = keep original pixel scale (re-pivot "
+                                         "only) and clip any overflow. Turn ON for crop → scale → anchor."),
                 io.String.Input("background_hex", default="#000000", optional=True,
                                 tooltip="Canvas fill colour. Mask + (for RGBA) alpha pad regions are always 0."),
             ],
@@ -143,8 +145,14 @@ class BD_CropAndCenter(io.ComfyNode):
                 content_mask = frame[..., 3].clamp(0, 1)
                 active = (content_mask >= thr).numpy()
             else:
-                content_mask = (frame[..., :3] * torch.tensor([0.2126, 0.7152, 0.0722])).sum(-1).clamp(0, 1)
-                active = (content_mask >= thr).numpy()
+                # No mask/alpha: content = pixels that DIFFER from the border background colour.
+                # (Raw luminance fails on a white/light bg — it reads the whole frame as content.)
+                rgb = frame[..., :3]
+                border = torch.cat([rgb[0, :], rgb[-1, :], rgb[:, 0], rgb[:, -1]], dim=0).reshape(-1, 3)
+                bg_col = border.median(dim=0).values
+                diff = (rgb - bg_col).abs().amax(dim=-1).clamp(0, 1)
+                content_mask = (diff >= thr).float()
+                active = (diff >= thr).numpy()
 
             bb = _bbox(active)
             # ── build canvas ──
@@ -167,7 +175,9 @@ class BD_CropAndCenter(io.ComfyNode):
             bh, bw = crop.shape[0], crop.shape[1]
 
             scale = 1.0
-            if scale_to_fit and (bw > cw or bh > ch):
+            if scale_to_fit:
+                # Scale the cropped content to FIT the canvas (longest side → canvas),
+                # preserving aspect — scales UP for small content, DOWN for oversized.
                 scale = min(cw / bw, ch / bh)
                 nh, nw = max(1, round(bh * scale)), max(1, round(bw * scale))
                 crop = _resize_hw(crop, nh, nw)

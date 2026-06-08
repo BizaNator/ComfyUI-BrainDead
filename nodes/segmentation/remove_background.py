@@ -88,27 +88,25 @@ def _crop_to_content(image: torch.Tensor, alpha: torch.Tensor,
         return img_crop, alpha_crop, crop_box
 
     ch, cw = img_crop.shape[1], img_crop.shape[2]
-    if output_size_mode == "resize":
-        img_out = F.interpolate(
-            img_crop.permute(0, 3, 1, 2).float(),
-            size=(output_size, output_size), mode="bilinear", align_corners=False,
-        ).permute(0, 2, 3, 1)
-        alpha_4d = alpha_crop if alpha_crop.ndim == 4 else alpha_crop.unsqueeze(1)
-        alpha_out = F.interpolate(alpha_4d.float(), size=(output_size, output_size),
+    img_nchw = img_crop.permute(0, 3, 1, 2).float()
+    alpha_4d = (alpha_crop if alpha_crop.ndim == 4 else alpha_crop.unsqueeze(1)).float()
+
+    if output_size_mode == "resize_square":
+        # cropped-to-mask above → resize that crop to output_size × output_size (ignores aspect)
+        img_out = F.interpolate(img_nchw, size=(output_size, output_size),
+                                mode="bilinear", align_corners=False).permute(0, 2, 3, 1)
+        alpha_out = F.interpolate(alpha_4d, size=(output_size, output_size),
                                   mode="bilinear", align_corners=False).squeeze(1)
-    else:  # pad
-        side = max(ch, cw, output_size)
-        py = (side - ch) // 2
-        px = (side - cw) // 2
-        img_out = F.pad(
-            img_crop.permute(0, 3, 1, 2),
-            (px, side - cw - px, py, side - ch - py),
-        ).permute(0, 2, 3, 1)
-        alpha_4d = alpha_crop if alpha_crop.ndim == 4 else alpha_crop.unsqueeze(1)
-        alpha_out = F.pad(
-            alpha_4d,
-            (px, side - cw - px, py, side - ch - py),
-        ).squeeze(1)
+    else:  # pad_square: scale the crop so its LONGEST side = output_size (preserve aspect),
+           # then pad the shorter side to make it output_size × output_size square
+        scale = output_size / max(ch, cw)
+        nh, nw = max(1, round(ch * scale)), max(1, round(cw * scale))
+        img_s = F.interpolate(img_nchw, size=(nh, nw), mode="bilinear", align_corners=False)
+        alpha_s = F.interpolate(alpha_4d, size=(nh, nw), mode="bilinear", align_corners=False)
+        py, px = (output_size - nh) // 2, (output_size - nw) // 2
+        pad = (px, output_size - nw - px, py, output_size - nh - py)
+        img_out = F.pad(img_s, pad).permute(0, 2, 3, 1)
+        alpha_out = F.pad(alpha_s, pad).squeeze(1)
 
     return img_out, alpha_out, crop_box
 
@@ -302,10 +300,14 @@ class BD_RemoveBackground(io.ComfyNode):
                     options=["none", "pad_square", "resize_square"],
                     default="none",
                     optional=True,
-                    tooltip="How to apply output_size:\n"
+                    tooltip="How to apply output_size (the subject is cropped to the mask first when "
+                            "crop_to_content is on):\n"
                             "  none          — ignore output_size\n"
-                            "  pad_square    — pad shortest side to make it output_size × output_size\n"
-                            "  resize_square — resize to output_size × output_size (may distort)",
+                            "  pad_square    — scale the crop so its LONGEST side = output_size "
+                            "(keeps aspect), then pad the shorter side → output_size × output_size. "
+                            "e.g. 1024 → fills 1024×1024 with bars top/bottom or left/right.\n"
+                            "  resize_square — resize the crop straight to output_size × output_size "
+                            "(may distort aspect).",
                 ),
                 io.Float.Input(
                     "mask_threshold", default=0.5, min=0.0, max=1.0, step=0.05, optional=True,
