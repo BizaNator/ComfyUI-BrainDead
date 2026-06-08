@@ -21,7 +21,7 @@ Two-image mode:
 
 fill_mode:
   flat     — fill_r / fill_g / fill_b (default white, good for UV textures)
-  surround — diffuse the surrounding skin colour inward (gradient fill, edge-smoothed)
+  surround — fill with the surrounding skin colour (NS inpaint, no original content left)
   inpaint  — OpenCV Telea inpaint per zone (cleanest). Each zone is processed
              independently so brows can't contaminate the eye socket.
 """
@@ -322,28 +322,24 @@ def _process_frame(
 # ── Fill helpers ──────────────────────────────────────────────────────────────
 
 def _surround_fill(frame_u8: np.ndarray, mask_u8: np.ndarray, radius: int) -> np.ndarray:
-    """Fill the masked socket by diffusing the SURROUNDING skin colours inward as a smooth
-    gradient — it samples the skin AROUND the socket, not the content inside it.
+    """Fill the masked socket with the SURROUNDING skin colours — samples the skin AROUND the
+    socket (not the teeth/eyes inside it) and propagates it inward, so NO original content remains.
 
-    Push-pull diffusion: seed the interior with the average surrounding colour, then repeatedly
-    blur while restoring the known (outside-mask) pixels, so the surrounding skin flows inward as
-    a soft gradient (vs. the old behaviour, which just Gaussian-blurred the existing teeth/eyes).
-    Returns float32 [0,1] (H, W, 3).
+    Uses Navier-Stokes inpainting (cv2.INPAINT_NS) — it grows the boundary colours into the socket
+    for a clean, local skin-tone fill — then a light Gaussian smooth so it reads as a soft gradient.
+    (The old version just blurred the existing content, and an averaging diffusion produced a muddy
+    grey blob; NS samples the LOCAL surrounding colour instead.) Returns float32 [0,1] (H, W, 3).
     """
-    img = frame_u8.astype(np.float32) / 255.0
     inside = mask_u8 >= 128
     if not inside.any():
-        return img.clip(0.0, 1.0)
-    known = (~inside)[..., None].astype(np.float32)        # 1 = real skin, 0 = socket to fill
-    work = img.copy()
-    if known.sum() > 0:
-        avg = (img * known).reshape(-1, 3).sum(0) / float(known.sum())
-        work[inside] = avg                                 # seed so the blur isn't biased by socket content
+        return frame_u8.astype(np.float32) / 255.0
+    r = max(5, int(radius))
+    filled = cv2.inpaint(frame_u8, (inside.astype(np.uint8)) * 255, r, cv2.INPAINT_NS)
     ksize = max(3, int(radius) | 1)
-    for _ in range(24):                                    # diffuse surrounding colour inward
-        work = cv2.GaussianBlur(work, (ksize, ksize), 0)
-        work = work * (1.0 - known) + img * known          # restore the real skin each pass
-    return work.clip(0.0, 1.0)
+    smooth = cv2.GaussianBlur(filled, (ksize, ksize), 0).astype(np.float32)
+    m3 = inside[..., None].astype(np.float32)              # smooth fill inside, original outside
+    out = (smooth * m3 + frame_u8.astype(np.float32) * (1.0 - m3)) / 255.0
+    return out.clip(0.0, 1.0)
 
 
 def _inpaint_zone(
@@ -553,7 +549,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 # ── Fill ─────────────────────────────────────────────────────
                 io.Combo.Input("fill_mode", options=_FILL_MODES, default="flat", optional=True,
-                               tooltip="flat: fill_r/g/b. surround: diffuse surrounding skin colour into the socket (gradient). "
+                               tooltip="flat: fill_r/g/b. surround: fill the socket with surrounding skin colour (NS inpaint). "
                                        "inpaint: per-zone Telea."),
                 io.Boolean.Input("fill_from_guide", default=False, optional=True,
                                  tooltip="surround / inpaint only. When ON and image1 is connected: "

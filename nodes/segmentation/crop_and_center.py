@@ -73,36 +73,42 @@ class BD_CropAndCenter(io.ComfyNode):
             display_name="BD Crop and Center",
             category="🧠BrainDead/Segmentation",
             description=(
-                "Crop a part to its content bounding box, then paste it — at original scale — "
-                "onto a fixed-size canvas at a chosen anchor (center / edges / corners). Gives "
-                "every part a common pivot so they overlap correctly when channel-packed or "
-                "atlased. Content bbox comes from the wired mask, else the image's alpha (RGBA) "
-                "or luminance (cutout). Canvas defaults to the input size; no rescale unless "
-                "scale_to_fit is on. Outputs the recentered image, its mask, and a transform JSON."
+                "Crop an image to the bounding box of its mask (like AILab Crop-to-Object), with "
+                "optional centering. Bbox comes from the wired mask, else the image's alpha (RGBA) "
+                "or its difference from the border background colour.\n"
+                "  canvas_width = canvas_height = 0  → output the TIGHT CROP (just the bbox region).\n"
+                "  canvas_width / canvas_height > 0  → place the crop on that canvas at the anchor "
+                "(center / edges / corners), with optional scale_to_fit — this is the centering option.\n"
+                "flatten_to_mask makes content show only inside the mask (background fills the rest of "
+                "the crop). Outputs the cropped image, its mask, and a transform JSON."
             ),
             inputs=[
                 io.Image.Input("image"),
                 io.Mask.Input("mask", optional=True,
-                              tooltip="Optional mask defining the content bbox. If absent, bbox is taken "
-                                      "from the image's alpha (RGBA) or luminance."),
+                              tooltip="Mask defining the crop region (its bounding box). If absent, the bbox is "
+                                      "taken from the image's alpha (RGBA) or its difference from the border bg."),
                 io.Combo.Input("anchor", options=_ANCHORS, default="center", optional=True,
-                               tooltip="Where to place the cropped content on the canvas. center = shared pivot "
-                                       "(parts overlap). top/bottom/left/right + corners anchor by that edge."),
+                               tooltip="Placement on the canvas (only used when canvas_width/height > 0). "
+                                       "center = shared pivot; top/bottom/left/right + corners anchor by that edge."),
                 io.Int.Input("canvas_width", default=0, min=0, max=8192, step=8, optional=True,
-                             tooltip="Target canvas width. 0 = use the input image width (the original size)."),
+                             tooltip="0 = output the TIGHT CROP (no canvas). >0 = place the crop on a canvas this "
+                                     "wide at the anchor. (If only one of width/height is >0, the other uses the input size.)"),
                 io.Int.Input("canvas_height", default=0, min=0, max=8192, step=8, optional=True,
-                             tooltip="Target canvas height. 0 = use the input image height."),
+                             tooltip="0 = tight crop (no canvas). >0 = canvas height for centering."),
                 io.Int.Input("pad", default=0, min=0, max=1024, step=1, optional=True,
-                             tooltip="Pixels of margin added around the detected content before placing."),
+                             tooltip="Pixels of margin added around the mask bbox before cropping (AILab-style padding)."),
                 io.Float.Input("threshold", default=0.02, min=0.0, max=1.0, step=0.01, optional=True,
-                               tooltip="Pixel value above which a pixel counts as content (for bbox detection)."),
+                               tooltip="Mask/alpha value above which a pixel counts as content (for the bbox)."),
                 io.Boolean.Input("scale_to_fit", default=False, optional=True,
-                                 tooltip="On = scale the cropped content to FIT the canvas (longest side → canvas), "
-                                         "preserving aspect — scales UP small content and DOWN oversized content, "
-                                         "then places it at the anchor. Off = keep original pixel scale (re-pivot "
-                                         "only) and clip any overflow. Turn ON for crop → scale → anchor."),
+                                 tooltip="Canvas mode only. On = scale the crop to FIT the canvas (longest side → "
+                                         "canvas), preserving aspect (up or down), then anchor. Off = keep original "
+                                         "pixel scale (re-pivot only)."),
                 io.String.Input("background_hex", default="#000000", optional=True,
-                                tooltip="Canvas fill colour. Mask + (for RGBA) alpha pad regions are always 0."),
+                                tooltip="Background fill for masked-out / padded regions."),
+                io.Boolean.Input("flatten_to_mask", default=True, optional=True,
+                                 tooltip="On = content shows only inside the mask; the background colour fills the "
+                                         "rest of the crop (and alpha = mask for RGBA). Off = output the raw "
+                                         "rectangular crop (exactly like AILab Crop-to-Object)."),
             ],
             outputs=[
                 io.Image.Output(display_name="image"),
@@ -113,13 +119,14 @@ class BD_CropAndCenter(io.ComfyNode):
 
     @classmethod
     def execute(cls, image, mask=None, anchor="center", canvas_width=0, canvas_height=0,
-                pad=0, threshold=0.02, scale_to_fit=False, background_hex="#000000") -> io.NodeOutput:
+                pad=0, threshold=0.02, scale_to_fit=False, background_hex="#000000",
+                flatten_to_mask=True) -> io.NodeOutput:
         img = (image if image.ndim == 4 else image.unsqueeze(0)).detach().to("cpu").float()
         B, H, W, C = img.shape
         bg = _hex_to_rgb(background_hex)
-        cw = int(canvas_width) if canvas_width > 0 else W
-        ch = int(canvas_height) if canvas_height > 0 else H
+        bg_t = torch.tensor(bg, dtype=torch.float32)
         thr = float(threshold)
+        use_canvas = (int(canvas_width) > 0 or int(canvas_height) > 0)
 
         # mask frames aligned to the batch (optional)
         mframes = None
@@ -131,90 +138,98 @@ class BD_CropAndCenter(io.ComfyNode):
                 m = m.squeeze(-1) if m.shape[-1] == 1 else m[:, 0]
             mframes = m
 
-        out_imgs, out_masks, transforms = [], [], []
+        # ── 1. per-frame: detect content → crop tight to the mask bbox → optional flatten ──
+        crops, cmasks, transforms = [], [], []
         for i in range(B):
             frame = img[i]                       # (H, W, C)
-            # ── detect content ──
             if mframes is not None:
                 mm = mframes[min(i, mframes.shape[0] - 1)]
                 if mm.shape != (H, W):
                     mm = _resize_hw(mm.unsqueeze(-1), H, W)[..., 0]
-                active = (mm >= thr).numpy()
                 content_mask = mm.clamp(0, 1)
             elif C >= 4:
                 content_mask = frame[..., 3].clamp(0, 1)
-                active = (content_mask >= thr).numpy()
             else:
-                # No mask/alpha: content = pixels that DIFFER from the border background colour.
-                # (Raw luminance fails on a white/light bg — it reads the whole frame as content.)
+                # No mask/alpha: content = pixels DIFFERING from the border background colour
+                # (raw luminance reads a white/light bg as content).
                 rgb = frame[..., :3]
                 border = torch.cat([rgb[0, :], rgb[-1, :], rgb[:, 0], rgb[:, -1]], dim=0).reshape(-1, 3)
-                bg_col = border.median(dim=0).values
-                diff = (rgb - bg_col).abs().amax(dim=-1).clamp(0, 1)
+                diff = (rgb - border.median(dim=0).values).abs().amax(dim=-1).clamp(0, 1)
                 content_mask = (diff >= thr).float()
-                active = (diff >= thr).numpy()
+            active = (content_mask >= thr).numpy()
 
             bb = _bbox(active)
-            # ── build canvas ──
+            if bb is None:                       # nothing detected → keep the whole frame
+                x1, y1, x2, y2 = 0, 0, W, H
+            else:
+                x1, y1, x2, y2 = bb
+                x1 = max(0, x1 - pad); y1 = max(0, y1 - pad)
+                x2 = min(W, x2 + pad); y2 = min(H, y2 + pad)
+
+            crop = frame[y1:y2, x1:x2, :].clone()             # the TIGHT crop (AILab core)
+            cmask = content_mask[y1:y2, x1:x2].clamp(0, 1)
+            if flatten_to_mask:                               # content only inside the mask
+                cm3 = cmask.unsqueeze(-1)
+                crop[..., :3] = crop[..., :3] * cm3 + bg_t * (1.0 - cm3)
+                if C >= 4:
+                    crop[..., 3] = cmask
+            crops.append(crop); cmasks.append(cmask)
+            transforms.append({"frame": i, "src_bbox": [x1, y1, x2, y2],
+                               "crop_size": [x2 - x1, y2 - y1]})
+
+        # ── 2a. TIGHT-CROP output (canvas off) — pad batch to a common max size so frames stack ──
+        if not use_canvas:
+            mh = max(c.shape[0] for c in crops); mw = max(c.shape[1] for c in crops)
+            out_imgs, out_masks = [], []
+            for crop, cmask, t in zip(crops, cmasks, transforms):
+                bh, bw = crop.shape[0], crop.shape[1]
+                ox, oy = _anchor_offset(anchor, mw, mh, bw, bh)
+                canvas = torch.empty((mh, mw, C), dtype=torch.float32)
+                canvas[..., 0], canvas[..., 1], canvas[..., 2] = bg
+                if C >= 4:
+                    canvas[..., 3] = 0.0
+                mcanvas = torch.zeros((mh, mw), dtype=torch.float32)
+                canvas[oy:oy + bh, ox:ox + bw, :] = crop
+                mcanvas[oy:oy + bh, ox:ox + bw] = cmask
+                out_imgs.append(canvas.clamp(0, 1)); out_masks.append(mcanvas)
+                t.update({"output": [mw, mh], "placed_at": [ox, oy], "mode": "crop"})
+            print(f"[BD_CropAndCenter] {B} frame(s) → TIGHT CROP {mw}x{mh} "
+                  f"(flatten={'yes' if flatten_to_mask else 'no'})")
+            return io.NodeOutput(torch.stack(out_imgs, 0), torch.stack(out_masks, 0),
+                                 json.dumps(transforms if B > 1 else transforms[0]))
+
+        # ── 2b. CANVAS output (centering) — place each crop on the canvas at the anchor ──
+        cw = int(canvas_width) if canvas_width > 0 else W
+        ch = int(canvas_height) if canvas_height > 0 else H
+        out_imgs, out_masks = [], []
+        for crop, cmask, t in zip(crops, cmasks, transforms):
+            bh, bw = crop.shape[0], crop.shape[1]
+            scale = 1.0
+            if scale_to_fit:
+                scale = min(cw / bw, ch / bh)         # fit longest side (up or down), keep aspect
+                nh, nw = max(1, round(bh * scale)), max(1, round(bw * scale))
+                crop = _resize_hw(crop, nh, nw)
+                cmask = _resize_hw(cmask.unsqueeze(-1), nh, nw)[..., 0]
+                bh, bw = nh, nw
             canvas = torch.empty((ch, cw, C), dtype=torch.float32)
             canvas[..., 0], canvas[..., 1], canvas[..., 2] = bg
             if C >= 4:
                 canvas[..., 3] = 0.0
             mcanvas = torch.zeros((ch, cw), dtype=torch.float32)
-
-            if bb is None:
-                out_imgs.append(canvas); out_masks.append(mcanvas)
-                transforms.append({"frame": i, "bbox": None, "note": "no content"})
-                continue
-
-            x1, y1, x2, y2 = bb
-            x1 = max(0, x1 - pad); y1 = max(0, y1 - pad)
-            x2 = min(W, x2 + pad); y2 = min(H, y2 + pad)
-            crop = frame[y1:y2, x1:x2, :]
-            cmask = content_mask[y1:y2, x1:x2]
-            bh, bw = crop.shape[0], crop.shape[1]
-
-            scale = 1.0
-            if scale_to_fit:
-                # Scale the cropped content to FIT the canvas (longest side → canvas),
-                # preserving aspect — scales UP for small content, DOWN for oversized.
-                scale = min(cw / bw, ch / bh)
-                nh, nw = max(1, round(bh * scale)), max(1, round(bw * scale))
-                crop = _resize_hw(crop, nh, nw)
-                cmask = _resize_hw(cmask.unsqueeze(-1), nh, nw)[..., 0]
-                bh, bw = nh, nw
-
             ox, oy = _anchor_offset(anchor, cw, ch, bw, bh)
-            # clip to canvas (overflow when not scaling)
             sx, sy = max(0, -ox), max(0, -oy)
             dx, dy = max(0, ox), max(0, oy)
-            pw = min(bw - sx, cw - dx)
-            ph = min(bh - sy, ch - dy)
+            pw = min(bw - sx, cw - dx); ph = min(bh - sy, ch - dy)
             if pw > 0 and ph > 0:
-                reg_rgb = crop[sy:sy + ph, sx:sx + pw, :3]
-                reg_m = cmask[sy:sy + ph, sx:sx + pw].clamp(0, 1).unsqueeze(-1)   # (ph, pw, 1)
-                bg_t = torch.tensor(bg, dtype=torch.float32)
-                # FLATTEN TO THE MASK: content shows only inside the mask, background fills
-                # the rest of the bbox — so the output is cropped to the mask shape, not a
-                # rectangular paste of everything inside the bounding box.
-                canvas[dy:dy + ph, dx:dx + pw, :3] = reg_rgb * reg_m + bg_t * (1.0 - reg_m)
-                if C >= 4:
-                    canvas[dy:dy + ph, dx:dx + pw, 3] = cmask[sy:sy + ph, sx:sx + pw]
+                canvas[dy:dy + ph, dx:dx + pw, :] = crop[sy:sy + ph, sx:sx + pw, :]
                 mcanvas[dy:dy + ph, dx:dx + pw] = cmask[sy:sy + ph, sx:sx + pw]
-
-            out_imgs.append(canvas.clamp(0, 1))
-            out_masks.append(mcanvas.clamp(0, 1))
-            transforms.append({
-                "frame": i, "src_bbox": [x1, y1, x2, y2], "content_size": [bw, bh],
-                "canvas": [cw, ch], "anchor": anchor, "placed_at": [int(dx), int(dy)],
-                "scale": round(float(scale), 4),
-            })
-
-        out_img = torch.stack(out_imgs, dim=0)
-        out_mask = torch.stack(out_masks, dim=0)
-        print(f"[BD_CropAndCenter] {B} frame(s) -> {cw}x{ch} canvas, anchor={anchor}, "
+            out_imgs.append(canvas.clamp(0, 1)); out_masks.append(mcanvas)
+            t.update({"output": [cw, ch], "placed_at": [int(dx), int(dy)],
+                      "scale": round(float(scale), 4), "anchor": anchor, "mode": "canvas"})
+        print(f"[BD_CropAndCenter] {B} frame(s) → CANVAS {cw}x{ch} anchor={anchor} "
               f"scale_to_fit={'yes' if scale_to_fit else 'no'}")
-        return io.NodeOutput(out_img, out_mask, json.dumps(transforms if B > 1 else transforms[0]))
+        return io.NodeOutput(torch.stack(out_imgs, 0), torch.stack(out_masks, 0),
+                             json.dumps(transforms if B > 1 else transforms[0]))
 
 
 CROP_AND_CENTER_V3_NODES = [BD_CropAndCenter]
