@@ -33,6 +33,21 @@ from .face_mp_sam3 import _fill_holes, _refine_feature_mask
 _MODEL_PATH = find_mediapipe_model()
 
 
+def _smooth_silhouette(mask_u8: np.ndarray, px: int) -> np.ndarray:
+    """Round the silhouette boundary into a smooth curve — kills the lumpy SegFormer blockiness
+    and the sharp chin corners from the neck-sever, giving an S-type jaw/chin line. Close fills
+    concave notches, open shaves convex bumps, then a Gaussian + re-threshold smooths the edge."""
+    if px <= 0 or not HAS_CV2:
+        return mask_u8
+    k = max(3, int(px) | 1)
+    el = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    m = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, el)
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, el)
+    g = max(3, int(px * 2) | 1)
+    m = cv2.GaussianBlur(m.astype(np.float32), (g, g), 0)
+    return (m >= 127.5).astype(np.uint8) * 255
+
+
 def _orientation(lm, W: int) -> str:
     """Rough front/side classification from landmark symmetry — informational only.
     nose tip (1) vs the left (234) / right (454) face edges."""
@@ -81,6 +96,10 @@ class BD_HeadCutout(io.ComfyNode):
                 io.Combo.Input("cutout_bg", options=["transparent", "black", "white"], default="transparent",
                                optional=True,
                                tooltip="Background for the head_cutout image: transparent = RGBA; black/white = baked RGB."),
+                io.Int.Input("smooth", default=12, min=0, max=64, step=1, optional=True,
+                             tooltip="Smooth the head boundary into an S-type jaw/chin curve (1536px-normalised, "
+                                     "auto-scales with resolution). Rounds the lumpy SegFormer edge + the sharp "
+                                     "neck-sever corners. 0 = raw silhouette; higher = smoother/rounder."),
                 io.Combo.Input("edge_refine", options=["off", "guided", "matting", "vitmatte"], default="off",
                                optional=True,
                                tooltip="Snap the head edge to the image: guided (fast), matting (soft hair), "
@@ -102,7 +121,7 @@ class BD_HeadCutout(io.ComfyNode):
     @classmethod
     def execute(cls, image, head_prompts="head\nface\nhair\near",
                 exclude_prompts="neck\nshirt\nclothing\nshoulder", neck_cut=True,
-                cutout_bg="transparent", edge_refine="off", refine_radius=8, refine_eps=1e-4,
+                cutout_bg="transparent", smooth=12, edge_refine="off", refine_radius=8, refine_eps=1e-4,
                 refine_threshold=0.5, vitmatte_model="small", mask_threshold=0.5) -> io.NodeOutput:
         if image.ndim == 3:
             image = image.unsqueeze(0)
@@ -184,7 +203,9 @@ class BD_HeadCutout(io.ComfyNode):
                 band = nc.copy()
                 if area > 0.005:
                     bw = max(15, int(0.05 * W)) | 1
-                    band = cv2.dilate(band, cv2.getStructuringElement(cv2.MORPH_RECT, (bw, 3)))
+                    # elliptical (not rectangular) bridge → the sever follows a rounded curve
+                    # under the jaw instead of a flat horizontal line with sharp chin corners
+                    band = cv2.dilate(band, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (bw, max(5, bw // 3) | 1)))
                 head_sil[band > 0] = 0
                 parts.append(f"faceparse{100.0 * area:.1f}%")
                 nlbl, lab, stats, _ = cv2.connectedComponentsWithStats((head_sil > 0).astype(np.uint8), 8)
@@ -207,6 +228,8 @@ class BD_HeadCutout(io.ComfyNode):
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
         head_sil = cv2.morphologyEx(head_sil, cv2.MORPH_CLOSE, k)
         head_sil = _fill_holes(head_sil)
+        # smooth the boundary into an S-type jaw/chin curve (resolution-scaled)
+        head_sil = _smooth_silhouette(head_sil, int(round(smooth * max(H, W) / 1536.0)))
         if edge_refine != "off":
             try:
                 head_sil = _refine_feature_mask(head_sil, np_img, edge_refine,
