@@ -115,6 +115,19 @@ Use after: BD_CuMeshSimplify → BD_UVUnwrap → THIS NODE""",
         if voxelgrid is None:
             return error_return("No voxelgrid provided")
 
+        # Ensure OUTWARD-facing winding before baking. Inward/inside-out faces (which
+        # CuMesh's unify_face_orientations does NOT correct — it only unifies winding per
+        # component, not direction) scramble the tangent-space normal bake and get back-face
+        # culled by nvdiffrast → missing/garbled texels. This covers BOTH the Trellis2 and
+        # Pixal3D paths at the shared bake; idempotent when normals are already outward.
+        try:
+            from ..trellis2.utils.helpers import fix_normals_outward
+            if hasattr(mesh, "vertices") and hasattr(mesh, "faces") and len(mesh.faces):
+                mesh.faces = fix_normals_outward(np.asarray(mesh.vertices, dtype=np.float32),
+                                                 np.asarray(mesh.faces))
+        except Exception as e:
+            print(f"[BD OVoxel Texture Bake] fix_normals_outward skipped: {e}", flush=True)
+
         # Check mesh has UVs
         has_uvs = (
             hasattr(mesh, 'visual')
