@@ -1,8 +1,8 @@
 {
   "id": "bd-pixal3d-textured",
   "revision": 0,
-  "last_node_id": 10,
-  "last_link_id": 10,
+  "last_node_id": 11,
+  "last_link_id": 11,
   "nodes": [
     {
       "id": 1,
@@ -186,8 +186,7 @@
           "name": "mesh",
           "type": "TRIMESH",
           "links": [
-            5,
-            6
+            5
           ],
           "slot_index": 0
         },
@@ -195,8 +194,8 @@
           "name": "diffuse",
           "type": "IMAGE",
           "links": [
-            7,
-            9
+            8,
+            10
           ],
           "slot_index": 1
         },
@@ -204,8 +203,8 @@
           "name": "normal",
           "type": "IMAGE",
           "links": [
-            8,
-            10
+            9,
+            11
           ],
           "slot_index": 2
         },
@@ -248,9 +247,58 @@
     },
     {
       "id": 5,
-      "type": "BD_Preview3D",
+      "type": "BD_OrientMesh",
       "pos": [
         1460,
+        80
+      ],
+      "size": [
+        300,
+        180
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            6,
+            7
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_OrientMesh"
+      },
+      "widgets_values": [
+        180.0,
+        0.0,
+        0.0,
+        true
+      ],
+      "title": "\u2464 Orient Mesh (Pixal3D \u2192 upright/forward)"
+    },
+    {
+      "id": 6,
+      "type": "BD_Preview3D",
+      "pos": [
+        1800,
         80
       ],
       "size": [
@@ -258,7 +306,7 @@
         120
       ],
       "flags": {},
-      "order": 4,
+      "order": 5,
       "mode": 0,
       "inputs": [
         {
@@ -269,7 +317,7 @@
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 5
+          "link": 6
         }
       ],
       "outputs": [
@@ -286,13 +334,13 @@
       "widgets_values": [
         true
       ],
-      "title": "\u2464 Preview 3D (textured mesh)"
+      "title": "\u2465 Preview 3D (textured mesh)"
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "BD_ExportMeshWithColors",
       "pos": [
-        1460,
+        1800,
         240
       ],
       "size": [
@@ -300,23 +348,23 @@
         260
       ],
       "flags": {},
-      "order": 5,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 6
+          "link": 7
         },
         {
           "name": "diffuse",
           "type": "IMAGE",
-          "link": 7
+          "link": 8
         },
         {
           "name": "normal",
           "type": "IMAGE",
-          "link": 8
+          "link": 9
         }
       ],
       "outputs": [
@@ -345,44 +393,14 @@
         "",
         ""
       ],
-      "title": "\u2465 Export Mesh (.glb)"
-    },
-    {
-      "id": 7,
-      "type": "SaveImage",
-      "pos": [
-        1460,
-        540
-      ],
-      "size": [
-        300,
-        270
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 9
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "SaveImage"
-      },
-      "widgets_values": [
-        "pixal3d/diffuse"
-      ],
-      "title": "\u2466 Save Diffuse"
+      "title": "\u2466 Export Mesh (.glb)"
     },
     {
       "id": 8,
       "type": "SaveImage",
       "pos": [
-        1460,
-        840
+        1800,
+        540
       ],
       "size": [
         300,
@@ -403,12 +421,42 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "pixal3d/normal"
+        "pixal3d/diffuse"
       ],
-      "title": "\u2467 Save Normal"
+      "title": "\u2467 Save Diffuse"
     },
     {
       "id": 9,
+      "type": "SaveImage",
+      "pos": [
+        1800,
+        840
+      ],
+      "size": [
+        300,
+        270
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 11
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "pixal3d/normal"
+      ],
+      "title": "\u2468 Save Normal"
+    },
+    {
+      "id": 10,
       "type": "PreviewImage",
       "pos": [
         380,
@@ -419,7 +467,7 @@
         280
       ],
       "flags": {},
-      "order": 8,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
@@ -436,7 +484,7 @@
       "title": "Preprocessed Input"
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "MarkdownNote",
       "pos": [
         40,
@@ -447,13 +495,13 @@
         300
       ],
       "flags": {},
-      "order": 9,
+      "order": 10,
       "mode": 0,
       "inputs": [],
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "## Pixal3D Image \u2192 Textured 3D\n\nTencentARC **Pixal3D** single-image \u2192 textured mesh.\n\n- **Preprocess** \u2014 FOV estimate + background removal \u2192 pixal3d_input\n- **Image\u21923D** \u2014 `pipeline_type=1024_cascade` generates the **mesh + coloured voxelgrid** (shape + texture passes)\n- **OVoxel Bake** (all-in-one) \u2014 decimate + UV unwrap + bake the voxelgrid \u2192 **diffuse / normal / metallic / roughness** PBR maps + a clean UV'd mesh\n- **Preview 3D** (textured) + **Export .glb** + save diffuse/normal\n\nNeeds the Pixal3D model at `TencentARC/Pixal3D` (auto-downloads on first run). GPU + a few minutes per run."
+        "## Pixal3D Image \u2192 Textured 3D\n\nTencentARC **Pixal3D** single-image \u2192 textured mesh.\n\n- **Preprocess** \u2014 FOV estimate + background removal \u2192 pixal3d_input\n- **Image\u21923D** \u2014 `pipeline_type=1024_cascade` generates the **mesh + coloured voxelgrid** (shape + texture passes)\n- **OVoxel Bake** (all-in-one) \u2014 decimate + UV unwrap + bake the voxelgrid \u2192 **diffuse / normal / metallic / roughness** PBR maps + a clean UV'd mesh\n- **Orient Mesh** \u2014 Pixal3D comes out lying down / facing up; `rotate_x=180` stands it upright facing forward (UV/material/vertex colors preserved)\n- **Preview 3D** (textured) + **Export .glb** + save diffuse/normal\n\nNeeds the Pixal3D model at `TencentARC/Pixal3D` (auto-downloads on first run). GPU + a few minutes per run."
       ],
       "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead Pixal3D Textured"
     }
@@ -479,7 +527,7 @@
       3,
       2,
       1,
-      9,
+      10,
       0,
       "IMAGE"
     ],
@@ -496,46 +544,54 @@
       4,
       0,
       5,
-      1,
+      0,
       "TRIMESH"
     ],
     [
       6,
-      4,
+      5,
       0,
       6,
-      0,
+      1,
       "TRIMESH"
     ],
     [
       7,
-      4,
-      1,
-      6,
-      1,
-      "IMAGE"
+      5,
+      0,
+      7,
+      0,
+      "TRIMESH"
     ],
     [
       8,
       4,
-      2,
-      6,
-      2,
+      1,
+      7,
+      1,
       "IMAGE"
     ],
     [
       9,
       4,
-      1,
+      2,
       7,
-      0,
+      2,
       "IMAGE"
     ],
     [
       10,
       4,
-      2,
+      1,
       8,
+      0,
+      "IMAGE"
+    ],
+    [
+      11,
+      4,
+      2,
+      9,
       0,
       "IMAGE"
     ]
