@@ -153,6 +153,7 @@ link(load, "IMAGE", cond, "image")            # conditioning does its own alpha/
 link(rmbg, "MASK", cond, "mask")
 link(load, "IMAGE", pv_pre, "images")
 link(cond, "conditioning", shape, "conditioning")
+link(cond, "conditioning", tex, "conditioning")   # tex needs BOTH conditioning + shape_result
 link(shape, "shape_result", tex, "shape_result")
 link(tex, "voxelgrid", bake, "voxelgrid")
 link(bake, "mesh", samp, "mesh")
