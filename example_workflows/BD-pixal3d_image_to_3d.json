@@ -1,8 +1,8 @@
 {
   "id": "bd-pixal3d-textured",
   "revision": 0,
-  "last_node_id": 11,
-  "last_link_id": 10,
+  "last_node_id": 12,
+  "last_link_id": 11,
   "nodes": [
     {
       "id": 1,
@@ -64,16 +64,6 @@
           "link": 1
         },
         {
-          "name": "background",
-          "type": "COMBO",
-          "link": null
-        },
-        {
-          "name": "fov_mode",
-          "type": "COMBO",
-          "link": null
-        },
-        {
           "name": "mask",
           "type": "MASK",
           "link": null
@@ -101,6 +91,8 @@
         "Node name for S&R": "BD_Pixal3DPreprocess"
       },
       "widgets_values": [
+        "black",
+        "auto_moge",
         0.2,
         1.0,
         0
@@ -126,11 +118,6 @@
           "name": "pixal3d_input",
           "type": "PIXAL3D_INPUT",
           "link": 2
-        },
-        {
-          "name": "pipeline_type",
-          "type": "COMBO",
-          "link": null
         }
       ],
       "outputs": [
@@ -146,7 +133,7 @@
           "name": "voxelgrid",
           "type": "VOXELGRID",
           "links": [
-            6
+            7
           ],
           "slot_index": 1
         }
@@ -156,6 +143,7 @@
       },
       "widgets_values": [
         42,
+        "1024_cascade",
         49152,
         7.5,
         0.7,
@@ -233,14 +221,14 @@
     },
     {
       "id": 5,
-      "type": "BD_OVoxelTextureBake",
+      "type": "BD_UVUnwrap",
       "pos": [
         1420,
         80
       ],
       "size": [
         300,
-        200
+        240
       ],
       "flags": {},
       "order": 4,
@@ -250,11 +238,6 @@
           "name": "mesh",
           "type": "TRIMESH",
           "link": 5
-        },
-        {
-          "name": "voxelgrid",
-          "type": "VOXELGRID",
-          "link": 6
         }
       ],
       "outputs": [
@@ -262,8 +245,65 @@
           "name": "mesh",
           "type": "TRIMESH",
           "links": [
-            7,
-            8
+            6
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_UVUnwrap"
+      },
+      "widgets_values": [
+        "blender_smart_uv",
+        true,
+        66.0,
+        0.02,
+        0,
+        1,
+        1.0,
+        300
+      ],
+      "title": "\u2464 UV Unwrap"
+    },
+    {
+      "id": 6,
+      "type": "BD_OVoxelTextureBake",
+      "pos": [
+        1760,
+        80
+      ],
+      "size": [
+        300,
+        200
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 6
+        },
+        {
+          "name": "voxelgrid",
+          "type": "VOXELGRID",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            8,
+            9
           ],
           "slot_index": 0
         },
@@ -271,7 +311,7 @@
           "name": "diffuse",
           "type": "IMAGE",
           "links": [
-            9
+            10
           ],
           "slot_index": 1
         },
@@ -279,7 +319,7 @@
           "name": "normal",
           "type": "IMAGE",
           "links": [
-            10
+            11
           ],
           "slot_index": 2
         },
@@ -315,13 +355,13 @@
         2048,
         3
       ],
-      "title": "\u2464 OVoxel Texture Bake (PBR)"
+      "title": "\u2465 OVoxel Texture Bake (PBR)"
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "BD_Preview3D",
       "pos": [
-        1760,
+        2100,
         80
       ],
       "size": [
@@ -329,7 +369,7 @@
         120
       ],
       "flags": {},
-      "order": 5,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
@@ -340,7 +380,7 @@
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 7
+          "link": 8
         }
       ],
       "outputs": [
@@ -357,13 +397,13 @@
       "widgets_values": [
         true
       ],
-      "title": "\u2465 Preview 3D (textured mesh)"
+      "title": "\u2466 Preview 3D (textured mesh)"
     },
     {
-      "id": 7,
+      "id": 8,
       "type": "BD_ExportMeshWithColors",
       "pos": [
-        1760,
+        2100,
         240
       ],
       "size": [
@@ -371,18 +411,13 @@
         260
       ],
       "flags": {},
-      "order": 6,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 8
-        },
-        {
-          "name": "format",
-          "type": "COMBO",
-          "link": null
+          "link": 9
         }
       ],
       "outputs": [
@@ -404,50 +439,21 @@
       },
       "widgets_values": [
         "pixal3d_textured",
+        "glb",
         "",
         true,
         "",
         "",
         ""
       ],
-      "title": "\u2466 Export Mesh (.glb)"
-    },
-    {
-      "id": 8,
-      "type": "SaveImage",
-      "pos": [
-        1760,
-        540
-      ],
-      "size": [
-        300,
-        270
-      ],
-      "flags": {},
-      "order": 7,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 9
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "SaveImage"
-      },
-      "widgets_values": [
-        "pixal3d/diffuse"
-      ],
-      "title": "\u2467 Save Diffuse"
+      "title": "\u2467 Export Mesh (.glb)"
     },
     {
       "id": 9,
       "type": "SaveImage",
       "pos": [
-        1760,
-        840
+        2100,
+        540
       ],
       "size": [
         300,
@@ -468,12 +474,42 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "pixal3d/normal"
+        "pixal3d/diffuse"
       ],
-      "title": "\u2468 Save Normal"
+      "title": "\u2468 Save Diffuse"
     },
     {
       "id": 10,
+      "type": "SaveImage",
+      "pos": [
+        2100,
+        840
+      ],
+      "size": [
+        300,
+        270
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 11
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "pixal3d/normal"
+      ],
+      "title": "\u2469 Save Normal"
+    },
+    {
+      "id": 11,
       "type": "PreviewImage",
       "pos": [
         380,
@@ -484,7 +520,7 @@
         280
       ],
       "flags": {},
-      "order": 9,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
@@ -501,7 +537,7 @@
       "title": "Preprocessed Input"
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "MarkdownNote",
       "pos": [
         40,
@@ -512,7 +548,7 @@
         300
       ],
       "flags": {},
-      "order": 10,
+      "order": 11,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -544,7 +580,7 @@
       3,
       2,
       1,
-      10,
+      11,
       0,
       "IMAGE"
     ],
@@ -566,41 +602,49 @@
     ],
     [
       6,
+      5,
+      0,
+      6,
+      0,
+      "TRIMESH"
+    ],
+    [
+      7,
       3,
       1,
-      5,
+      6,
       1,
       "VOXELGRID"
     ],
     [
-      7,
-      5,
-      0,
-      6,
-      1,
-      "TRIMESH"
-    ],
-    [
       8,
-      5,
+      6,
       0,
       7,
-      0,
+      1,
       "TRIMESH"
     ],
     [
       9,
-      5,
-      1,
+      6,
+      0,
       8,
+      0,
+      "TRIMESH"
+    ],
+    [
+      10,
+      6,
+      1,
+      9,
       0,
       "IMAGE"
     ],
     [
-      10,
-      5,
+      11,
+      6,
       2,
-      9,
+      10,
       0,
       "IMAGE"
     ]

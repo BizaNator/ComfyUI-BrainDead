@@ -1,8 +1,8 @@
 {
   "id": "bd",
   "revision": 0,
-  "last_node_id": 20,
-  "last_link_id": 13,
+  "last_node_id": 21,
+  "last_link_id": 15,
   "nodes": [
     {
       "id": 1,
@@ -296,7 +296,8 @@
           "name": "mesh",
           "type": "TRIMESH",
           "links": [
-            9
+            9,
+            14
           ],
           "slot_index": 0
         },
@@ -345,7 +346,7 @@
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 9
+          "link": 15
         },
         {
           "name": "voxelgrid",
@@ -595,6 +596,58 @@
       "widgets_values": [
         "# TRELLIS2 \u2014 Shape \u2192 Textured, Game-Ready Mesh\n\nImage \u2192 high-quality 3D with **CuMesh sharp-edge simplify** + full **PBR texture bake**.\n\n**Flow:** Load Image \u2192 Remove BG \u2192 Get Conditioning \u2192 Image-to-Shape \u2192 Shape-to-Textured-Mesh \u2192 **CuMesh Simplify** \u2192 **OVoxel Texture Bake** \u2192 textured mesh + diffuse/normal/metallic/roughness.\nThe bake re-projects PBR from the voxelgrid onto the decimated mesh, so you get a clean low-poly **textured** GLB (Export) + an interactive Preview 3D.\n\nModels (TRELLIS.2-4B) auto-download on first run. ~12\u201316GB VRAM.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)"
       ]
+    },
+    {
+      "id": 21,
+      "type": "BD_UVUnwrap",
+      "pos": [
+        2120,
+        560
+      ],
+      "size": [
+        280,
+        240
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "title": "UV Unwrap (before bake)",
+      "properties": {
+        "Node name for S&R": "BD_UVUnwrap"
+      },
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            15
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "widgets_values": [
+        "blender_smart_uv",
+        true,
+        66.0,
+        0.02,
+        0,
+        1,
+        1.0,
+        300
+      ]
     }
   ],
   "links": [
@@ -663,14 +716,6 @@
       "VOXELGRID"
     ],
     [
-      9,
-      6,
-      0,
-      7,
-      0,
-      "TRIMESH"
-    ],
-    [
       10,
       7,
       0,
@@ -701,6 +746,22 @@
       11,
       0,
       "IMAGE"
+    ],
+    [
+      14,
+      6,
+      0,
+      21,
+      0,
+      "TRIMESH"
+    ],
+    [
+      15,
+      21,
+      0,
+      7,
+      0,
+      "TRIMESH"
     ]
   ],
   "groups": [],

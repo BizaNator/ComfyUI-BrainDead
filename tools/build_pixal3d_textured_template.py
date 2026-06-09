@@ -9,7 +9,9 @@ import json, os, urllib.request
 
 SRV = "http://127.0.0.1:8188"
 EW = os.path.join(os.path.dirname(__file__), "..", "example_workflows")
-WIDGET_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN"}   # everything else (IMAGE/TRIMESH/...) = a socket
+# Widget inputs: scalar types + combos (combos come as a list of options OR the string "COMBO"
+# with options in the 2nd element). Everything else (IMAGE/TRIMESH/VOXELGRID/...) is a socket.
+WIDGET_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"}
 
 _cache = {}
 def oi(t):
@@ -34,11 +36,14 @@ def widget_defaults(t):
         spec = alld[k]
         if not _is_widget(spec):
             continue
-        if isinstance(spec[0], list):
-            df = (spec[1].get('default') if len(spec) > 1 and isinstance(spec[1], dict) else None)
-            if df is None: df = spec[0][0] if spec[0] else None
+        meta = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+        if isinstance(spec[0], list):                 # list-style combo
+            df = meta.get('default', spec[0][0] if spec[0] else None)
+        elif spec[0] == "COMBO":                       # string-style combo (options in meta)
+            opts = meta.get('options', [])
+            df = meta.get('default', opts[0] if opts else None)
         else:
-            df = spec[1].get('default') if len(spec) > 1 and isinstance(spec[1], dict) else None
+            df = meta.get('default')
         out.append((k, df))
     return out
 
@@ -83,13 +88,14 @@ load = add("LoadImage", (40, 80), (300, 314), {"image": "example.png"}, title="�
 pre  = add("BD_Pixal3DPreprocess", (380, 80), (300, 240), {}, title="② Pixal3D Preprocess (FOV + bg)")
 gen  = add("BD_Pixal3DImageTo3D", (720, 80), (320, 460), {}, title="③ Pixal3D Image→3D (mesh + voxelgrid)")
 simp = add("BD_CuMeshSimplify", (1080, 80), (300, 320), {"target_faces": 50000}, title="④ CuMesh Simplify")
-bake = add("BD_OVoxelTextureBake", (1420, 80), (300, 200),
-           {"texture_size": 2048}, title="⑤ OVoxel Texture Bake (PBR)")
-prev3d = add("BD_Preview3D", (1760, 80), (300, 120), {}, title="⑥ Preview 3D (textured mesh)")
-export = add("BD_ExportMeshWithColors", (1760, 240), (300, 260),
-             {"filename": "pixal3d_textured", "format": "glb"}, title="⑦ Export Mesh (.glb)")
-sv_d = add("SaveImage", (1760, 540), (300, 270), {"filename_prefix": "pixal3d/diffuse"}, title="⑧ Save Diffuse")
-sv_n = add("SaveImage", (1760, 840), (300, 270), {"filename_prefix": "pixal3d/normal"}, title="⑨ Save Normal")
+uv = add("BD_UVUnwrap", (1420, 80), (300, 240), {}, title="⑤ UV Unwrap")
+bake = add("BD_OVoxelTextureBake", (1760, 80), (300, 200),
+           {"texture_size": 2048}, title="⑥ OVoxel Texture Bake (PBR)")
+prev3d = add("BD_Preview3D", (2100, 80), (300, 120), {}, title="⑦ Preview 3D (textured mesh)")
+export = add("BD_ExportMeshWithColors", (2100, 240), (300, 260),
+             {"filename": "pixal3d_textured", "format": "glb"}, title="⑧ Export Mesh (.glb)")
+sv_d = add("SaveImage", (2100, 540), (300, 270), {"filename_prefix": "pixal3d/diffuse"}, title="⑨ Save Diffuse")
+sv_n = add("SaveImage", (2100, 840), (300, 270), {"filename_prefix": "pixal3d/normal"}, title="⑩ Save Normal")
 pv_pre = add("PreviewImage", (380, 360), (300, 280), {}, title="Preprocessed Input")
 
 md = ("## Pixal3D Image → Textured 3D\n\n"
@@ -111,7 +117,8 @@ link(load, "IMAGE", pre, "image")
 link(pre, "pixal3d_input", gen, "pixal3d_input")
 link(pre, "preprocessed_image", pv_pre, "images")
 link(gen, "mesh", simp, "mesh")
-link(simp, "mesh", bake, "mesh")
+link(simp, "mesh", uv, "mesh")          # decimate strips UVs → unwrap before the bake
+link(uv, "mesh", bake, "mesh")
 link(gen, "voxelgrid", bake, "voxelgrid")
 link(bake, "mesh", prev3d, "mesh")
 link(bake, "mesh", export, "mesh")
