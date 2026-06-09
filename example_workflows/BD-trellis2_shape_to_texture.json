@@ -2,7 +2,7 @@
   "id": "bd",
   "revision": 0,
   "last_node_id": 21,
-  "last_link_id": 12,
+  "last_link_id": 14,
   "nodes": [
     {
       "id": 1,
@@ -346,6 +346,16 @@
           "name": "suffix",
           "type": "STRING",
           "link": null
+        },
+        {
+          "name": "diffuse",
+          "type": "IMAGE",
+          "link": 13
+        },
+        {
+          "name": "normal",
+          "type": "IMAGE",
+          "link": 14
         }
       ],
       "outputs": [
@@ -494,7 +504,8 @@
           "name": "diffuse",
           "type": "IMAGE",
           "links": [
-            10
+            10,
+            13
           ],
           "slot_index": 1
         },
@@ -502,7 +513,8 @@
           "name": "normal",
           "type": "IMAGE",
           "links": [
-            11
+            11,
+            14
           ],
           "slot_index": 2
         },
@@ -627,6 +639,22 @@
       2,
       11,
       0,
+      "IMAGE"
+    ],
+    [
+      13,
+      21,
+      1,
+      9,
+      3,
+      "IMAGE"
+    ],
+    [
+      14,
+      21,
+      2,
+      9,
+      4,
       "IMAGE"
     ]
   ],
