@@ -218,6 +218,11 @@ Returns:
 
         vertices = unified_verts.cpu().numpy().astype(np.float32)
         faces = unified_faces.cpu().numpy()
+        # Fix normals to point outward (unify only ensures consistent winding, not direction).
+        # Restored Jun-2026 — removing this (perf, Jan) caused inside-out chunks + scrambled
+        # texture baking. The helper is now vectorised so it's fast even on multi-M-face meshes.
+        from .utils.helpers import fix_normals_outward
+        faces = fix_normals_outward(vertices, faces)
         del cumesh, unified_verts, unified_faces
 
         # Coordinate system conversion (Y-up to Z-up) for output mesh

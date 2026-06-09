@@ -186,56 +186,41 @@ def fix_normals_outward(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
     # Compute face centers
     face_centers = (v0 + v1 + v2) / 3.0
 
-    # Build face adjacency graph from shared edges
-    # Each edge is represented by sorted vertex pair
-    edge_to_faces = {}
-    for fi in range(n_faces):
-        for ei in range(3):
-            e = tuple(sorted([faces[fi, ei], faces[fi, (ei + 1) % 3]]))
-            if e in edge_to_faces:
-                edge_to_faces[e].append(fi)
-            else:
-                edge_to_faces[e] = [fi]
+    # Build face adjacency from shared edges — VECTORISED (the old Python double-loop over
+    # n_faces × 3 was the bottleneck that got this removed for perf on 2M-face meshes).
+    # 3 edges per face → sort each edge → group identical edges → faces sharing an edge are adjacent.
+    fidx = np.arange(n_faces)
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0)  # (3F, 2)
+    edges = np.sort(edges, axis=1)
+    edge_face = np.concatenate([fidx, fidx, fidx])                                          # (3F,)
+    order = np.lexsort((edges[:, 1], edges[:, 0]))
+    edges_s, faces_s = edges[order], edge_face[order]
+    same = np.all(edges_s[1:] == edges_s[:-1], axis=1)                                      # consecutive equal edges
+    pos = np.where(same)[0]
+    rows, cols = faces_s[pos], faces_s[pos + 1]
 
-    # Build sparse adjacency matrix
-    rows, cols = [], []
-    for edge_faces in edge_to_faces.values():
-        if len(edge_faces) == 2:
-            rows.extend([edge_faces[0], edge_faces[1]])
-            cols.extend([edge_faces[1], edge_faces[0]])
-
-    if not rows:
-        # No adjacency — use global heuristic
-        mesh_center = vertices.mean(axis=0)
-        to_outside = face_centers - mesh_center
-        dots = np.sum(face_normals * to_outside, axis=1)
+    mesh_center = vertices.mean(axis=0)
+    if rows.size == 0:
+        # No adjacency — global heuristic
+        dots = np.sum(face_normals * (face_centers - mesh_center), axis=1)
         if dots.mean() < 0:
             faces = faces[:, ::-1]
             print(f"[BD TRELLIS2] fix_normals_outward: flipped all {n_faces} faces (no adjacency)")
         return faces
 
-    data = np.ones(len(rows))
-    graph = csr_matrix((data, (rows, cols)), shape=(n_faces, n_faces))
+    graph = csr_matrix((np.ones(rows.size * 2),
+                        (np.concatenate([rows, cols]), np.concatenate([cols, rows]))),
+                       shape=(n_faces, n_faces))
     n_comp, labels = connected_components(graph, directed=False)
 
-    # For each component, check if normals point outward
-    mesh_center = vertices.mean(axis=0)
-    total_flipped = 0
-
-    for c in range(n_comp):
-        comp_mask = labels == c
-        comp_centers = face_centers[comp_mask]
-        comp_normals = face_normals[comp_mask]
-
-        # Direction from mesh center to face center = "outward"
-        to_outside = comp_centers - mesh_center
-        dots = np.sum(comp_normals * to_outside, axis=1)
-
-        if dots.mean() < 0:
-            # Majority of normals point inward — flip this component
-            idx = np.where(comp_mask)[0]
-            faces[idx] = faces[idx][:, ::-1]
-            total_flipped += len(idx)
+    # Per-component outward test — VECTORISED (bincount mean dot per component, flip inward ones).
+    dots = np.sum(face_normals * (face_centers - mesh_center), axis=1)                      # (F,)
+    comp_mean = (np.bincount(labels, weights=dots, minlength=n_comp)
+                 / np.maximum(np.bincount(labels, minlength=n_comp), 1))
+    flip_face = (comp_mean < 0)[labels]                                                     # (F,) bool
+    if flip_face.any():
+        faces[flip_face] = faces[flip_face][:, ::-1]
+    total_flipped = int(flip_face.sum())
 
     if total_flipped > 0:
         print(f"[BD TRELLIS2] fix_normals_outward: flipped {total_flipped}/{n_faces} faces ({100*total_flipped/n_faces:.1f}%) across {n_comp} components")
