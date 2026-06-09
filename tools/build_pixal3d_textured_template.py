@@ -96,11 +96,15 @@ gen  = add("BD_Pixal3DImageTo3D", (720, 80), (320, 460), {}, title="③ Pixal3D 
 bake = add("BD_OVoxelBake", (1100, 80), (320, 240),
            {"decimation_target": 50000, "texture_size": 2048},
            title="④ OVoxel Bake (decimate + UV + PBR, all-in-one)")
-prev3d = add("BD_Preview3D", (1460, 80), (300, 120), {}, title="⑤ Preview 3D (textured mesh)")
-export = add("BD_ExportMeshWithColors", (1460, 240), (300, 260),
-             {"filename": "pixal3d_textured", "format": "glb"}, title="⑥ Export Mesh (.glb)")
-sv_d = add("SaveImage", (1460, 540), (300, 270), {"filename_prefix": "pixal3d/diffuse"}, title="⑦ Save Diffuse")
-sv_n = add("SaveImage", (1460, 840), (300, 270), {"filename_prefix": "pixal3d/normal"}, title="⑧ Save Normal")
+# Pixal3D's mesh comes out lying down / facing up — rotate_x=180 stands it upright facing
+# forward (matches Trellis2's convention). UV/material/COLOR_0 ride along.
+orient = add("BD_OrientMesh", (1460, 80), (300, 180),
+             {"rotate_x": 180.0}, title="⑤ Orient Mesh (Pixal3D → upright/forward)")
+prev3d = add("BD_Preview3D", (1800, 80), (300, 120), {}, title="⑥ Preview 3D (textured mesh)")
+export = add("BD_ExportMeshWithColors", (1800, 240), (300, 260),
+             {"filename": "pixal3d_textured", "format": "glb"}, title="⑦ Export Mesh (.glb)")
+sv_d = add("SaveImage", (1800, 540), (300, 270), {"filename_prefix": "pixal3d/diffuse"}, title="⑧ Save Diffuse")
+sv_n = add("SaveImage", (1800, 840), (300, 270), {"filename_prefix": "pixal3d/normal"}, title="⑨ Save Normal")
 pv_pre = add("PreviewImage", (380, 360), (300, 280), {}, title="Preprocessed Input")
 
 md = ("## Pixal3D Image → Textured 3D\n\n"
@@ -110,6 +114,8 @@ md = ("## Pixal3D Image → Textured 3D\n\n"
       "voxelgrid** (shape + texture passes)\n"
       "- **OVoxel Bake** (all-in-one) — decimate + UV unwrap + bake the voxelgrid → "
       "**diffuse / normal / metallic / roughness** PBR maps + a clean UV'd mesh\n"
+      "- **Orient Mesh** — Pixal3D comes out lying down / facing up; `rotate_x=180` stands it "
+      "upright facing forward (UV/material/vertex colors preserved)\n"
       "- **Preview 3D** (textured) + **Export .glb** + save diffuse/normal\n\n"
       "Needs the Pixal3D model at `TencentARC/Pixal3D` (auto-downloads on first run). "
       "GPU + a few minutes per run.")
@@ -121,8 +127,9 @@ link(load, "IMAGE", pre, "image")
 link(pre, "pixal3d_input", gen, "pixal3d_input")
 link(pre, "preprocessed_image", pv_pre, "images")
 link(gen, "voxelgrid", bake, "voxelgrid")   # all-in-one bake makes its own decimated+UV'd mesh
-link(bake, "mesh", prev3d, "mesh")
-link(bake, "mesh", export, "mesh")
+link(bake, "mesh", orient, "mesh")          # fix Pixal3D orientation on the final textured mesh
+link(orient, "mesh", prev3d, "mesh")
+link(orient, "mesh", export, "mesh")
 link(bake, "diffuse", export, "diffuse")   # embed baked atlas into the glb (textured export, not white)
 link(bake, "normal", export, "normal")
 link(bake, "diffuse", sv_d, "images")

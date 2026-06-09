@@ -510,6 +510,7 @@ class BD_BlenderExportMesh(BlenderNodeMixin, io.ComfyNode):
             node_id="BD_BlenderExportMesh",
             display_name="BD Blender Export Mesh",
             category="🧠BrainDead/Blender",
+            is_output_node=True,
             description="""Export MESH_BUNDLE as GLB with material + vertex colors.
 
 Uses Blender to combine PBR material (textures, UVs) and COLOR_0
