@@ -45,6 +45,10 @@ def widget_defaults(t):
         else:
             df = meta.get('default')
         out.append((k, df))
+        # ComfyUI inserts a hidden 'control_after_generate' widget right after a seed/noise_seed
+        # (or any widget flagged control_after_generate). Emit it or every later widget shifts.
+        if k in ("seed", "noise_seed") or meta.get("control_after_generate"):
+            out.append(("__control_after_generate__", "fixed"))
     return out
 
 def conns(t):

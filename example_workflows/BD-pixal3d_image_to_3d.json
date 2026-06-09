@@ -141,6 +141,7 @@
       },
       "widgets_values": [
         42,
+        "fixed",
         "1024_cascade",
         49152,
         7.5,
