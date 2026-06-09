@@ -55,6 +55,12 @@ class BD_ExportMeshWithColors(io.ComfyNode):
                 io.String.Input("context_custom_vars", multiline=True, default="", optional=True,
                                 tooltip="Extra key=value template vars (one per line), layered on top of the context "
                                         "(e.g. subfolder=parts). Only used when context_id resolves."),
+                io.Image.Input("diffuse", optional=True,
+                               tooltip="Baked diffuse/base-color atlas (e.g. from BD_OVoxelBake) to embed as the "
+                                       "glb baseColorTexture, so the exported file is textured (not a white placeholder). "
+                                       "GLB only; needs the mesh to carry UVs."),
+                io.Image.Input("normal", optional=True,
+                               tooltip="Baked tangent-space normal atlas to embed as the glb normalTexture. GLB only."),
             ],
             outputs=[
                 io.String.Output(display_name="file_path"),
@@ -66,7 +72,8 @@ class BD_ExportMeshWithColors(io.ComfyNode):
     def execute(cls, mesh, filename: str, format: str = "glb",
                 name_prefix: str = "", auto_increment: bool = True,
                 context_id: str = "", suffix: str = "",
-                context_custom_vars: str = "") -> io.NodeOutput:
+                context_custom_vars: str = "",
+                diffuse=None, normal=None) -> io.NodeOutput:
         if not HAS_TRIMESH:
             return io.NodeOutput("", "ERROR: trimesh not installed")
 
@@ -183,14 +190,39 @@ class BD_ExportMeshWithColors(io.ComfyNode):
                             import trimesh.visual.material as _mat_ex
                             import io as _io_ex
                             from PIL import Image as _PILex
-                            _buf = _io_ex.BytesIO()
-                            _PILex.new("RGBA", (1, 1), (255, 255, 255, 255)).save(_buf, format="PNG")
-                            _buf.seek(0)
-                            _mat = _mat_ex.PBRMaterial(baseColorTexture=_PILex.open(_buf))
+
+                            def _img_to_pil(img):
+                                # ComfyUI IMAGE tensor [B,H,W,C] float 0-1 -> PIL RGB
+                                if img is None:
+                                    return None
+                                arr = img
+                                if hasattr(arr, "cpu"):
+                                    arr = arr.cpu().numpy()
+                                arr = np.asarray(arr)
+                                if arr.ndim == 4:
+                                    arr = arr[0]
+                                arr = (np.clip(arr, 0.0, 1.0) * 255).astype(np.uint8)
+                                return _PILex.fromarray(arr).convert("RGB")
+
+                            _base = _img_to_pil(diffuse)
+                            if _base is None:
+                                # No diffuse supplied — keep a 1x1 white placeholder so TEXCOORD_0 still writes.
+                                _buf = _io_ex.BytesIO()
+                                _PILex.new("RGBA", (1, 1), (255, 255, 255, 255)).save(_buf, format="PNG")
+                                _buf.seek(0)
+                                _base = _PILex.open(_buf)
+                                _info = "1x1 placeholder"
+                            else:
+                                _info = f"diffuse {_base.size[0]}x{_base.size[1]}"
+                            _mat = _mat_ex.PBRMaterial(baseColorTexture=_base)
+                            _norm = _img_to_pil(normal)
+                            if _norm is not None:
+                                _mat.normalTexture = _norm
+                                _info += f" + normal {_norm.size[0]}x{_norm.size[1]}"
                             export_mesh.visual = _tv_ex2.TextureVisuals(uv=_uv.copy(), material=_mat)
-                            print("[BD Export Mesh] TextureVisuals with 1x1 placeholder — TEXCOORD_0 will be written")
+                            print(f"[BD Export Mesh] embedded texture: {_info} (TEXCOORD_0 written)")
                     except Exception as _e:
-                        print("[BD Export Mesh] UV copy failed: " + str(_e))
+                        print("[BD Export Mesh] UV/texture embed failed: " + str(_e))
                 if vc is not None:
                     export_mesh.vertex_attributes["COLOR_0"] = vc
                 export_mesh.export(file_path, file_type='glb')

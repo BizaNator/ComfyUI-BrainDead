@@ -123,6 +123,8 @@ link(pre, "preprocessed_image", pv_pre, "images")
 link(gen, "voxelgrid", bake, "voxelgrid")   # all-in-one bake makes its own decimated+UV'd mesh
 link(bake, "mesh", prev3d, "mesh")
 link(bake, "mesh", export, "mesh")
+link(bake, "diffuse", export, "diffuse")   # embed baked atlas into the glb (textured export, not white)
+link(bake, "normal", export, "normal")
 link(bake, "diffuse", sv_d, "images")
 link(bake, "normal", sv_n, "images")
 
