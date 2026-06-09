@@ -2,7 +2,7 @@
   "id": "bd-pixal3d-textured",
   "revision": 0,
   "last_node_id": 10,
-  "last_link_id": 8,
+  "last_link_id": 10,
   "nodes": [
     {
       "id": 1,
@@ -195,7 +195,8 @@
           "name": "diffuse",
           "type": "IMAGE",
           "links": [
-            7
+            7,
+            9
           ],
           "slot_index": 1
         },
@@ -203,7 +204,8 @@
           "name": "normal",
           "type": "IMAGE",
           "links": [
-            8
+            8,
+            10
           ],
           "slot_index": 2
         },
@@ -305,6 +307,16 @@
           "name": "mesh",
           "type": "TRIMESH",
           "link": 6
+        },
+        {
+          "name": "diffuse",
+          "type": "IMAGE",
+          "link": 7
+        },
+        {
+          "name": "normal",
+          "type": "IMAGE",
+          "link": 8
         }
       ],
       "outputs": [
@@ -353,7 +365,7 @@
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 7
+          "link": 9
         }
       ],
       "outputs": [],
@@ -383,7 +395,7 @@
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 8
+          "link": 10
         }
       ],
       "outputs": [],
@@ -499,12 +511,28 @@
       7,
       4,
       1,
+      6,
+      1,
+      "IMAGE"
+    ],
+    [
+      8,
+      4,
+      2,
+      6,
+      2,
+      "IMAGE"
+    ],
+    [
+      9,
+      4,
+      1,
       7,
       0,
       "IMAGE"
     ],
     [
-      8,
+      10,
       4,
       2,
       8,
