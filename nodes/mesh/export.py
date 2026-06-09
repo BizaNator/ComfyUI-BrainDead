@@ -204,23 +204,35 @@ class BD_ExportMeshWithColors(io.ComfyNode):
                                 arr = (np.clip(arr, 0.0, 1.0) * 255).astype(np.uint8)
                                 return _PILex.fromarray(arr).convert("RGB")
 
+                            # Preserve the mesh's OWN baked material (e.g. BD_OVoxelBake gives a
+                            # full PBR material: baseColor + normal + metallicRoughness). Start from
+                            # it so we don't blank maps the mesh already carries; only override the
+                            # baseColor/normal when those inputs are explicitly wired.
+                            _src_mat = getattr(mesh.visual, "material", None)
+                            if isinstance(_src_mat, _mat_ex.PBRMaterial):
+                                import copy as _copy_ex
+                                _mat = _copy_ex.copy(_src_mat)
+                                _info = "kept mesh PBR material"
+                            else:
+                                _mat = _mat_ex.PBRMaterial()
+                                _info = "new material"
                             _base = _img_to_pil(diffuse)
-                            if _base is None:
-                                # No diffuse supplied — keep a 1x1 white placeholder so TEXCOORD_0 still writes.
+                            if _base is not None:
+                                _mat.baseColorTexture = _base
+                                _info += f"; baseColor<-wired {_base.size[0]}x{_base.size[1]}"
+                            elif getattr(_mat, "baseColorTexture", None) is None:
+                                # Nothing on the mesh and nothing wired — 1x1 white so TEXCOORD_0 still writes.
                                 _buf = _io_ex.BytesIO()
                                 _PILex.new("RGBA", (1, 1), (255, 255, 255, 255)).save(_buf, format="PNG")
                                 _buf.seek(0)
-                                _base = _PILex.open(_buf)
-                                _info = "1x1 placeholder"
-                            else:
-                                _info = f"diffuse {_base.size[0]}x{_base.size[1]}"
-                            _mat = _mat_ex.PBRMaterial(baseColorTexture=_base)
+                                _mat.baseColorTexture = _PILex.open(_buf)
+                                _info += "; baseColor=1x1 placeholder"
                             _norm = _img_to_pil(normal)
                             if _norm is not None:
                                 _mat.normalTexture = _norm
-                                _info += f" + normal {_norm.size[0]}x{_norm.size[1]}"
+                                _info += f"; normal<-wired {_norm.size[0]}x{_norm.size[1]}"
                             export_mesh.visual = _tv_ex2.TextureVisuals(uv=_uv.copy(), material=_mat)
-                            print(f"[BD Export Mesh] embedded texture: {_info} (TEXCOORD_0 written)")
+                            print(f"[BD Export Mesh] material: {_info} (TEXCOORD_0 written)")
                     except Exception as _e:
                         print("[BD Export Mesh] UV/texture embed failed: " + str(_e))
                 if vc is not None:
