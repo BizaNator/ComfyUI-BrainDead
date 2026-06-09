@@ -1,8 +1,8 @@
 {
   "id": "bd-pixal3d-textured",
   "revision": 0,
-  "last_node_id": 12,
-  "last_link_id": 11,
+  "last_node_id": 10,
+  "last_link_id": 8,
   "nodes": [
     {
       "id": 1,
@@ -124,16 +124,14 @@
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "links": [
-            4
-          ],
+          "links": null,
           "slot_index": 0
         },
         {
           "name": "voxelgrid",
           "type": "VOXELGRID",
           "links": [
-            7
+            4
           ],
           "slot_index": 1
         }
@@ -163,22 +161,22 @@
     },
     {
       "id": 4,
-      "type": "BD_CuMeshSimplify",
+      "type": "BD_OVoxelBake",
       "pos": [
-        1080,
+        1100,
         80
       ],
       "size": [
-        300,
-        320
+        320,
+        240
       ],
       "flags": {},
       "order": 3,
       "mode": 0,
       "inputs": [
         {
-          "name": "mesh",
-          "type": "TRIMESH",
+          "name": "voxelgrid",
+          "type": "VOXELGRID",
           "link": 4
         }
       ],
@@ -187,123 +185,8 @@
           "name": "mesh",
           "type": "TRIMESH",
           "links": [
-            5
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "status",
-          "type": "STRING",
-          "links": null,
-          "slot_index": 1
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "BD_CuMeshSimplify"
-      },
-      "widgets_values": [
-        50000,
-        false,
-        512,
-        1.0,
-        true,
-        30.0,
-        0.9,
-        true,
-        0.03,
-        true,
-        true,
-        true,
-        1e-05,
-        true
-      ],
-      "title": "\u2463 CuMesh Simplify"
-    },
-    {
-      "id": 5,
-      "type": "BD_UVUnwrap",
-      "pos": [
-        1420,
-        80
-      ],
-      "size": [
-        300,
-        240
-      ],
-      "flags": {},
-      "order": 4,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "mesh",
-          "type": "TRIMESH",
-          "link": 5
-        }
-      ],
-      "outputs": [
-        {
-          "name": "mesh",
-          "type": "TRIMESH",
-          "links": [
+            5,
             6
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "status",
-          "type": "STRING",
-          "links": null,
-          "slot_index": 1
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "BD_UVUnwrap"
-      },
-      "widgets_values": [
-        "blender_smart_uv",
-        true,
-        66.0,
-        0.02,
-        0,
-        1,
-        1.0,
-        300
-      ],
-      "title": "\u2464 UV Unwrap"
-    },
-    {
-      "id": 6,
-      "type": "BD_OVoxelTextureBake",
-      "pos": [
-        1760,
-        80
-      ],
-      "size": [
-        300,
-        200
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "mesh",
-          "type": "TRIMESH",
-          "link": 6
-        },
-        {
-          "name": "voxelgrid",
-          "type": "VOXELGRID",
-          "link": 7
-        }
-      ],
-      "outputs": [
-        {
-          "name": "mesh",
-          "type": "TRIMESH",
-          "links": [
-            8,
-            9
           ],
           "slot_index": 0
         },
@@ -311,7 +194,7 @@
           "name": "diffuse",
           "type": "IMAGE",
           "links": [
-            10
+            7
           ],
           "slot_index": 1
         },
@@ -319,7 +202,7 @@
           "name": "normal",
           "type": "IMAGE",
           "links": [
-            11
+            8
           ],
           "slot_index": 2
         },
@@ -349,19 +232,22 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "BD_OVoxelTextureBake"
+        "Node name for S&R": "BD_OVoxelBake"
       },
       "widgets_values": [
+        50000,
         2048,
-        3
+        false,
+        1.0,
+        0.9
       ],
-      "title": "\u2465 OVoxel Texture Bake (PBR)"
+      "title": "\u2463 OVoxel Bake (decimate + UV + PBR, all-in-one)"
     },
     {
-      "id": 7,
+      "id": 5,
       "type": "BD_Preview3D",
       "pos": [
-        2100,
+        1460,
         80
       ],
       "size": [
@@ -369,7 +255,7 @@
         120
       ],
       "flags": {},
-      "order": 6,
+      "order": 4,
       "mode": 0,
       "inputs": [
         {
@@ -380,7 +266,7 @@
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 8
+          "link": 5
         }
       ],
       "outputs": [
@@ -397,13 +283,13 @@
       "widgets_values": [
         true
       ],
-      "title": "\u2466 Preview 3D (textured mesh)"
+      "title": "\u2464 Preview 3D (textured mesh)"
     },
     {
-      "id": 8,
+      "id": 6,
       "type": "BD_ExportMeshWithColors",
       "pos": [
-        2100,
+        1460,
         240
       ],
       "size": [
@@ -411,13 +297,13 @@
         260
       ],
       "flags": {},
-      "order": 7,
+      "order": 5,
       "mode": 0,
       "inputs": [
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 9
+          "link": 6
         }
       ],
       "outputs": [
@@ -446,13 +332,13 @@
         "",
         ""
       ],
-      "title": "\u2467 Export Mesh (.glb)"
+      "title": "\u2465 Export Mesh (.glb)"
     },
     {
-      "id": 9,
+      "id": 7,
       "type": "SaveImage",
       "pos": [
-        2100,
+        1460,
         540
       ],
       "size": [
@@ -460,13 +346,13 @@
         270
       ],
       "flags": {},
-      "order": 8,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 10
+          "link": 7
         }
       ],
       "outputs": [],
@@ -476,13 +362,13 @@
       "widgets_values": [
         "pixal3d/diffuse"
       ],
-      "title": "\u2468 Save Diffuse"
+      "title": "\u2466 Save Diffuse"
     },
     {
-      "id": 10,
+      "id": 8,
       "type": "SaveImage",
       "pos": [
-        2100,
+        1460,
         840
       ],
       "size": [
@@ -490,13 +376,13 @@
         270
       ],
       "flags": {},
-      "order": 9,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 11
+          "link": 8
         }
       ],
       "outputs": [],
@@ -506,10 +392,10 @@
       "widgets_values": [
         "pixal3d/normal"
       ],
-      "title": "\u2469 Save Normal"
+      "title": "\u2467 Save Normal"
     },
     {
-      "id": 11,
+      "id": 9,
       "type": "PreviewImage",
       "pos": [
         380,
@@ -520,7 +406,7 @@
         280
       ],
       "flags": {},
-      "order": 10,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
@@ -537,7 +423,7 @@
       "title": "Preprocessed Input"
     },
     {
-      "id": 12,
+      "id": 10,
       "type": "MarkdownNote",
       "pos": [
         40,
@@ -548,13 +434,13 @@
         300
       ],
       "flags": {},
-      "order": 11,
+      "order": 9,
       "mode": 0,
       "inputs": [],
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "## Pixal3D Image \u2192 Textured 3D\n\nTencentARC **Pixal3D** single-image \u2192 textured mesh.\n\n- **Preprocess** \u2014 FOV estimate + background removal \u2192 pixal3d_input\n- **Image\u21923D** \u2014 `pipeline_type=1024_cascade` generates the **mesh + coloured voxelgrid** (shape + texture passes)\n- **CuMesh Simplify** \u2014 GPU decimate to a clean ~50k-face mesh\n- **OVoxel Texture Bake** \u2014 bake the voxelgrid colour onto the simplified mesh \u2192 **diffuse / normal / metallic / roughness** PBR maps + UV'd mesh\n- **Preview 3D** (textured) + **Export .glb** + save diffuse/normal\n\nNeeds the Pixal3D model at `TencentARC/Pixal3D` (auto-downloads on first run). GPU + a few minutes per run."
+        "## Pixal3D Image \u2192 Textured 3D\n\nTencentARC **Pixal3D** single-image \u2192 textured mesh.\n\n- **Preprocess** \u2014 FOV estimate + background removal \u2192 pixal3d_input\n- **Image\u21923D** \u2014 `pipeline_type=1024_cascade` generates the **mesh + coloured voxelgrid** (shape + texture passes)\n- **OVoxel Bake** (all-in-one) \u2014 decimate + UV unwrap + bake the voxelgrid \u2192 **diffuse / normal / metallic / roughness** PBR maps + a clean UV'd mesh\n- **Preview 3D** (textured) + **Export .glb** + save diffuse/normal\n\nNeeds the Pixal3D model at `TencentARC/Pixal3D` (auto-downloads on first run). GPU + a few minutes per run."
       ],
       "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead Pixal3D Textured"
     }
@@ -580,71 +466,47 @@
       3,
       2,
       1,
-      11,
+      9,
       0,
       "IMAGE"
     ],
     [
       4,
       3,
-      0,
+      1,
       4,
       0,
-      "TRIMESH"
-    ],
-    [
-      5,
-      4,
-      0,
-      5,
-      0,
-      "TRIMESH"
-    ],
-    [
-      6,
-      5,
-      0,
-      6,
-      0,
-      "TRIMESH"
-    ],
-    [
-      7,
-      3,
-      1,
-      6,
-      1,
       "VOXELGRID"
     ],
     [
-      8,
+      5,
+      4,
+      0,
+      5,
+      1,
+      "TRIMESH"
+    ],
+    [
+      6,
+      4,
+      0,
       6,
       0,
+      "TRIMESH"
+    ],
+    [
       7,
+      4,
       1,
-      "TRIMESH"
-    ],
-    [
-      9,
-      6,
-      0,
-      8,
-      0,
-      "TRIMESH"
-    ],
-    [
-      10,
-      6,
-      1,
-      9,
+      7,
       0,
       "IMAGE"
     ],
     [
-      11,
-      6,
+      8,
+      4,
       2,
-      10,
+      8,
       0,
       "IMAGE"
     ]

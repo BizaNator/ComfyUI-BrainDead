@@ -87,15 +87,16 @@ C = lambda i: chr(0x2460 + i - 1)
 load = add("LoadImage", (40, 80), (300, 314), {"image": "example.png"}, title="① Load Image")
 pre  = add("BD_Pixal3DPreprocess", (380, 80), (300, 240), {}, title="② Pixal3D Preprocess (FOV + bg)")
 gen  = add("BD_Pixal3DImageTo3D", (720, 80), (320, 460), {}, title="③ Pixal3D Image→3D (mesh + voxelgrid)")
-simp = add("BD_CuMeshSimplify", (1080, 80), (300, 320), {"target_faces": 50000}, title="④ CuMesh Simplify")
-uv = add("BD_UVUnwrap", (1420, 80), (300, 240), {}, title="⑤ UV Unwrap")
-bake = add("BD_OVoxelTextureBake", (1760, 80), (300, 200),
-           {"texture_size": 2048}, title="⑥ OVoxel Texture Bake (PBR)")
-prev3d = add("BD_Preview3D", (2100, 80), (300, 120), {}, title="⑦ Preview 3D (textured mesh)")
-export = add("BD_ExportMeshWithColors", (2100, 240), (300, 260),
-             {"filename": "pixal3d_textured", "format": "glb"}, title="⑧ Export Mesh (.glb)")
-sv_d = add("SaveImage", (2100, 540), (300, 270), {"filename_prefix": "pixal3d/diffuse"}, title="⑨ Save Diffuse")
-sv_n = add("SaveImage", (2100, 840), (300, 270), {"filename_prefix": "pixal3d/normal"}, title="⑩ Save Normal")
+# All-in-one bake: decimate + UV unwrap + PBR bake from the voxelgrid (the manual
+# Simplify→UVUnwrap→TextureBake chain produced a scrambled atlas — this one is clean).
+bake = add("BD_OVoxelBake", (1100, 80), (320, 240),
+           {"decimation_target": 50000, "texture_size": 2048},
+           title="④ OVoxel Bake (decimate + UV + PBR, all-in-one)")
+prev3d = add("BD_Preview3D", (1460, 80), (300, 120), {}, title="⑤ Preview 3D (textured mesh)")
+export = add("BD_ExportMeshWithColors", (1460, 240), (300, 260),
+             {"filename": "pixal3d_textured", "format": "glb"}, title="⑥ Export Mesh (.glb)")
+sv_d = add("SaveImage", (1460, 540), (300, 270), {"filename_prefix": "pixal3d/diffuse"}, title="⑦ Save Diffuse")
+sv_n = add("SaveImage", (1460, 840), (300, 270), {"filename_prefix": "pixal3d/normal"}, title="⑧ Save Normal")
 pv_pre = add("PreviewImage", (380, 360), (300, 280), {}, title="Preprocessed Input")
 
 md = ("## Pixal3D Image → Textured 3D\n\n"
@@ -103,9 +104,8 @@ md = ("## Pixal3D Image → Textured 3D\n\n"
       "- **Preprocess** — FOV estimate + background removal → pixal3d_input\n"
       "- **Image→3D** — `pipeline_type=1024_cascade` generates the **mesh + coloured "
       "voxelgrid** (shape + texture passes)\n"
-      "- **CuMesh Simplify** — GPU decimate to a clean ~50k-face mesh\n"
-      "- **OVoxel Texture Bake** — bake the voxelgrid colour onto the simplified mesh → "
-      "**diffuse / normal / metallic / roughness** PBR maps + UV'd mesh\n"
+      "- **OVoxel Bake** (all-in-one) — decimate + UV unwrap + bake the voxelgrid → "
+      "**diffuse / normal / metallic / roughness** PBR maps + a clean UV'd mesh\n"
       "- **Preview 3D** (textured) + **Export .glb** + save diffuse/normal\n\n"
       "Needs the Pixal3D model at `TencentARC/Pixal3D` (auto-downloads on first run). "
       "GPU + a few minutes per run.")
@@ -116,10 +116,7 @@ add("MarkdownNote", (40, 440), (320, 300), {"__md__": md},
 link(load, "IMAGE", pre, "image")
 link(pre, "pixal3d_input", gen, "pixal3d_input")
 link(pre, "preprocessed_image", pv_pre, "images")
-link(gen, "mesh", simp, "mesh")
-link(simp, "mesh", uv, "mesh")          # decimate strips UVs → unwrap before the bake
-link(uv, "mesh", bake, "mesh")
-link(gen, "voxelgrid", bake, "voxelgrid")
+link(gen, "voxelgrid", bake, "voxelgrid")   # all-in-one bake makes its own decimated+UV'd mesh
 link(bake, "mesh", prev3d, "mesh")
 link(bake, "mesh", export, "mesh")
 link(bake, "diffuse", sv_d, "images")
