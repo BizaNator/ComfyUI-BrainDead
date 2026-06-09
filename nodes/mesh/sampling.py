@@ -254,15 +254,18 @@ Modes:
                 )
 
 
-                # Preserve UV from input mesh if it has TextureVisuals.
-                # Setting ColorVisuals here would destroy any UV layer set by BD_UVUnwrap
-                # upstream, making OvoxelTextureBake (and TEXCOORD_0 in export) impossible.
+                # Preserve UV *and the baked material* from the input mesh if it has
+                # TextureVisuals. Setting ColorVisuals here would destroy the UV layer; and
+                # dropping the material (keeping only UV) would strip the baked baseColor/
+                # normal/metallicRoughness — so the downstream bundle→FBX would lose its
+                # textures. Carry both; COLOR_0 rides alongside in vertex_attributes.
                 import trimesh.visual as _tv_s
                 if hasattr(mesh, 'visual') and isinstance(mesh.visual, _tv_s.TextureVisuals):
                     try:
                         _uv = mesh.visual.uv
                         if _uv is not None and len(_uv) == len(new_mesh.vertices):
-                            new_mesh.visual = _tv_s.TextureVisuals(uv=_uv.copy())
+                            _mat = getattr(mesh.visual, 'material', None)
+                            new_mesh.visual = _tv_s.TextureVisuals(uv=_uv.copy(), material=_mat)
                     except Exception:
                         pass
                 new_mesh.vertex_attributes['COLOR_0'] = vertex_colors_uint8
@@ -562,15 +565,18 @@ Modes:
                 )
 
 
-                # Preserve UV from input mesh if it has TextureVisuals.
-                # Setting ColorVisuals here would destroy any UV layer set by BD_UVUnwrap
-                # upstream, making OvoxelTextureBake (and TEXCOORD_0 in export) impossible.
+                # Preserve UV *and the baked material* from the input mesh if it has
+                # TextureVisuals. Setting ColorVisuals here would destroy the UV layer; and
+                # dropping the material (keeping only UV) would strip the baked baseColor/
+                # normal/metallicRoughness — so the downstream bundle→FBX would lose its
+                # textures. Carry both; COLOR_0 rides alongside in vertex_attributes.
                 import trimesh.visual as _tv_s
                 if hasattr(mesh, 'visual') and isinstance(mesh.visual, _tv_s.TextureVisuals):
                     try:
                         _uv = mesh.visual.uv
                         if _uv is not None and len(_uv) == len(new_mesh.vertices):
-                            new_mesh.visual = _tv_s.TextureVisuals(uv=_uv.copy())
+                            _mat = getattr(mesh.visual, 'material', None)
+                            new_mesh.visual = _tv_s.TextureVisuals(uv=_uv.copy(), material=_mat)
                     except Exception:
                         pass
                 new_mesh.vertex_attributes['COLOR_0'] = vertex_colors_uint8
