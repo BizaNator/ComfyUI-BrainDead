@@ -2,7 +2,7 @@
   "id": "bd",
   "revision": 0,
   "last_node_id": 21,
-  "last_link_id": 14,
+  "last_link_id": 17,
   "nodes": [
     {
       "id": 1,
@@ -24,7 +24,9 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            1
+            1,
+            15,
+            16
           ],
           "slot_index": 0
         },
@@ -44,14 +46,14 @@
     },
     {
       "id": 2,
-      "type": "Trellis2RemoveBackground",
+      "type": "RMBG",
       "pos": [
         380,
         360
       ],
       "size": [
         300,
-        90
+        250
       ],
       "flags": {},
       "order": 2,
@@ -60,33 +62,46 @@
         {
           "name": "image",
           "type": "IMAGE",
-          "link": 1
+          "link": 15
         }
       ],
       "outputs": [
         {
-          "name": "image",
+          "name": "IMAGE",
           "type": "IMAGE",
-          "links": [
-            2
-          ],
+          "links": null,
           "slot_index": 0
         },
         {
-          "name": "mask",
+          "name": "MASK",
           "type": "MASK",
           "links": [
-            3
+            17
           ],
           "slot_index": 1
+        },
+        {
+          "name": "MASK_IMAGE",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 2
         }
       ],
       "properties": {
-        "Node name for S&R": "Trellis2RemoveBackground"
+        "Node name for S&R": "RMBG"
       },
       "widgets_values": [
-        true
-      ]
+        "RMBG-2.0",
+        1.0,
+        1024,
+        0,
+        0,
+        false,
+        false,
+        "Alpha",
+        "#222222"
+      ],
+      "title": "\u2461 Remove Background (RMBG-2.0)"
     },
     {
       "id": 3,
@@ -106,12 +121,12 @@
         {
           "name": "image",
           "type": "IMAGE",
-          "link": 2
+          "link": 16
         },
         {
           "name": "mask",
           "type": "MASK",
-          "link": 3
+          "link": 17
         }
       ],
       "outputs": [
@@ -554,30 +569,6 @@
   ],
   "links": [
     [
-      1,
-      1,
-      0,
-      2,
-      0,
-      "IMAGE"
-    ],
-    [
-      2,
-      2,
-      0,
-      3,
-      0,
-      "IMAGE"
-    ],
-    [
-      3,
-      2,
-      1,
-      3,
-      1,
-      "MASK"
-    ],
-    [
       4,
       3,
       0,
@@ -656,6 +647,30 @@
       9,
       4,
       "IMAGE"
+    ],
+    [
+      15,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      16,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      17,
+      2,
+      1,
+      3,
+      1,
+      "MASK"
     ]
   ],
   "groups": [],

@@ -13,7 +13,7 @@ import numpy as np
 
 from comfy_api.latest import io
 
-from ..mesh.types import MeshBundleInput, TrimeshOutput
+from ..mesh.types import MeshBundleInput, TrimeshInput, TrimeshOutput
 
 from .base import BlenderNodeMixin, HAS_TRIMESH
 
@@ -40,6 +40,7 @@ vcol_path = os.environ.get('BLENDER_ARG_VCOL_PATH', '')
 color_field_path = os.environ.get('BLENDER_ARG_COLOR_FIELD_PATH', '')
 solidify_mode = os.environ.get('BLENDER_ARG_SOLIDIFY_MODE', 'NONE')  # NONE, DOMINANT, AVERAGE
 flat_shading = os.environ.get('BLENDER_ARG_FLAT_SHADING', 'False') == 'True'
+export_format = os.environ.get('BLENDER_ARG_EXPORT_FORMAT', 'GLB').upper()  # GLB or FBX
 
 # Clear scene
 bpy.ops.object.select_all(action='SELECT')
@@ -425,42 +426,69 @@ if flat_shading:
     obj.data.update()
     log("[BD ExportMesh] Flat shading applied")
 
-# Export as GLB with materials + vertex colors
-log(f"[BD ExportMesh] Exporting GLB: {output_path}")
-
-export_kwargs = {
-    'filepath': output_path,
-    'export_format': 'GLB',
-    'export_attributes': True,
-    'export_yup': True,
-    # export_normals=False: Blender 5.x GLTF exporter writes explicit normals as a
-    # CORNER/INT16_2D 'custom_normal' attribute. trimesh reads per-loop normals and
-    # expands the mesh to 3× vertices (ratio 3.0). Skipping normals lets the engine
-    # compute them at runtime — correct for stylized meshes and avoids the expansion.
-    'export_normals': False,
-    # export_texcoords=True: ensure TEXCOORD_0 is written if a UV layer exists.
-    'export_texcoords': True,
-}
-
-# Try Blender 5.0+ export params (vertex color modes vary by Blender version)
-export_attempts = [
-    {'export_vertex_color': 'ACTIVE'},
-    {'export_vertex_color': 'MATERIAL'},
-    {},
-]
-
 exported = False
-for attempt in export_attempts:
-    try:
-        bpy.ops.export_scene.gltf(**export_kwargs, **attempt)
-        log(f"[BD ExportMesh] Export success with: {attempt or 'defaults'}")
-        exported = True
-        break
-    except TypeError as e:
-        continue
+if export_format == 'FBX':
+    # FBX with embedded textures (single-file, game-ready for Unreal/UEFN/Unity).
+    # embed_textures requires path_mode='COPY'; the imported glb's images are packed
+    # in-memory so they get embedded into the .fbx (Embed Media).
+    log(f"[BD ExportMesh] Exporting FBX (embedded textures): {output_path}")
+    fbx_kwargs = {
+        'filepath': output_path,
+        'use_selection': False,
+        'path_mode': 'COPY',
+        'embed_textures': True,
+        'mesh_smooth_type': 'FACE' if flat_shading else 'OFF',
+        'colors_type': 'SRGB',          # write COLOR_0 vertex colors if present
+        'use_mesh_modifiers': True,
+        'add_leaf_bones': False,
+    }
+    fbx_attempts = [fbx_kwargs, {k: v for k, v in fbx_kwargs.items() if k != 'colors_type'}]
+    for attempt in fbx_attempts:
+        try:
+            bpy.ops.export_scene.fbx(**attempt)
+            log("[BD ExportMesh] FBX export success")
+            exported = True
+            break
+        except TypeError:
+            continue
+    if not exported:
+        raise RuntimeError("All FBX export attempts failed")
+else:
+    # Export as GLB with materials + vertex colors
+    log(f"[BD ExportMesh] Exporting GLB: {output_path}")
 
-if not exported:
-    raise RuntimeError("All GLB export attempts failed")
+    export_kwargs = {
+        'filepath': output_path,
+        'export_format': 'GLB',
+        'export_attributes': True,
+        'export_yup': True,
+        # export_normals=False: Blender 5.x GLTF exporter writes explicit normals as a
+        # CORNER/INT16_2D 'custom_normal' attribute. trimesh reads per-loop normals and
+        # expands the mesh to 3× vertices (ratio 3.0). Skipping normals lets the engine
+        # compute them at runtime — correct for stylized meshes and avoids the expansion.
+        'export_normals': False,
+        # export_texcoords=True: ensure TEXCOORD_0 is written if a UV layer exists.
+        'export_texcoords': True,
+    }
+
+    # Try Blender 5.0+ export params (vertex color modes vary by Blender version)
+    export_attempts = [
+        {'export_vertex_color': 'ACTIVE'},
+        {'export_vertex_color': 'MATERIAL'},
+        {},
+    ]
+
+    for attempt in export_attempts:
+        try:
+            bpy.ops.export_scene.gltf(**export_kwargs, **attempt)
+            log(f"[BD ExportMesh] Export success with: {attempt or 'defaults'}")
+            exported = True
+            break
+        except TypeError as e:
+            continue
+
+    if not exported:
+        raise RuntimeError("All GLB export attempts failed")
 
 # Report file size
 size_mb = os.path.getsize(output_path) / (1024 * 1024)
@@ -529,9 +557,21 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
                     optional=True,
                     tooltip="Maximum Blender processing time in seconds",
                 ),
+                TrimeshInput(
+                    "mesh",
+                    optional=True,
+                ),
+                io.Combo.Input(
+                    "format",
+                    options=["GLB", "FBX"],
+                    default="GLB",
+                    optional=True,
+                    tooltip="GLB (open, in one binary) or FBX (game-standard for Unreal/UEFN/Unity, "
+                            "textures embedded). FBX is written via Blender's exporter.",
+                ),
             ],
             outputs=[
-                io.String.Output(display_name="glb_path"),
+                io.String.Output(display_name="file_path"),
                 io.String.Output(display_name="status"),
             ],
         )
@@ -545,6 +585,8 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
         flat_shading: bool = False,
         export_textures: bool = True,
         timeout: int = 300,
+        mesh=None,
+        format: str = "GLB",
     ) -> io.NodeOutput:
         if not HAS_TRIMESH:
             return io.NodeOutput("", "ERROR: trimesh not installed")
@@ -553,17 +595,28 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
         if not available:
             return io.NodeOutput("", f"ERROR: {msg}")
 
-        if bundle is None:
-            return io.NodeOutput("", "ERROR: No bundle input")
+        fmt = (format or "GLB").upper()
+        ext = "fbx" if fmt == "FBX" else "glb"
 
-        # Extract bundle data
-        mesh = bundle.get('mesh') if isinstance(bundle, dict) else bundle
-        if mesh is None:
-            return io.NodeOutput("", "ERROR: Bundle has no mesh")
+        # Resolve mesh source: explicit TRIMESH `mesh` input (e.g. straight from
+        # BD_OVoxelBake, which carries a full PBR material) OR a MESH_BUNDLE.
+        if bundle is None and mesh is None:
+            return io.NodeOutput("", "ERROR: wire a `mesh` (TRIMESH) or a `bundle` (MESH_BUNDLE)")
 
-        vertex_colors = bundle.get('vertex_colors') if isinstance(bundle, dict) else None
-        color_field = bundle.get('color_field') if isinstance(bundle, dict) else None
-        name = bundle.get('name', 'mesh') if isinstance(bundle, dict) else 'mesh'
+        if bundle is not None:
+            # Extract bundle data
+            mesh = bundle.get('mesh') if isinstance(bundle, dict) else bundle
+            if mesh is None:
+                return io.NodeOutput("", "ERROR: Bundle has no mesh")
+            vertex_colors = bundle.get('vertex_colors') if isinstance(bundle, dict) else None
+            color_field = bundle.get('color_field') if isinstance(bundle, dict) else None
+            name = bundle.get('name', 'mesh') if isinstance(bundle, dict) else 'mesh'
+        else:
+            # Direct TRIMESH input — material (baseColor/normal/metallicRoughness from
+            # BD_OVoxelBake) rides along on the temp glb into Blender.
+            vertex_colors = None
+            color_field = None
+            name = 'mesh'
 
         # Debug: show bundle contents
         if isinstance(bundle, dict):
@@ -585,7 +638,7 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
         out_dir = os.path.join(output_base, output_dir)
         os.makedirs(out_dir, exist_ok=True)
 
-        glb_output = os.path.join(out_dir, f"{name}.glb")
+        glb_output = os.path.join(out_dir, f"{name}.{ext}")
 
         # Temp files
         input_path = None
@@ -641,7 +694,7 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
                 normal_path = ''
 
             # Output goes directly to final location
-            fd, blender_output = tempfile.mkstemp(suffix='.glb')
+            fd, blender_output = tempfile.mkstemp(suffix=f'.{ext}')
             os.close(fd)
 
             # Run Blender export script
@@ -651,6 +704,7 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
                 'solidify_mode': solidify_mode,
                 'flat_shading': 'True' if flat_shading else 'False',
                 'normal_path': normal_path or '',
+                'export_format': fmt,
             }
 
             success, message, log_lines = cls._run_blender_script(
@@ -688,7 +742,7 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
             # Status
             size_mb = os.path.getsize(glb_output) / (1024 * 1024)
             n_verts = len(mesh.vertices)
-            parts = [f"{name}.glb: {size_mb:.1f}MB", f"{n_verts:,} verts"]
+            parts = [f"{name}.{ext}: {size_mb:.1f}MB", f"{n_verts:,} verts"]
             if vertex_colors is not None:
                 parts.append(f"+COLOR_0 ({solidify_mode})")
             elif color_field_path:
