@@ -1,8 +1,8 @@
 {
   "id": "bd-trellis2-unreal-fbx",
   "revision": 0,
-  "last_node_id": 14,
-  "last_link_id": 21,
+  "last_node_id": 15,
+  "last_link_id": 23,
   "nodes": [
     {
       "id": 1,
@@ -315,7 +315,7 @@
           "type": "TRIMESH",
           "links": [
             9,
-            19
+            21
           ],
           "slot_index": 0
         },
@@ -323,8 +323,9 @@
           "name": "diffuse",
           "type": "IMAGE",
           "links": [
-            13,
-            20
+            11,
+            15,
+            22
           ],
           "slot_index": 1
         },
@@ -332,8 +333,7 @@
           "name": "normal",
           "type": "IMAGE",
           "links": [
-            14,
-            21
+            12
           ],
           "slot_index": 2
         },
@@ -341,7 +341,7 @@
           "name": "metallic",
           "type": "IMAGE",
           "links": [
-            15
+            17
           ],
           "slot_index": 3
         },
@@ -349,7 +349,7 @@
           "name": "roughness",
           "type": "IMAGE",
           "links": [
-            16
+            18
           ],
           "slot_index": 4
         },
@@ -357,7 +357,7 @@
           "name": "alpha",
           "type": "IMAGE",
           "links": [
-            17
+            19
           ],
           "slot_index": 5
         },
@@ -382,6 +382,59 @@
     },
     {
       "id": 7,
+      "type": "BD_DetailNormalFromAlbedo",
+      "pos": [
+        2080,
+        320
+      ],
+      "size": [
+        300,
+        180
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "albedo",
+          "type": "IMAGE",
+          "link": 11
+        },
+        {
+          "name": "base_normal",
+          "type": "IMAGE",
+          "link": 12
+        }
+      ],
+      "outputs": [
+        {
+          "name": "normal",
+          "type": "IMAGE",
+          "links": [
+            16,
+            23
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_DetailNormalFromAlbedo"
+      },
+      "widgets_values": [
+        1.0,
+        3.0,
+        false
+      ],
+      "title": "\u2466 Detail Normal (albedo micro-detail \u2192 normal)"
+    },
+    {
+      "id": 8,
       "type": "BD_SampleVoxelgridColors",
       "pos": [
         2080,
@@ -392,7 +445,7 @@
         200
       ],
       "flags": {},
-      "order": 6,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
@@ -411,7 +464,7 @@
           "name": "mesh",
           "type": "TRIMESH",
           "links": [
-            11
+            13
           ],
           "slot_index": 0
         },
@@ -419,7 +472,7 @@
           "name": "color_field",
           "type": "COLOR_FIELD",
           "links": [
-            12
+            14
           ],
           "slot_index": 1
         },
@@ -438,10 +491,10 @@
         "0.5,0.5,0.5,1.0",
         3.0
       ],
-      "title": "\u2466 Sample Vertex Colors (\u2192 color_field)"
+      "title": "\u2467 Sample Vertex Colors (\u2192 color_field)"
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "BD_PackBundle",
       "pos": [
         2420,
@@ -452,43 +505,43 @@
         240
       ],
       "flags": {},
-      "order": 7,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 11
+          "link": 13
         },
         {
           "name": "color_field",
           "type": "COLOR_FIELD",
-          "link": 12
+          "link": 14
         },
         {
           "name": "diffuse",
           "type": "IMAGE",
-          "link": 13
+          "link": 15
         },
         {
           "name": "normal",
           "type": "IMAGE",
-          "link": 14
+          "link": 16
         },
         {
           "name": "metallic",
           "type": "IMAGE",
-          "link": 15
+          "link": 17
         },
         {
           "name": "roughness",
           "type": "IMAGE",
-          "link": 16
+          "link": 18
         },
         {
           "name": "alpha",
           "type": "IMAGE",
-          "link": 17
+          "link": 19
         }
       ],
       "outputs": [
@@ -496,7 +549,7 @@
           "name": "bundle",
           "type": "MESH_BUNDLE",
           "links": [
-            18
+            20
           ],
           "slot_index": 0
         },
@@ -513,10 +566,10 @@
       "widgets_values": [
         "character"
       ],
-      "title": "\u2467 Pack Bundle (mesh + color_field + PBR)"
+      "title": "\u2468 Pack Bundle (mesh + color_field + PBR)"
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "BD_BlenderExportMesh",
       "pos": [
         2760,
@@ -527,13 +580,13 @@
         320
       ],
       "flags": {},
-      "order": 8,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
           "name": "bundle",
           "type": "MESH_BUNDLE",
-          "link": 18
+          "link": 20
         },
         {
           "name": "mesh",
@@ -566,10 +619,10 @@
         300,
         "FBX"
       ],
-      "title": "\u2468 Blender Export FBX (flat \u2022 embedded textures + vertex colors)"
+      "title": "\u2469 Blender Export FBX (flat \u2022 embedded textures + vertex colors)"
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "BD_Preview3D",
       "pos": [
         2080,
@@ -580,7 +633,7 @@
         260
       ],
       "flags": {},
-      "order": 9,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
@@ -591,7 +644,7 @@
         {
           "name": "mesh",
           "type": "TRIMESH",
-          "link": 19
+          "link": 21
         }
       ],
       "outputs": [
@@ -611,41 +664,11 @@
       "title": "Preview 3D (low-poly textured)"
     },
     {
-      "id": 11,
-      "type": "SaveImage",
-      "pos": [
-        1740,
-        360
-      ],
-      "size": [
-        300,
-        270
-      ],
-      "flags": {},
-      "order": 10,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 20
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "SaveImage"
-      },
-      "widgets_values": [
-        "unreal_fbx/diffuse"
-      ],
-      "title": "Save Diffuse"
-    },
-    {
       "id": 12,
       "type": "SaveImage",
       "pos": [
         1740,
-        660
+        360
       ],
       "size": [
         300,
@@ -658,7 +681,37 @@
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 21
+          "link": 22
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "unreal_fbx/diffuse"
+      ],
+      "title": "Save Diffuse"
+    },
+    {
+      "id": 13,
+      "type": "SaveImage",
+      "pos": [
+        1740,
+        660
+      ],
+      "size": [
+        300,
+        270
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 23
         }
       ],
       "outputs": [],
@@ -671,7 +724,7 @@
       "title": "Save Normal"
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "PreviewImage",
       "pos": [
         380,
@@ -682,7 +735,7 @@
         280
       ],
       "flags": {},
-      "order": 12,
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
@@ -699,7 +752,7 @@
       "title": "Preprocessed Input"
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "MarkdownNote",
       "pos": [
         40,
@@ -710,13 +763,13 @@
         360
       ],
       "flags": {},
-      "order": 13,
+      "order": 14,
       "mode": 0,
       "inputs": [],
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "## TRELLIS2 \u2192 Unreal FBX (Blender)\n\nSingle-image character (head or body) \u2192 **game-ready FBX** for the Blender\u2192Unreal pipeline.\n\n**Flow:** Load \u2192 **RMBG** \u2192 Conditioning \u2192 Image\u2192Shape \u2192 Shape\u2192Textured Mesh \u2192 **OVoxel Bake** (decimate + UV + PBR) \u2192 **Sample Vertex Colors** (\u2192 color_field) \u2192 **Pack Bundle** \u2192 **BD Blender Export Mesh (FBX)**.\n\n- **Requires Blender** (bundled). FBX is the only single-file format that carries **both** embedded textures **and** vertex colors \u2014 exactly what Blender needs to continue the character pipeline into Unreal.\n- **Low-poly:** OVoxel Bake `decimation_target=3000` tris (heads/bodies); bump to ~5000 if too chunky. **`flat_shading=True`** \u2192 clean **no-smoothing** faceted look.\n- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate **COLOR_0** vertex colors (from the voxelgrid color_field).\n\n**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert **BD Planar Grouping**, **BD Blender Edge Marking** or **BD Blender Merge Planes** between OVoxel Bake and Sample Vertex Colors \u2014 or do it in Blender with the BrainDead toolkit after import.\n\nModels (TRELLIS.2-4B) auto-download on first run. ~12\u201316GB VRAM.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**"
+        "## TRELLIS2 \u2192 Unreal FBX (Blender)\n\nSingle-image character (head or body) \u2192 **game-ready FBX** for the Blender\u2192Unreal pipeline.\n\n**Flow:** Load \u2192 **RMBG** \u2192 Conditioning \u2192 Image\u2192Shape \u2192 Shape\u2192Textured Mesh \u2192 **OVoxel Bake** (decimate + UV + PBR) \u2192 **Sample Vertex Colors** (\u2192 color_field) \u2192 **Pack Bundle** \u2192 **BD Blender Export Mesh (FBX)**.\n\n- **Requires Blender** (bundled). FBX is the only single-file format that carries **both** embedded textures **and** vertex colors \u2014 exactly what Blender needs to continue the character pipeline into Unreal.\n- **Low-poly:** OVoxel Bake `decimation_target=3000` tris (heads/bodies); bump to ~5000 if too chunky. **`flat_shading=True`** \u2192 clean **no-smoothing** faceted look.\n- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate **COLOR_0** vertex colors (from the voxelgrid color_field).\n- **Detail Normal:** Trellis surfaces are smooth, so the high\u2192low bake is mostly flat. **BD Detail Normal From Albedo** adds the albedo's high-frequency micro-detail (skin/fabric/folds) onto the geometric normal (`detail_strength`, UV-safe).\n\n**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert **BD Planar Grouping**, **BD Blender Edge Marking** or **BD Blender Merge Planes** between OVoxel Bake and Sample Vertex Colors \u2014 or do it in Blender with the BrainDead toolkit after import.\n\nModels (TRELLIS.2-4B) auto-download on first run. ~12\u201316GB VRAM.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**"
       ],
       "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead TRELLIS2 Unreal FBX"
     }
@@ -750,7 +803,7 @@
       4,
       1,
       0,
-      13,
+      14,
       0,
       "IMAGE"
     ],
@@ -790,7 +843,7 @@
       9,
       6,
       0,
-      7,
+      8,
       0,
       "TRIMESH"
     ],
@@ -798,95 +851,111 @@
       10,
       5,
       1,
-      7,
+      8,
       1,
       "VOXELGRID"
     ],
     [
       11,
+      6,
+      1,
       7,
       0,
+      "IMAGE"
+    ],
+    [
+      12,
+      6,
+      2,
+      7,
+      1,
+      "IMAGE"
+    ],
+    [
+      13,
       8,
+      0,
+      9,
       0,
       "TRIMESH"
     ],
     [
-      12,
-      7,
-      1,
+      14,
       8,
+      1,
+      9,
       1,
       "COLOR_FIELD"
     ],
     [
-      13,
-      6,
-      1,
-      8,
-      2,
-      "IMAGE"
-    ],
-    [
-      14,
-      6,
-      2,
-      8,
-      3,
-      "IMAGE"
-    ],
-    [
       15,
       6,
-      3,
-      8,
-      4,
+      1,
+      9,
+      2,
       "IMAGE"
     ],
     [
       16,
-      6,
-      4,
-      8,
-      5,
+      7,
+      0,
+      9,
+      3,
       "IMAGE"
     ],
     [
       17,
       6,
-      5,
-      8,
-      6,
+      3,
+      9,
+      4,
       "IMAGE"
     ],
     [
       18,
-      8,
-      0,
+      6,
+      4,
       9,
-      0,
-      "MESH_BUNDLE"
+      5,
+      "IMAGE"
     ],
     [
       19,
       6,
-      0,
-      10,
-      1,
-      "TRIMESH"
+      5,
+      9,
+      6,
+      "IMAGE"
     ],
     [
       20,
-      6,
-      1,
-      11,
+      9,
       0,
-      "IMAGE"
+      10,
+      0,
+      "MESH_BUNDLE"
     ],
     [
       21,
       6,
-      2,
+      0,
+      11,
+      1,
+      "TRIMESH"
+    ],
+    [
+      22,
+      6,
+      1,
       12,
+      0,
+      "IMAGE"
+    ],
+    [
+      23,
+      7,
+      0,
+      13,
       0,
       "IMAGE"
     ]

@@ -105,6 +105,25 @@
     }
   },
   "7": {
+    "class_type": "BD_DetailNormalFromAlbedo",
+    "inputs": {
+      "albedo": [
+        "6",
+        1
+      ],
+      "detail_strength": 1.0,
+      "high_pass": 3.0,
+      "base_normal": [
+        "6",
+        2
+      ],
+      "invert": false
+    },
+    "_meta": {
+      "title": "\u2466 Detail Normal (albedo micro-detail \u2192 normal)"
+    }
+  },
+  "8": {
     "class_type": "BD_SampleVoxelgridColors",
     "inputs": {
       "mesh": [
@@ -120,19 +139,19 @@
       "distance_threshold": 3.0
     },
     "_meta": {
-      "title": "\u2466 Sample Vertex Colors (\u2192 color_field)"
+      "title": "\u2467 Sample Vertex Colors (\u2192 color_field)"
     }
   },
-  "8": {
+  "9": {
     "class_type": "BD_PackBundle",
     "inputs": {
       "mesh": [
-        "7",
+        "8",
         0
       ],
       "name": "character",
       "color_field": [
-        "7",
+        "8",
         1
       ],
       "diffuse": [
@@ -140,8 +159,8 @@
         1
       ],
       "normal": [
-        "6",
-        2
+        "7",
+        0
       ],
       "metallic": [
         "6",
@@ -157,16 +176,16 @@
       ]
     },
     "_meta": {
-      "title": "\u2467 Pack Bundle (mesh + color_field + PBR)"
+      "title": "\u2468 Pack Bundle (mesh + color_field + PBR)"
     }
   },
-  "9": {
+  "10": {
     "class_type": "BD_BlenderExportMesh",
     "inputs": {
       "output_dir": "unreal_fbx",
       "solidify_mode": "NONE",
       "bundle": [
-        "8",
+        "9",
         0
       ],
       "flat_shading": true,
@@ -175,10 +194,10 @@
       "format": "FBX"
     },
     "_meta": {
-      "title": "\u2468 Blender Export FBX (flat \u2022 embedded textures + vertex colors)"
+      "title": "\u2469 Blender Export FBX (flat \u2022 embedded textures + vertex colors)"
     }
   },
-  "10": {
+  "11": {
     "class_type": "BD_Preview3D",
     "inputs": {
       "mesh": [
@@ -191,7 +210,7 @@
       "title": "Preview 3D (low-poly textured)"
     }
   },
-  "11": {
+  "12": {
     "class_type": "SaveImage",
     "inputs": {
       "images": [
@@ -204,12 +223,12 @@
       "title": "Save Diffuse"
     }
   },
-  "12": {
+  "13": {
     "class_type": "SaveImage",
     "inputs": {
       "images": [
-        "6",
-        2
+        "7",
+        0
       ],
       "filename_prefix": "unreal_fbx/normal"
     },
@@ -217,7 +236,7 @@
       "title": "Save Normal"
     }
   },
-  "13": {
+  "14": {
     "class_type": "PreviewImage",
     "inputs": {
       "images": [

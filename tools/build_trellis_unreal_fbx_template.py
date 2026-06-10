@@ -113,14 +113,18 @@ tex = add("BD_Trellis2ShapeToTexturedMesh", (1400, 80), (300, 300), {}, title="�
 bake = add("BD_OVoxelBake", (1740, 80), (300, 240),
            {"decimation_target": 3000, "texture_size": 2048},   # low-poly target ~3k tris (bump to 5000 if chunky)
            title="⑥ OVoxel Bake (decimate + UV + PBR • ~3k tris low-poly)")
+# Detail normal: add albedo high-frequency micro-detail onto the (smooth) geometric bake.
+detail = add("BD_DetailNormalFromAlbedo", (2080, 320), (300, 180),
+             {"detail_strength": 1.0, "high_pass": 3.0},
+             title="⑦ Detail Normal (albedo micro-detail → normal)")
 samp = add("BD_SampleVoxelgridColors", (2080, 80), (300, 200), {"sampling_mode": "smooth"},
-           title="⑦ Sample Vertex Colors (→ color_field)")
+           title="⑧ Sample Vertex Colors (→ color_field)")
 pack = add("BD_PackBundle", (2420, 80), (300, 240), {"name": "character"},
-           title="⑧ Pack Bundle (mesh + color_field + PBR)")
+           title="⑨ Pack Bundle (mesh + color_field + PBR)")
 fbx = add("BD_BlenderExportMesh", (2760, 80), (320, 320),
           {"output_dir": "unreal_fbx", "format": "FBX", "flat_shading": True,
            "solidify_mode": "NONE"},
-          title="⑨ Blender Export FBX (flat • embedded textures + vertex colors)")
+          title="⑩ Blender Export FBX (flat • embedded textures + vertex colors)")
 
 prev3d = add("BD_Preview3D", (2080, 320), (300, 260), {}, title="Preview 3D (low-poly textured)")
 sv_d = add("SaveImage", (1740, 360), (300, 270), {"filename_prefix": "unreal_fbx/diffuse"}, title="Save Diffuse")
@@ -138,7 +142,10 @@ md = ("## TRELLIS2 → Unreal FBX (Blender)\n\n"
       "- **Low-poly:** OVoxel Bake `decimation_target=3000` tris (heads/bodies); bump to ~5000 "
       "if too chunky. **`flat_shading=True`** → clean **no-smoothing** faceted look.\n"
       "- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate "
-      "**COLOR_0** vertex colors (from the voxelgrid color_field).\n\n"
+      "**COLOR_0** vertex colors (from the voxelgrid color_field).\n"
+      "- **Detail Normal:** Trellis surfaces are smooth, so the high→low bake is mostly flat. "
+      "**BD Detail Normal From Albedo** adds the albedo's high-frequency micro-detail "
+      "(skin/fabric/folds) onto the geometric normal (`detail_strength`, UV-safe).\n\n"
       "**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert "
       "**BD Planar Grouping**, **BD Blender Edge Marking** or **BD Blender Merge Planes** between "
       "OVoxel Bake and Sample Vertex Colors — or do it in Blender with the BrainDead toolkit after "
@@ -159,17 +166,19 @@ link(shape, "shape_result", tex, "shape_result")
 link(tex, "voxelgrid", bake, "voxelgrid")
 link(bake, "mesh", samp, "mesh")
 link(tex, "voxelgrid", samp, "voxelgrid")     # sampler reads the same voxelgrid (mesh is in its space)
+link(bake, "diffuse", detail, "albedo")        # detail-normal pass on the albedo atlas
+link(bake, "normal", detail, "base_normal")    # UDN-blended onto the geometric bake
 link(samp, "mesh", pack, "mesh")
 link(samp, "color_field", pack, "color_field")
 link(bake, "diffuse", pack, "diffuse")
-link(bake, "normal", pack, "normal")
+link(detail, "normal", pack, "normal")         # detailed normal (form + albedo micro-detail)
 link(bake, "metallic", pack, "metallic")
 link(bake, "roughness", pack, "roughness")
 link(bake, "alpha", pack, "alpha")
 link(pack, "bundle", fbx, "bundle")
 link(bake, "mesh", prev3d, "mesh")
 link(bake, "diffuse", sv_d, "images")
-link(bake, "normal", sv_n, "images")
+link(detail, "normal", sv_n, "images")
 
 wf = {"id": "bd-trellis2-unreal-fbx", "revision": 0, "last_node_id": nid, "last_link_id": lid,
       "nodes": nodes, "links": links, "groups": [], "config": {}, "extra": {}, "version": 0.4}
