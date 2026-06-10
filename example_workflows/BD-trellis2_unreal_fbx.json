@@ -372,13 +372,13 @@
         "Node name for S&R": "BD_OVoxelBake"
       },
       "widgets_values": [
-        40000,
+        3000,
         2048,
         false,
         1.0,
         0.9
       ],
-      "title": "\u2465 OVoxel Bake (decimate + UV + PBR)"
+      "title": "\u2465 OVoxel Bake (decimate + UV + PBR \u2022 ~3k tris low-poly)"
     },
     {
       "id": 7,
@@ -716,7 +716,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "## TRELLIS2 \u2192 Unreal FBX (Blender)\n\nSingle-image character (head or body) \u2192 **game-ready FBX** for the Blender\u2192Unreal pipeline.\n\n**Flow:** Load \u2192 **RMBG** \u2192 Conditioning \u2192 Image\u2192Shape \u2192 Shape\u2192Textured Mesh \u2192 **OVoxel Bake** (decimate + UV + PBR) \u2192 **Sample Vertex Colors** (\u2192 color_field) \u2192 **Pack Bundle** \u2192 **BD Blender Export Mesh (FBX)**.\n\n- **Requires Blender** (bundled). FBX is the only single-file format that carries **both** embedded textures **and** vertex colors \u2014 exactly what Blender needs to continue the character pipeline into Unreal.\n- **`flat_shading=True`** \u2192 clean low-poly **no-smoothing** faceted look.\n- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate **COLOR_0** vertex colors (from the voxelgrid color_field).\n\n**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert **BD Planar Grouping**, **BD Blender Edge Marking** or **BD Blender Merge Planes** between OVoxel Bake and Sample Vertex Colors \u2014 or do it in Blender with the BrainDead toolkit after import.\n\nModels (TRELLIS.2-4B) auto-download on first run. ~12\u201316GB VRAM.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**"
+        "## TRELLIS2 \u2192 Unreal FBX (Blender)\n\nSingle-image character (head or body) \u2192 **game-ready FBX** for the Blender\u2192Unreal pipeline.\n\n**Flow:** Load \u2192 **RMBG** \u2192 Conditioning \u2192 Image\u2192Shape \u2192 Shape\u2192Textured Mesh \u2192 **OVoxel Bake** (decimate + UV + PBR) \u2192 **Sample Vertex Colors** (\u2192 color_field) \u2192 **Pack Bundle** \u2192 **BD Blender Export Mesh (FBX)**.\n\n- **Requires Blender** (bundled). FBX is the only single-file format that carries **both** embedded textures **and** vertex colors \u2014 exactly what Blender needs to continue the character pipeline into Unreal.\n- **Low-poly:** OVoxel Bake `decimation_target=3000` tris (heads/bodies); bump to ~5000 if too chunky. **`flat_shading=True`** \u2192 clean **no-smoothing** faceted look.\n- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate **COLOR_0** vertex colors (from the voxelgrid color_field).\n\n**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert **BD Planar Grouping**, **BD Blender Edge Marking** or **BD Blender Merge Planes** between OVoxel Bake and Sample Vertex Colors \u2014 or do it in Blender with the BrainDead toolkit after import.\n\nModels (TRELLIS.2-4B) auto-download on first run. ~12\u201316GB VRAM.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**"
       ],
       "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead TRELLIS2 Unreal FBX"
     }

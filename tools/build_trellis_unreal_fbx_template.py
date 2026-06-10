@@ -111,8 +111,8 @@ cond = add("BD_Trellis2GetConditioning", (720, 80), (300, 260), {}, title="③ G
 shape = add("BD_Trellis2ImageToShape", (1060, 80), (300, 300), {}, title="④ Image → Shape")
 tex = add("BD_Trellis2ShapeToTexturedMesh", (1400, 80), (300, 300), {}, title="⑤ Shape → Textured Mesh (+ voxelgrid)")
 bake = add("BD_OVoxelBake", (1740, 80), (300, 240),
-           {"decimation_target": 40000, "texture_size": 2048},
-           title="⑥ OVoxel Bake (decimate + UV + PBR)")
+           {"decimation_target": 3000, "texture_size": 2048},   # low-poly target ~3k tris (bump to 5000 if chunky)
+           title="⑥ OVoxel Bake (decimate + UV + PBR • ~3k tris low-poly)")
 samp = add("BD_SampleVoxelgridColors", (2080, 80), (300, 200), {"sampling_mode": "smooth"},
            title="⑦ Sample Vertex Colors (→ color_field)")
 pack = add("BD_PackBundle", (2420, 80), (300, 240), {"name": "character"},
@@ -135,7 +135,8 @@ md = ("## TRELLIS2 → Unreal FBX (Blender)\n\n"
       "- **Requires Blender** (bundled). FBX is the only single-file format that carries **both** "
       "embedded textures **and** vertex colors — exactly what Blender needs to continue the "
       "character pipeline into Unreal.\n"
-      "- **`flat_shading=True`** → clean low-poly **no-smoothing** faceted look.\n"
+      "- **Low-poly:** OVoxel Bake `decimation_target=3000` tris (heads/bodies); bump to ~5000 "
+      "if too chunky. **`flat_shading=True`** → clean **no-smoothing** faceted look.\n"
       "- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate "
       "**COLOR_0** vertex colors (from the voxelgrid color_field).\n\n"
       "**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert "

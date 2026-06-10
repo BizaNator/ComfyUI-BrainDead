@@ -1,0 +1,232 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example.png"
+    },
+    "_meta": {
+      "title": "\u2460 Load Character (head or body)"
+    }
+  },
+  "2": {
+    "class_type": "RMBG",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "model": "RMBG-2.0",
+      "sensitivity": 1.0,
+      "process_res": 1024,
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": false,
+      "background": "Alpha"
+    },
+    "_meta": {
+      "title": "\u2461 Remove Background (RMBG-2.0)"
+    }
+  },
+  "3": {
+    "class_type": "BD_Trellis2GetConditioning",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "mask": [
+        "2",
+        1
+      ],
+      "resolution": "1024_cascade",
+      "attn_backend": "flash_attn",
+      "vram_mode": "keep_loaded",
+      "include_1024": true,
+      "background_color": "gray"
+    },
+    "_meta": {
+      "title": "\u2462 Get Conditioning"
+    }
+  },
+  "4": {
+    "class_type": "BD_Trellis2ImageToShape",
+    "inputs": {
+      "conditioning": [
+        "3",
+        0
+      ],
+      "seed": 0,
+      "ss_guidance_strength": 7.5,
+      "ss_sampling_steps": 12,
+      "shape_guidance_strength": 7.5,
+      "shape_sampling_steps": 12,
+      "max_tokens": 49152
+    },
+    "_meta": {
+      "title": "\u2463 Image \u2192 Shape"
+    }
+  },
+  "5": {
+    "class_type": "BD_Trellis2ShapeToTexturedMesh",
+    "inputs": {
+      "conditioning": [
+        "3",
+        0
+      ],
+      "shape_result": [
+        "4",
+        0
+      ],
+      "seed": 0,
+      "tex_guidance_strength": 7.5,
+      "tex_sampling_steps": 12,
+      "output_shape_voxelgrid": false
+    },
+    "_meta": {
+      "title": "\u2464 Shape \u2192 Textured Mesh (+ voxelgrid)"
+    }
+  },
+  "6": {
+    "class_type": "BD_OVoxelBake",
+    "inputs": {
+      "voxelgrid": [
+        "5",
+        1
+      ],
+      "decimation_target": 3000,
+      "texture_size": 2048,
+      "remesh": false,
+      "remesh_band": 1.0,
+      "remesh_project": 0.9
+    },
+    "_meta": {
+      "title": "\u2465 OVoxel Bake (decimate + UV + PBR \u2022 ~3k tris low-poly)"
+    }
+  },
+  "7": {
+    "class_type": "BD_SampleVoxelgridColors",
+    "inputs": {
+      "mesh": [
+        "6",
+        0
+      ],
+      "voxelgrid": [
+        "5",
+        1
+      ],
+      "sampling_mode": "smooth",
+      "default_color": "0.5,0.5,0.5,1.0",
+      "distance_threshold": 3.0
+    },
+    "_meta": {
+      "title": "\u2466 Sample Vertex Colors (\u2192 color_field)"
+    }
+  },
+  "8": {
+    "class_type": "BD_PackBundle",
+    "inputs": {
+      "mesh": [
+        "7",
+        0
+      ],
+      "name": "character",
+      "color_field": [
+        "7",
+        1
+      ],
+      "diffuse": [
+        "6",
+        1
+      ],
+      "normal": [
+        "6",
+        2
+      ],
+      "metallic": [
+        "6",
+        3
+      ],
+      "roughness": [
+        "6",
+        4
+      ],
+      "alpha": [
+        "6",
+        5
+      ]
+    },
+    "_meta": {
+      "title": "\u2467 Pack Bundle (mesh + color_field + PBR)"
+    }
+  },
+  "9": {
+    "class_type": "BD_BlenderExportMesh",
+    "inputs": {
+      "output_dir": "unreal_fbx",
+      "solidify_mode": "NONE",
+      "bundle": [
+        "8",
+        0
+      ],
+      "flat_shading": true,
+      "export_textures": true,
+      "timeout": 300,
+      "format": "FBX"
+    },
+    "_meta": {
+      "title": "\u2468 Blender Export FBX (flat \u2022 embedded textures + vertex colors)"
+    }
+  },
+  "10": {
+    "class_type": "BD_Preview3D",
+    "inputs": {
+      "mesh": [
+        "6",
+        0
+      ],
+      "color_parts": true
+    },
+    "_meta": {
+      "title": "Preview 3D (low-poly textured)"
+    }
+  },
+  "11": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "6",
+        1
+      ],
+      "filename_prefix": "unreal_fbx/diffuse"
+    },
+    "_meta": {
+      "title": "Save Diffuse"
+    }
+  },
+  "12": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "6",
+        2
+      ],
+      "filename_prefix": "unreal_fbx/normal"
+    },
+    "_meta": {
+      "title": "Save Normal"
+    }
+  },
+  "13": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Preprocessed Input"
+    }
+  }
+}
