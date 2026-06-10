@@ -15,11 +15,15 @@ Usage:
     python3 run_unreal_fbx.py --image /path/Letti.png --name Letti
     python3 run_unreal_fbx.py --image x.png --name Bob --decimation 5000 --server http://10.15.0.20:8188
 """
-import argparse, json, os, sys, time, uuid
+import argparse, json, os, shutil, sys, time, uuid
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_API = os.path.join(HERE, "..", "example_workflows", "BD-trellis2_unreal_fbx.api.json")
+# Registered studio executable (COB convention); falls back to the BrainDead repo source.
+STUDIO_API = "/mnt/tank/Studio/Brains/Workflows/COB_3d_TrellisUnrealFBX_v01_API.json"
+REPO_API = os.path.join(HERE, "..", "example_workflows", "BD-trellis2_unreal_fbx.api.json")
+DEFAULT_API = STUDIO_API if os.path.exists(STUDIO_API) else REPO_API
+CHAR_BASE = "/mnt/tank/Studio/Brains/Characters"
 
 
 def _get(url):
@@ -70,6 +74,10 @@ def main():
     ap.add_argument("--output-dir", default="unreal_fbx", help="Subfolder under ComfyUI output/")
     ap.add_argument("--output-base", default="/srv/AI_Stuff/outputs",
                     help="ComfyUI output directory on disk (to resolve the FBX path)")
+    ap.add_argument("--part", default="body",
+                    help="Body part → Characters/<name>/models/<part>/unreal/ (e.g. body, head, arm_left)")
+    ap.add_argument("--char-base", default=CHAR_BASE,
+                    help="Studio Characters root. Set empty to skip the character-folder copy.")
     ap.add_argument("--timeout", type=int, default=1800)
     args = ap.parse_args()
 
@@ -109,17 +117,33 @@ def main():
     else:
         print(json.dumps({"status": "error", "error": "timeout", "prompt_id": pid})); sys.exit(1)
 
-    # 5. resolve outputs on disk
+    # 5. resolve outputs on disk (ComfyUI output dir)
     out_dir = os.path.join(args.output_base, args.output_dir)
     fbx = os.path.join(out_dir, f"{args.name}.fbx")
     maps = {t: os.path.join(out_dir, f"{args.name}_{t}.png")
             for t in ("diffuse", "normal", "metallic", "roughness", "alpha")}
+    maps = {k: v for k, v in maps.items() if os.path.exists(v)}
+
+    # 6. copy into the studio character folder (Seam 1 bridge) — canonical layout for Blender→Unreal
+    char_fbx, char_maps = None, {}
+    if args.char_base and os.path.exists(fbx):
+        dest = os.path.join(args.char_base, args.name, "models", args.part, "unreal")
+        os.makedirs(dest, exist_ok=True)
+        char_fbx = os.path.join(dest, f"{args.name}.fbx")
+        shutil.copy2(fbx, char_fbx)
+        for t, p in maps.items():
+            d = os.path.join(dest, f"{args.name}_{t}.png")
+            shutil.copy2(p, d); char_maps[t] = d
+
     result = {
         "status": "success" if os.path.exists(fbx) else "incomplete",
         "prompt_id": pid,
         "name": args.name,
+        "part": args.part,
         "fbx": fbx if os.path.exists(fbx) else None,
-        "maps": {k: v for k, v in maps.items() if os.path.exists(v)},
+        "maps": maps,
+        "character_fbx": char_fbx,            # canonical studio location (Blender→Unreal picks this up)
+        "character_maps": char_maps,
         "decimation_target": args.decimation or "template default (3000)",
     }
     print(json.dumps(result, indent=2))
