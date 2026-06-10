@@ -97,6 +97,20 @@ def _shade_mesh(src: "trimesh.Trimesh", shading: str, color_rgba):
     extent = float((verts.max(0) - verts.min(0)).max()) or 1.0
     m.vertices = (verts - center) / extent  # fit in ~[-0.5, 0.5]
 
+    if shading == "textured":
+        # Real texture first: keep the mesh's UV + baseColor material so pyrender renders the
+        # actual texture (full atlas resolution). Fall back to vertex colors if there's no
+        # usable texture (or only a 1x1 placeholder), then to solid.
+        import trimesh.visual as _tv
+        vis = getattr(src, "visual", None)
+        mat = getattr(vis, "material", None)
+        uv = getattr(vis, "uv", None)
+        bc = getattr(mat, "baseColorTexture", None) if mat is not None else None
+        if (isinstance(vis, _tv.TextureVisuals) and bc is not None and uv is not None
+                and min(bc.size) > 2):
+            return m  # textured — visual (UV + material) survives the vertex normalization
+        shading = "vertex_colors"  # no usable texture → fall back
+
     if shading == "normals":
         n = np.asarray(m.vertex_normals, dtype=np.float64)
         cols = ((n * 0.5 + 0.5) * 255).clip(0, 255).astype(np.uint8)
@@ -218,8 +232,8 @@ class BD_MeshPreview(io.ComfyNode):
                 io.Int.Input("tile_size", default=256, min=64, max=1024, step=32),
                 io.Int.Input("columns", default=0, min=0, max=16,
                     tooltip="Grid columns. 0 = auto (square-ish)."),
-                io.Combo.Input("shading", options=["part_colors", "normals", "solid", "vertex_colors"],
-                               default="part_colors"),
+                io.Combo.Input("shading", options=["textured", "vertex_colors", "part_colors", "normals", "solid"],
+                               default="textured"),
                 io.Combo.Input("background", options=["dark", "white", "transparent"],
                                default="dark"),
                 io.Float.Input("azimuth", default=35.0, min=-180.0, max=180.0, step=5.0),

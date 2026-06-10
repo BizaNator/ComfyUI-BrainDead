@@ -130,7 +130,7 @@ prev3d = add("BD_Preview3D", (2080, 320), (300, 260), {}, title="Preview 3D (low
 # DAM preview: render the textured mesh (its own vertex colors) to a thumbnail/grid image so the
 # studio DAM can show a preview without opening Blender. Saved to the character folder by the dispatcher.
 preview = add("BD_MeshPreview", (2420, 360), (300, 240),
-              {"shading": "vertex_colors", "tile_size": 512, "background": "dark"},
+              {"shading": "textured", "tile_size": 512, "background": "dark"},
               title="Mesh Preview (DAM thumbnail)")
 sv_prev = add("SaveImage", (2760, 440), (300, 270), {"filename_prefix": "unreal_fbx/preview"}, title="Save Preview")
 sv_d = add("SaveImage", (1740, 360), (300, 270), {"filename_prefix": "unreal_fbx/diffuse"}, title="Save Diffuse")

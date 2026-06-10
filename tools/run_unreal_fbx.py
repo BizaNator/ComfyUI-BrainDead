@@ -144,7 +144,8 @@ def main():
             d = os.path.join(dest, f"{args.name}_{t}.png")
             shutil.copy2(p, d); char_maps[t] = d
         if preview and os.path.exists(preview):
-            char_preview = os.path.join(dest, f"{args.name}_preview.png")
+            # Named "<mesh>_thumbnail.png" so the DAM recognizes it as the mesh's thumbnail.
+            char_preview = os.path.join(dest, f"{args.name}_thumbnail.png")
             shutil.copy2(preview, char_preview)   # DAM renders this; no Blender needed
 
     result = {
