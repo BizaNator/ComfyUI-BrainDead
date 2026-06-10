@@ -215,7 +215,7 @@
     "inputs": {
       "tile_size": 512,
       "columns": 0,
-      "shading": "vertex_colors",
+      "shading": "textured",
       "background": "dark",
       "azimuth": 35.0,
       "elevation": 20.0,
