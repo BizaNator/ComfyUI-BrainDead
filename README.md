@@ -22,7 +22,7 @@ AN internally-used node pack for Biloxi Studios designed to help with character,
 
 ## Workflow Templates
 
-Sixteen ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
+Seventeen ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
 
 <table>
 <tr>
@@ -115,6 +115,11 @@ Sixteen ready-to-use workflows ship in [`example_workflows/`](example_workflows/
 <img src="docs/images/workflow_flipbook.jpg" width="100%" alt="Atlas / Flipbook"><br>
 <b>Atlas / Flipbook</b><br>
 <sub>Tile frames / packed textures into a grid sheet or sprite strip + per-cell UV layout</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/workflow_unrealfbx.jpg" width="100%" alt="TRELLIS2 to Unreal FBX"><br>
+<b>TRELLIS2 → Unreal FBX</b><br>
+<sub>Image → low-poly textured mesh + detail normal → single game-ready FBX (textures + vertex colors) via Blender</sub>
 </td>
 </tr>
 </table>
@@ -221,7 +226,7 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 | **BD Transfer Colors Pymeshlab** | Transfer colors using pymeshlab |
 | **BD Mesh Repair** | Repair mesh topology (holes, normals, duplicates) |
 | **BD Smart Decimate** | Edge-preserving decimation with pymeshlab |
-| **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ. Optional `context_id` (BD Save Context) for template-based naming |
+| **BD Export Mesh With Colors** | Export mesh with vertex colors to GLB/PLY/OBJ. Preserves the mesh's baked PBR material; optional `diffuse`/`normal` IMAGE inputs embed those maps into the GLB (so the file is textured, not a white placeholder). Optional `context_id` (BD Save Context) for template-based naming |
 | **BD Trimesh → MESH** | Convert TRIMESH → ComfyUI native MESH (geometry only) to feed built-in 3D nodes (Save 3D Model / SaveGLB) |
 | **BD MESH → Trimesh** | Convert native MESH → TRIMESH to pull built-in Hunyuan3D/voxel results into the BD pipeline |
 | **BD CuMesh Simplify** | GPU-accelerated mesh simplification with color preservation |
@@ -242,6 +247,9 @@ Advanced tools for maintaining character consistency with Qwen-Image models.
 | **BD Mesh Inspector** | Inspect mesh properties (verts, faces, UVs, colors) + interactive three.js viewer |
 | **BD Mesh Preview (Thumbnails)** | Render a TRIMESH_LIST (e.g. CubePart `parts`) or single TRIMESH to a labeled, color-coded contact-sheet IMAGE (shown inline) + per-mesh IMAGE batch. Headless GPU (EGL) render. Wire `part_names` → `labels`. |
 | **BD Preview 3D** | Show a mesh — or CubePart `parts` auto color-coded — in the in-node interactive three.js viewer (same viewer as Mesh Inspector). |
+| **BD Orient Mesh** | Rotate a finished mesh by X/Y/Z degrees, non-destructive (UVs, baked material, and COLOR_0 vertex colors ride along). Use to fix engine orientation — e.g. Pixal3D output → `rotate_x=180` to stand it upright facing forward. |
+| **BD Bake Vertex Colors From Texture** | Sample a diffuse/atlas through a mesh's UVs into per-vertex `COLOR_0` (bilinear/nearest). Runs on ANY UV'd mesh; keeps the UV + material intact (additive). Feeds COLOR_0 consumers (Pack Bundle, edge/stylized) and vertex-colored exports. |
+| **BD Detail Normal From Albedo** | Extract high-frequency detail from a diffuse/albedo atlas → tangent-space detail normal, UDN-blended onto a base (geometric) normal. Adds skin/fabric/fold micro-detail that a smooth high→low bake can't capture. UV-safe (per-texel). `detail_strength` + `high_pass`. |
 
 **Mesh types — `TRIMESH` vs native `MESH`:**
 BD nodes pass meshes as **`TRIMESH`** (a full `trimesh.Trimesh` carrying vertex colors, UVs,
@@ -281,7 +289,7 @@ Advanced mesh processing using Blender's geometry tools (requires Blender 5.0+, 
 | **BD Blender Cleanup** | Advanced mesh cleanup and repair |
 | **BD Blender Vertex Colors** | Vertex color operations (bake, transfer) |
 | **BD Blender Normals** | Normal fixing and recalculation |
-| **BD Blender Export Mesh** | Export MESH_BUNDLE as GLB with material + vertex colors |
+| **BD Blender Export Mesh** | Export a MESH_BUNDLE (or a direct TRIMESH `mesh`) as **GLB or FBX** (`format`). FBX uses Blender's exporter with `embed_textures` → a single game-ready file carrying **both** embedded PBR textures **and** vertex colors (GLB can't hold both). Optional `flat_shading` for a clean low-poly no-smoothing look. |
 
 **Hard Edge Preservation Pipeline:**
 ```
@@ -627,10 +635,10 @@ output/
 
 ## Node Counts at a Glance
 
-~110 nodes across 10 categories:
+~113 nodes across 10 categories:
 
 - **Cache** — caching, save/load, save-context system (~16)
-- **Mesh** — 3D processing, color sampling, simplification, OVoxel PBR baking (~26)
+- **Mesh** — 3D processing, color sampling, simplification, OVoxel PBR baking, orient, vertex-color/detail-normal baking (~29)
 - **Blender** — Blender-based geometry tools (~12)
 - **TRELLIS2** — TRELLIS2-specific shape/texture nodes (~9)
 - **Pixal3D** — image-to-3D generation (Pixal3D + MoGe FOV estimation) (~2)
