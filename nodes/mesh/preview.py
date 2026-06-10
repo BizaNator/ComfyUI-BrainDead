@@ -243,6 +243,9 @@ class BD_MeshPreview(io.ComfyNode):
                 TrimeshInput("mesh", optional=True),
                 io.String.Input("labels", default="", multiline=True, optional=True,
                     tooltip="Optional per-mesh labels (newline-separated), e.g. CubePart `part_names`."),
+                io.Int.Input("views", default=1, min=1, max=8, optional=True,
+                    tooltip="For a SINGLE mesh: render this many angles (turnaround) into the grid — "
+                            "e.g. 4 = front/right/back/left. 1 = single view. Ignored for a mesh list."),
             ],
             outputs=[
                 io.Image.Output(display_name="grid"),
@@ -254,7 +257,7 @@ class BD_MeshPreview(io.ComfyNode):
     @classmethod
     def execute(cls, meshes=None, mesh=None, labels="", tile_size=256, columns=0,
                 shading="part_colors", background="dark", azimuth=35.0,
-                elevation=20.0) -> io.NodeOutput:
+                elevation=20.0, views=1) -> io.NodeOutput:
         if not HAS_TRIMESH:
             return io.NodeOutput(_blank(), _blank(), "ERROR: trimesh not installed")
         items = _gather_meshes(meshes, mesh)
@@ -272,23 +275,28 @@ class BD_MeshPreview(io.ComfyNode):
         except Exception as e:
             return io.NodeOutput(_blank(), _blank(), f"ERROR: pyrender unavailable ({e})")
 
+        # Turnaround: for a SINGLE mesh, render `views` evenly-spaced angles into the grid
+        # (e.g. 4 = front/right/back/left). For a mesh list (CubePart), 1 view per part.
+        n_views = max(1, int(views)) if len(items) == 1 else 1
         tiles = []
         for i, m in enumerate(items):
-            try:
-                arr = _render_one(pr, m, tile_size, shading, background,
-                                  azimuth, elevation, palette[i])
-            except Exception as e:
-                arr = np.zeros((tile_size, tile_size, 3), np.uint8)
-                print(f"[BD MeshPreview] part {i} render failed: {e}", flush=True)
-            # Explicit label wins; auto "part N" only for multi-mesh grids (e.g. CubePart).
-            # A single unlabeled mesh stays clean — it's a DAM/catalog thumbnail.
-            if i < len(names):
-                label = names[i]
-            elif len(items) > 1:
-                label = f"part {i}"
-            else:
-                label = ""
-            tiles.append(_label_tile(arr, label, background))
+            for v in range(n_views):
+                az = azimuth + v * (360.0 / n_views)
+                try:
+                    arr = _render_one(pr, m, tile_size, shading, background,
+                                      az, elevation, palette[i])
+                except Exception as e:
+                    arr = np.zeros((tile_size, tile_size, 3), np.uint8)
+                    print(f"[BD MeshPreview] render failed (mesh {i}, view {v}): {e}", flush=True)
+                # Explicit label wins; auto "part N" only for multi-mesh grids (e.g. CubePart).
+                # Turnaround angles + a single unlabeled mesh stay clean (DAM/catalog thumbnail).
+                if n_views == 1 and i < len(names):
+                    label = names[i]
+                elif n_views == 1 and len(items) > 1:
+                    label = f"part {i}"
+                else:
+                    label = ""
+                tiles.append(_label_tile(arr, label, background))
 
         thumbs = _to_image_tensor(tiles)
 
