@@ -266,7 +266,14 @@ class BD_MeshPreview(io.ComfyNode):
             except Exception as e:
                 arr = np.zeros((tile_size, tile_size, 3), np.uint8)
                 print(f"[BD MeshPreview] part {i} render failed: {e}", flush=True)
-            label = names[i] if i < len(names) else f"part {i}"
+            # Explicit label wins; auto "part N" only for multi-mesh grids (e.g. CubePart).
+            # A single unlabeled mesh stays clean — it's a DAM/catalog thumbnail.
+            if i < len(names):
+                label = names[i]
+            elif len(items) > 1:
+                label = f"part {i}"
+            else:
+                label = ""
             tiles.append(_label_tile(arr, label, background))
 
         thumbs = _to_image_tensor(tiles)
