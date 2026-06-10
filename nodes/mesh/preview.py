@@ -104,6 +104,29 @@ def _shade_mesh(src: "trimesh.Trimesh", shading: str, color_rgba):
         m.visual.vertex_colors = cols
     elif shading == "solid":
         m.visual.vertex_colors = np.tile([200, 200, 205, 255], (len(m.vertices), 1))
+    elif shading == "vertex_colors":
+        # Render the mesh's OWN colors (the textured/character look) for a DAM-ready preview.
+        # Read COLOR_0 from vertex_attributes first — accessing TextureVisuals.vertex_colors
+        # directly would rasterize the texture and is slow/lossy.
+        import trimesh.visual as _tv
+        cols = None
+        try:
+            if hasattr(src, "vertex_attributes") and "COLOR_0" in src.vertex_attributes:
+                cols = np.asarray(src.vertex_attributes["COLOR_0"])
+            elif src.visual is not None and not isinstance(src.visual, _tv.TextureVisuals):
+                vc = src.visual.vertex_colors
+                if vc is not None:
+                    cols = np.asarray(vc)
+        except Exception:
+            cols = None
+        if cols is not None and len(cols) == len(m.vertices):
+            if cols.dtype != np.uint8:
+                cols = (np.clip(cols, 0, 1) * 255).astype(np.uint8) if cols.max() <= 1.0 else cols.astype(np.uint8)
+            if cols.shape[1] == 3:
+                cols = np.concatenate([cols, np.full((len(cols), 1), 255, np.uint8)], axis=1)
+            m.visual.vertex_colors = cols
+        else:  # no vertex colors on the mesh — fall back to neutral solid
+            m.visual.vertex_colors = np.tile([200, 200, 205, 255], (len(m.vertices), 1))
     else:  # part_colors
         m.visual.vertex_colors = np.tile(np.asarray(color_rgba, np.uint8), (len(m.vertices), 1))
     return m
@@ -195,7 +218,7 @@ class BD_MeshPreview(io.ComfyNode):
                 io.Int.Input("tile_size", default=256, min=64, max=1024, step=32),
                 io.Int.Input("columns", default=0, min=0, max=16,
                     tooltip="Grid columns. 0 = auto (square-ish)."),
-                io.Combo.Input("shading", options=["part_colors", "normals", "solid"],
+                io.Combo.Input("shading", options=["part_colors", "normals", "solid", "vertex_colors"],
                                default="part_colors"),
                 io.Combo.Input("background", options=["dark", "white", "transparent"],
                                default="dark"),
