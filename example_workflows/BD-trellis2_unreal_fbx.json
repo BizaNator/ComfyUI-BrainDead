@@ -722,7 +722,8 @@
         "dark",
         35.0,
         20.0,
-        ""
+        "",
+        4
       ],
       "title": "Mesh Preview (DAM thumbnail)"
     },
