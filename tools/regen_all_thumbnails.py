@@ -33,6 +33,7 @@ GALLERY_SLUG = {
     "BD-character_consistency": "character", "BD-background_removal": "bgremoval",
     "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
     "BD-game_engine_packing": "packing", "BD-atlas_flipbook": "flipbook",
+    "BD-trellis2_unreal_fbx": "unrealfbx",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -57,10 +58,20 @@ CONFIGS = {
         "chips": ["albedo", "normal", "rough", "metal"]},
     "BD-pixal3d_image_to_3d": {
         "title": "Pixal3D", "subtitle": "Image -> Textured 3D",
-        "bullets": ["Load Image -> Preprocess (MoGe FOV)", "Image-to-3D -> mesh + voxelgrid",
-                    "CuMesh Simplify (sharp-edge GPU decimate)",
-                    "OVoxel Texture Bake -> PBR maps", "Export GLB + Preview 3D"],
-        "chips": ["albedo", "normal", "rough", "metal"]},
+        "bullets": ["Load Image -> Preprocess (FOV + bg)", "Image-to-3D -> mesh + voxelgrid",
+                    "OVoxel Bake (decimate + UV + PBR, all-in-one)",
+                    "Orient Mesh (upright / forward)", "Export GLB + Preview 3D"],
+        "chips": ["albedo", "normal", "rough", "metal"],
+        "background": "screenshots/pixal3d_bg.png"},
+    "BD-trellis2_unreal_fbx": {
+        "title": "TRELLIS2 -> Unreal FBX", "subtitle": "Low-poly game-ready FBX (Blender)",
+        "bullets": ["Image -> RMBG -> Trellis2 -> OVoxel Bake",
+                    "Detail Normal (albedo micro-detail)",
+                    "Sample vertex colors -> Pack Bundle",
+                    "Blender FBX: textures + vertex colors in ONE file",
+                    "~3k tris, flat-shaded -- studio Seam-4 dispatcher"],
+        "chips": ["FBX", "low-poly", "vcol", "Unreal"],
+        "background": "screenshots/trellis_unreal_fbx_bg.png"},
     "BD-sam3_parts_segmentation": {
         "title": "SAM3 Parts", "subtitle": "Prompt-driven part segmentation + edit",
         "bullets": ["Image -> Lotus2 depth -> QwenVL tags", "SAM3 Multi-Prompt -> Parts Refine",
@@ -162,7 +173,7 @@ def main():
     # warn about any template json without a config entry
     have = set(CONFIGS)
     for f in os.listdir(EW):
-        if f.endswith(".json") and f[:-5] not in have:
+        if f.endswith(".json") and not f.endswith(".api.json") and f[:-5] not in have:
             print(f"  [WARN] {f} has no CONFIGS entry — no thumbnail generated")
     print(f"\nregenerated {made} thumbnail(s){' + deployed to stable' if deploy else ''}"
           f"{'; skipped (no json): ' + ', '.join(skipped) if skipped else ''}")
