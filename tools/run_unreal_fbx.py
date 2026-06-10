@@ -71,6 +71,8 @@ def main():
     ap.add_argument("--server", default="http://127.0.0.1:8188")
     ap.add_argument("--decimation", type=int, default=None,
                     help="Override target tri count (template default 3000; bump to ~5000 if chunky)")
+    ap.add_argument("--detail-strength", type=float, default=None,
+                    help="Override albedo detail-normal strength (template default 1.0; 0=off, ~1.5-2 for more)")
     ap.add_argument("--output-dir", default="unreal_fbx", help="Subfolder under ComfyUI output/")
     ap.add_argument("--output-base", default="/srv/AI_Stuff/outputs",
                     help="ComfyUI output directory on disk (to resolve the FBX path)")
@@ -98,10 +100,13 @@ def main():
         tex = pre.split("/")[-1] if "/" in pre else pre  # diffuse / normal
         api[nid]["inputs"]["filename_prefix"] = f"{args.output_dir}/{args.name}_{tex}"
 
-    # 3. optional poly-count override
+    # 3. optional poly-count / detail-normal overrides
     if args.decimation is not None:
         for nid in find_nodes(api, "BD_OVoxelBake"):
             api[nid]["inputs"]["decimation_target"] = args.decimation
+    if args.detail_strength is not None:
+        for nid in find_nodes(api, "BD_DetailNormalFromAlbedo"):
+            api[nid]["inputs"]["detail_strength"] = args.detail_strength
 
     # 4. submit + poll
     client_id = uuid.uuid4().hex
