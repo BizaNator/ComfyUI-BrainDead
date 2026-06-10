@@ -128,9 +128,13 @@ def main():
     maps = {t: os.path.join(out_dir, f"{args.name}_{t}.png")
             for t in ("diffuse", "normal", "metallic", "roughness", "alpha")}
     maps = {k: v for k, v in maps.items() if os.path.exists(v)}
+    # DAM preview thumbnail (BD_MeshPreview grid → SaveImage, auto-numbered)
+    import glob as _glob
+    _prev = sorted(_glob.glob(os.path.join(out_dir, f"{args.name}_preview*.png")), key=os.path.getmtime)
+    preview = _prev[-1] if _prev else None
 
     # 6. copy into the studio character folder (Seam 1 bridge) — canonical layout for Blender→Unreal
-    char_fbx, char_maps = None, {}
+    char_fbx, char_maps, char_preview = None, {}, None
     if args.char_base and os.path.exists(fbx):
         dest = os.path.join(args.char_base, args.name, "models", args.part, "unreal")
         os.makedirs(dest, exist_ok=True)
@@ -139,6 +143,9 @@ def main():
         for t, p in maps.items():
             d = os.path.join(dest, f"{args.name}_{t}.png")
             shutil.copy2(p, d); char_maps[t] = d
+        if preview and os.path.exists(preview):
+            char_preview = os.path.join(dest, f"{args.name}_preview.png")
+            shutil.copy2(preview, char_preview)   # DAM renders this; no Blender needed
 
     result = {
         "status": "success" if os.path.exists(fbx) else "incomplete",
@@ -147,8 +154,10 @@ def main():
         "part": args.part,
         "fbx": fbx if os.path.exists(fbx) else None,
         "maps": maps,
+        "preview": preview,
         "character_fbx": char_fbx,            # canonical studio location (Blender→Unreal picks this up)
         "character_maps": char_maps,
+        "character_preview": char_preview,    # DAM thumbnail (textured-look mesh render)
         "decimation_target": args.decimation or "template default (3000)",
     }
     print(json.dumps(result, indent=2))

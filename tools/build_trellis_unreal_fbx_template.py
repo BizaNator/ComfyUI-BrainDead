@@ -127,6 +127,12 @@ fbx = add("BD_BlenderExportMesh", (2760, 80), (320, 320),
           title="⑩ Blender Export FBX (flat • embedded textures + vertex colors)")
 
 prev3d = add("BD_Preview3D", (2080, 320), (300, 260), {}, title="Preview 3D (low-poly textured)")
+# DAM preview: render the textured mesh (its own vertex colors) to a thumbnail/grid image so the
+# studio DAM can show a preview without opening Blender. Saved to the character folder by the dispatcher.
+preview = add("BD_MeshPreview", (2420, 360), (300, 240),
+              {"shading": "vertex_colors", "tile_size": 512, "background": "dark"},
+              title="Mesh Preview (DAM thumbnail)")
+sv_prev = add("SaveImage", (2760, 440), (300, 270), {"filename_prefix": "unreal_fbx/preview"}, title="Save Preview")
 sv_d = add("SaveImage", (1740, 360), (300, 270), {"filename_prefix": "unreal_fbx/diffuse"}, title="Save Diffuse")
 sv_n = add("SaveImage", (1740, 660), (300, 270), {"filename_prefix": "unreal_fbx/normal"}, title="Save Normal")
 pv_pre = add("PreviewImage", (380, 360), (300, 280), {}, title="Preprocessed Input")
@@ -143,6 +149,8 @@ md = ("## TRELLIS2 → Unreal FBX (Blender)\n\n"
       "if too chunky. **`flat_shading=True`** → clean **no-smoothing** faceted look.\n"
       "- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate "
       "**COLOR_0** vertex colors (from the voxelgrid color_field).\n"
+      "- **DAM preview:** Mesh Preview renders the textured mesh (its own vertex colors) to a "
+      "thumbnail saved to the character folder — the studio DAM shows a preview, no Blender needed.\n"
       "- **Detail Normal:** Trellis surfaces are smooth, so the high→low bake is mostly flat. "
       "**BD Detail Normal From Albedo** adds the albedo's high-frequency micro-detail "
       "(skin/fabric/folds) onto the geometric normal (`detail_strength`, UV-safe).\n\n"
@@ -177,6 +185,8 @@ link(bake, "roughness", pack, "roughness")
 link(bake, "alpha", pack, "alpha")
 link(pack, "bundle", fbx, "bundle")
 link(bake, "mesh", prev3d, "mesh")
+link(samp, "mesh", preview, "mesh")          # sampled mesh carries COLOR_0 → vertex_colors preview
+link(preview, "grid", sv_prev, "images")
 link(bake, "diffuse", sv_d, "images")
 link(detail, "normal", sv_n, "images")
 

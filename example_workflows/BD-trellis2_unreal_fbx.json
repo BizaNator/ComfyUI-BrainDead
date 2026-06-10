@@ -1,8 +1,8 @@
 {
   "id": "bd-trellis2-unreal-fbx",
   "revision": 0,
-  "last_node_id": 15,
-  "last_link_id": 23,
+  "last_node_id": 17,
+  "last_link_id": 25,
   "nodes": [
     {
       "id": 1,
@@ -325,7 +325,7 @@
           "links": [
             11,
             15,
-            22
+            24
           ],
           "slot_index": 1
         },
@@ -412,7 +412,7 @@
           "type": "IMAGE",
           "links": [
             16,
-            23
+            25
           ],
           "slot_index": 0
         },
@@ -464,7 +464,8 @@
           "name": "mesh",
           "type": "TRIMESH",
           "links": [
-            13
+            13,
+            22
           ],
           "slot_index": 0
         },
@@ -665,40 +666,72 @@
     },
     {
       "id": 12,
-      "type": "SaveImage",
+      "type": "BD_MeshPreview",
       "pos": [
-        1740,
+        2420,
         360
       ],
       "size": [
         300,
-        270
+        240
       ],
       "flags": {},
       "order": 11,
       "mode": 0,
       "inputs": [
         {
-          "name": "images",
-          "type": "IMAGE",
+          "name": "meshes",
+          "type": "TRIMESH_LIST",
+          "link": null
+        },
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
           "link": 22
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "grid",
+          "type": "IMAGE",
+          "links": [
+            23
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "thumbnails",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
       "properties": {
-        "Node name for S&R": "SaveImage"
+        "Node name for S&R": "BD_MeshPreview"
       },
       "widgets_values": [
-        "unreal_fbx/diffuse"
+        512,
+        0,
+        "vertex_colors",
+        "dark",
+        35.0,
+        20.0,
+        ""
       ],
-      "title": "Save Diffuse"
+      "title": "Mesh Preview (DAM thumbnail)"
     },
     {
       "id": 13,
       "type": "SaveImage",
       "pos": [
-        1740,
-        660
+        2760,
+        440
       ],
       "size": [
         300,
@@ -719,12 +752,72 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
+        "unreal_fbx/preview"
+      ],
+      "title": "Save Preview"
+    },
+    {
+      "id": 14,
+      "type": "SaveImage",
+      "pos": [
+        1740,
+        360
+      ],
+      "size": [
+        300,
+        270
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 24
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "unreal_fbx/diffuse"
+      ],
+      "title": "Save Diffuse"
+    },
+    {
+      "id": 15,
+      "type": "SaveImage",
+      "pos": [
+        1740,
+        660
+      ],
+      "size": [
+        300,
+        270
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 25
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
         "unreal_fbx/normal"
       ],
       "title": "Save Normal"
     },
     {
-      "id": 14,
+      "id": 16,
       "type": "PreviewImage",
       "pos": [
         380,
@@ -735,7 +828,7 @@
         280
       ],
       "flags": {},
-      "order": 13,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
@@ -752,7 +845,7 @@
       "title": "Preprocessed Input"
     },
     {
-      "id": 15,
+      "id": 17,
       "type": "MarkdownNote",
       "pos": [
         40,
@@ -763,13 +856,13 @@
         360
       ],
       "flags": {},
-      "order": 14,
+      "order": 16,
       "mode": 0,
       "inputs": [],
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "## TRELLIS2 \u2192 Unreal FBX (Blender)\n\nSingle-image character (head or body) \u2192 **game-ready FBX** for the Blender\u2192Unreal pipeline.\n\n**Flow:** Load \u2192 **RMBG** \u2192 Conditioning \u2192 Image\u2192Shape \u2192 Shape\u2192Textured Mesh \u2192 **OVoxel Bake** (decimate + UV + PBR) \u2192 **Sample Vertex Colors** (\u2192 color_field) \u2192 **Pack Bundle** \u2192 **BD Blender Export Mesh (FBX)**.\n\n- **Requires Blender** (bundled). FBX is the only single-file format that carries **both** embedded textures **and** vertex colors \u2014 exactly what Blender needs to continue the character pipeline into Unreal.\n- **Low-poly:** OVoxel Bake `decimation_target=3000` tris (heads/bodies); bump to ~5000 if too chunky. **`flat_shading=True`** \u2192 clean **no-smoothing** faceted look.\n- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate **COLOR_0** vertex colors (from the voxelgrid color_field).\n- **Detail Normal:** Trellis surfaces are smooth, so the high\u2192low bake is mostly flat. **BD Detail Normal From Albedo** adds the albedo's high-frequency micro-detail (skin/fabric/folds) onto the geometric normal (`detail_strength`, UV-safe).\n\n**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert **BD Planar Grouping**, **BD Blender Edge Marking** or **BD Blender Merge Planes** between OVoxel Bake and Sample Vertex Colors \u2014 or do it in Blender with the BrainDead toolkit after import.\n\nModels (TRELLIS.2-4B) auto-download on first run. ~12\u201316GB VRAM.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**"
+        "## TRELLIS2 \u2192 Unreal FBX (Blender)\n\nSingle-image character (head or body) \u2192 **game-ready FBX** for the Blender\u2192Unreal pipeline.\n\n**Flow:** Load \u2192 **RMBG** \u2192 Conditioning \u2192 Image\u2192Shape \u2192 Shape\u2192Textured Mesh \u2192 **OVoxel Bake** (decimate + UV + PBR) \u2192 **Sample Vertex Colors** (\u2192 color_field) \u2192 **Pack Bundle** \u2192 **BD Blender Export Mesh (FBX)**.\n\n- **Requires Blender** (bundled). FBX is the only single-file format that carries **both** embedded textures **and** vertex colors \u2014 exactly what Blender needs to continue the character pipeline into Unreal.\n- **Low-poly:** OVoxel Bake `decimation_target=3000` tris (heads/bodies); bump to ~5000 if too chunky. **`flat_shading=True`** \u2192 clean **no-smoothing** faceted look.\n- The FBX embeds baseColor/normal (+ metallic/roughness) and the source-accurate **COLOR_0** vertex colors (from the voxelgrid color_field).\n- **DAM preview:** Mesh Preview renders the textured mesh (its own vertex colors) to a thumbnail saved to the character folder \u2014 the studio DAM shows a preview, no Blender needed.\n- **Detail Normal:** Trellis surfaces are smooth, so the high\u2192low bake is mostly flat. **BD Detail Normal From Albedo** adds the albedo's high-frequency micro-detail (skin/fabric/folds) onto the geometric normal (`detail_strength`, UV-safe).\n\n**Sharper low-poly:** for explicit sharp-edge marking / planar flat-plane grouping, insert **BD Planar Grouping**, **BD Blender Edge Marking** or **BD Blender Merge Planes** between OVoxel Bake and Sample Vertex Colors \u2014 or do it in Blender with the BrainDead toolkit after import.\n\nModels (TRELLIS.2-4B) auto-download on first run. ~12\u201316GB VRAM.\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**"
       ],
       "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead TRELLIS2 Unreal FBX"
     }
@@ -803,7 +896,7 @@
       4,
       1,
       0,
-      14,
+      16,
       0,
       "IMAGE"
     ],
@@ -945,17 +1038,33 @@
     ],
     [
       22,
-      6,
-      1,
+      8,
+      0,
       12,
+      1,
+      "TRIMESH"
+    ],
+    [
+      23,
+      12,
+      0,
+      13,
       0,
       "IMAGE"
     ],
     [
-      23,
+      24,
+      6,
+      1,
+      14,
+      0,
+      "IMAGE"
+    ],
+    [
+      25,
       7,
       0,
-      13,
+      15,
       0,
       "IMAGE"
     ]
