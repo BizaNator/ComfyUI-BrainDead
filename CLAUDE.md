@@ -208,3 +208,59 @@ these rules exactly (do not drop titles when rebuilding `widgets_values`):
 5. When you only change widget values or wiring, **keep the existing `title` fields**.
    The template builder must carry titles through; a rebuild that emits untitled nodes is
    a regression.
+
+## Template → API → Pipeline Sync (automation — keep these in lockstep)
+
+ComfyUI-BrainDead templates flow through **four artifacts**. The UI-graph `.json` is the **single
+source of truth**; everything else is *generated* from it. When you change a template, regenerate
+the whole chain — never hand-edit the downstream artifacts.
+
+```
+tools/build_<name>.py        # builder: fetches live /object_info, emits the UI graph
+        │  python3 tools/build_<name>.py
+        ▼
+example_workflows/BD-<name>.json        # ① UI graph (source of truth; styled per the convention above)
+        │  python3 tools/export_api.py example_workflows/BD-<name>.json
+        ▼
+example_workflows/BD-<name>.api.json    # ② frozen API/prompt export (node_id → class_type/inputs)
+        │  cp → studio Workflows share (COB naming)
+        ▼
+/mnt/tank/Studio/Brains/Workflows/COB_<cat>_<Name>_v<NN>_API.json   # ③ registered studio executable
+        │  tools/regen_all_thumbnails.py   (add a CONFIGS + GALLERY_SLUG entry first)
+        ▼
+example_workflows/BD-<name>.jpg         # ④ branded card thumbnail (jpg only)
+```
+
+### The builders (`tools/`)
+- `build_<name>.py` — emit a template's UI graph. **They query the LIVE server's `/object_info`**,
+  so the server must be running with the current nodes loaded before you build. They handle widget
+  alignment incl. the hidden `control_after_generate` companion after `seed`/`noise_seed`
+  (see [[feedback_append_node_inputs_bottom]] / `feedback_comfyui_v3_widget_order`). Validate widget
+  counts vs object_info after building.
+- `export_api.py <template.json>` — regenerate `<name>.api.json` via `run_workflow.py`'s
+  `workflow_to_api` (also object_info-driven). Run this after EVERY template change.
+- `make_thumbnail.py` / `regen_all_thumbnails.py` — the **only** way to make a thumbnail. Add a
+  `CONFIGS` entry (title/subtitle/bullets/chips, optional `background` screenshot under
+  `example_workflows/screenshots/`) + a `GALLERY_SLUG` entry, then run `regen_all_thumbnails.py`.
+  NEVER drop a raw screenshot in as the `.jpg` — it skips the branded card (wordmark, footer,
+  BizaNator logo). The card can use a screenshot as a faded `background`.
+
+### Studio pipeline handoff (Seam 4)
+- `run_unreal_fbx.py --image --name --part [--decimation] [--detail-strength]` is the per-part
+  Trellis→FBX dispatcher; it submits the **COB** export and copies fbx+maps into
+  `Characters/<name>/models/<part>/unreal/`. Source of truth stays in this repo.
+- Studio convention: `COB_<category>_<name>_v<NN>_API.json` in `/mnt/tank/Studio/Brains/Workflows/`,
+  run via `/opt/comfyui/run_workflow.py`. Studio skill: `/mnt/tank/Studio/Brains/Skills/Pipeline/`.
+
+### Deploy rule (CRITICAL)
+Deploy dev→stable with **`git pull --rebase` ONLY**. Never `cp`, and **do not use
+`regen_all_thumbnails.py --deploy`** — both write to the stable tree and then block the next
+`git pull` with "untracked/modified files." Workflow: commit + `git push origin main` in dev →
+`git pull --rebase origin main` on stable. See `feedback_braindead_deploy_pull_only` in memory.
+
+### Regeneration checklist (run after any template/builder change)
+1. (server up) `python3 tools/build_<name>.py` → rebuild the UI `.json`
+2. `python3 tools/export_api.py example_workflows/BD-<name>.json` → refresh the `.api.json`
+3. `cp example_workflows/BD-<name>.api.json <studio Workflows>/COB_<...>_API.json` (if registered)
+4. `python3 tools/regen_all_thumbnails.py` (NO `--deploy`) → refresh the `.jpg`
+5. commit + push (dev) → `git pull --rebase` (stable) → restart `comfyui-stable` if nodes changed
