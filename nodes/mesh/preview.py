@@ -314,7 +314,8 @@ class BD_MeshPreview(io.ComfyNode):
             canvas[rr * t:(rr + 1) * t, cc * t:(cc + 1) * t] = tile
         grid = _to_image_tensor([canvas])
 
-        status = f"Previewed {n} mesh(es), {cols}×{rows} grid @ {t}px, shading={shading}"
+        _what = f"{len(items)} mesh × {n_views} views" if n_views > 1 else f"{len(items)} mesh(es)"
+        status = f"Previewed {_what}, {cols}×{rows} grid @ {t}px, shading={shading}"
         if dropped:
             status += f" (capped, {dropped} not shown)"
         print(f"[BD MeshPreview] {status}", flush=True)
