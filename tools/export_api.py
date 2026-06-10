@@ -35,7 +35,15 @@ def main():
     object_info = rw.api_get(f"{args.server}/object_info")
     api = rw.workflow_to_api(workflow, object_info)
 
-    out = args.out or os.path.splitext(args.template)[0] + ".api.json"
+    # API exports live in api/ (NOT example_workflows/ — ComfyUI scans that for UI templates and
+    # would try to load the API-format json as a graph → empty-canvas error in the browser).
+    if args.out:
+        out = args.out
+    else:
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base = os.path.splitext(os.path.basename(args.template))[0]
+        os.makedirs(os.path.join(repo, "api"), exist_ok=True)
+        out = os.path.join(repo, "api", base + ".api.json")
     json.dump(api, open(out, "w"), indent=2)
     print(f"wrote {out}: {len(api)} nodes (API/prompt format)")
 

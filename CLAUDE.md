@@ -222,7 +222,9 @@ tools/build_<name>.py        # builder: fetches live /object_info, emits the UI 
 example_workflows/BD-<name>.json        # ① UI graph (source of truth; styled per the convention above)
         │  python3 tools/export_api.py example_workflows/BD-<name>.json
         ▼
-example_workflows/BD-<name>.api.json    # ② frozen API/prompt export (node_id → class_type/inputs)
+api/BD-<name>.api.json                  # ② frozen API/prompt export (node_id → class_type/inputs)
+        │     NOTE: lives in api/, NOT example_workflows/ — ComfyUI scans example_workflows/ for
+        │     UI templates and would try to load an API json as a graph → empty-canvas error.
         │  cp → studio Workflows share (COB naming)
         ▼
 /mnt/tank/Studio/Brains/Workflows/COB_<cat>_<Name>_v<NN>_API.json   # ③ registered studio executable
@@ -261,6 +263,6 @@ Deploy dev→stable with **`git pull --rebase` ONLY**. Never `cp`, and **do not 
 ### Regeneration checklist (run after any template/builder change)
 1. (server up) `python3 tools/build_<name>.py` → rebuild the UI `.json`
 2. `python3 tools/export_api.py example_workflows/BD-<name>.json` → refresh the `.api.json`
-3. `cp example_workflows/BD-<name>.api.json <studio Workflows>/COB_<...>_API.json` (if registered)
+3. `cp api/BD-<name>.api.json <studio Workflows>/COB_<...>_API.json` (if registered)
 4. `python3 tools/regen_all_thumbnails.py` (NO `--deploy`) → refresh the `.jpg`
 5. commit + push (dev) → `git pull --rebase` (stable) → restart `comfyui-stable` if nodes changed

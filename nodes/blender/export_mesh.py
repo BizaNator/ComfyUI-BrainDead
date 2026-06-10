@@ -395,6 +395,59 @@ if obj.data.materials:
                     log("[BD ExportMesh] No normal map texture found to connect")
             else:
                 log("[BD ExportMesh] Normal input already connected")
+
+            # Force-connect ALL bundle PBR maps onto the Principled BSDF, REPLACING any
+            # placeholder. The mesh→temp-glb roundtrip can collapse the real baseColor /
+            # metallicRoughness textures to 1x1, so the FBX/GLB comes out untextured even
+            # though the maps exist. Anything the imported material already carries that we
+            # DON'T override (e.g. emissive) is left intact.
+            _yoff = [100]
+            def _force_map(env_key, input_name, noncolor):
+                p = os.environ.get(env_key, '')
+                if not (p and os.path.exists(p)):
+                    return
+                inp = principled.inputs.get(input_name)
+                if inp is None:
+                    return
+                img = bpy.data.images.load(p)
+                if noncolor:
+                    img.colorspace_settings.name = 'Non-Color'
+                t = nodes.new('ShaderNodeTexImage')
+                t.image = img
+                t.location = (principled.location.x - 600, principled.location.y + _yoff[0])
+                _yoff[0] -= 280
+                for _l in list(inp.links):
+                    links.remove(_l)
+                links.new(t.outputs['Color'], inp)
+                log(f"[BD ExportMesh] Connected {input_name}: {os.path.basename(p)}")
+
+            _force_map('BLENDER_ARG_DIFFUSE_PATH', 'Base Color', False)   # sRGB albedo
+            _force_map('BLENDER_ARG_METALLIC_PATH', 'Metallic', True)
+            _force_map('BLENDER_ARG_ROUGHNESS_PATH', 'Roughness', True)
+            # Alpha → Alpha input; enable transparency only if the map is actually < fully opaque
+            # (so opaque characters don't get a needless transparent material).
+            _apath = os.environ.get('BLENDER_ARG_ALPHA_PATH', '')
+            if _apath and os.path.exists(_apath) and principled.inputs.get('Alpha') is not None:
+                aimg = bpy.data.images.load(_apath)
+                aimg.colorspace_settings.name = 'Non-Color'
+                try:
+                    amin = min(aimg.pixels[0::4]) if len(aimg.pixels) else 1.0
+                except Exception:
+                    amin = 1.0
+                if amin < 0.98:
+                    at = nodes.new('ShaderNodeTexImage'); at.image = aimg
+                    at.location = (principled.location.x - 600, principled.location.y + _yoff[0])
+                    ainp = principled.inputs['Alpha']
+                    for _l in list(ainp.links):
+                        links.remove(_l)
+                    links.new(at.outputs['Color'], ainp)
+                    try:
+                        mat.blend_method = 'HASHED'
+                    except Exception:
+                        pass
+                    log("[BD ExportMesh] Connected Alpha (transparency present)")
+                else:
+                    log("[BD ExportMesh] Alpha map fully opaque — left material opaque")
         else:
             log("[BD ExportMesh] No Principled BSDF found in material")
 else:
@@ -646,6 +699,7 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
         vcol_path = None
         color_field_path = None
         normal_path = None
+        tex_paths = {}
         blender_output = None
 
         try:
@@ -694,6 +748,23 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
             else:
                 normal_path = ''
 
+            # Save diffuse/baseColor as temp PNG — forced as Base Color in the script, because the
+            # mesh→temp-glb roundtrip can collapse the real baseColorTexture to a 1x1 placeholder
+            # (FBX then comes out untextured even though the diffuse exists).
+            # Save diffuse + the rest of the PBR maps as temp PNGs (forced onto the BSDF in the
+            # script). Covers base color / metallic / roughness / alpha; normal handled above.
+            tex_paths = {}
+            from PIL import Image as _PILtex
+            for _k in ('diffuse', 'metallic', 'roughness', 'alpha'):
+                _d = bundle.get(_k) if isinstance(bundle, dict) else None
+                if _d is not None:
+                    _fd, _p = tempfile.mkstemp(suffix='.png')
+                    os.close(_fd)
+                    _PILtex.fromarray(_d).save(_p)
+                    tex_paths[_k] = _p
+                    print(f"[BD BlenderExportMesh] Saved {_k}: {_d.shape}")
+            diffuse_path = tex_paths.get('diffuse', '')
+
             # Output goes directly to final location
             fd, blender_output = tempfile.mkstemp(suffix=f'.{ext}')
             os.close(fd)
@@ -705,6 +776,10 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
                 'solidify_mode': solidify_mode,
                 'flat_shading': 'True' if flat_shading else 'False',
                 'normal_path': normal_path or '',
+                'diffuse_path': tex_paths.get('diffuse', ''),
+                'metallic_path': tex_paths.get('metallic', ''),
+                'roughness_path': tex_paths.get('roughness', ''),
+                'alpha_path': tex_paths.get('alpha', ''),
                 'export_format': fmt,
             }
 
@@ -769,6 +844,9 @@ Inputs a MESH_BUNDLE (from BD_PackBundle or BD_CacheBundle).""",
                 os.remove(color_field_path)
             if normal_path and os.path.exists(normal_path):
                 os.remove(normal_path)
+            for _tp in tex_paths.values():
+                if _tp and os.path.exists(_tp):
+                    os.remove(_tp)
             if blender_output and os.path.exists(blender_output):
                 os.remove(blender_output)
 

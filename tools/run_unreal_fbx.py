@@ -21,7 +21,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Registered studio executable (COB convention); falls back to the BrainDead repo source.
 STUDIO_API = "/mnt/tank/Studio/Brains/Workflows/COB_3d_TrellisUnrealFBX_v01_API.json"
-REPO_API = os.path.join(HERE, "..", "example_workflows", "BD-trellis2_unreal_fbx.api.json")
+REPO_API = os.path.join(HERE, "..", "api", "BD-trellis2_unreal_fbx.api.json")
 DEFAULT_API = STUDIO_API if os.path.exists(STUDIO_API) else REPO_API
 CHAR_BASE = "/mnt/tank/Studio/Brains/Characters"
 
