@@ -1,0 +1,258 @@
+{
+  "id": "bd-isolate-part",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        80
+      ],
+      "size": [
+        300,
+        314
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "\u2460 Load Character"
+    },
+    {
+      "id": 2,
+      "type": "BD_RemoveBackground",
+      "pos": [
+        380,
+        80
+      ],
+      "size": [
+        320,
+        520
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        },
+        {
+          "name": "external_mask",
+          "type": "MASK",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "rgba",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "rgb_white_bg",
+          "type": "IMAGE",
+          "links": [
+            2,
+            3
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "rgb_black_bg",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "crop_box",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "sticker",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_RemoveBackground"
+      },
+      "widgets_values": [
+        "subject\nperson",
+        "closed_form",
+        "background",
+        "constrain",
+        true,
+        8,
+        8,
+        4,
+        0.0,
+        true,
+        0,
+        "none",
+        "small",
+        0.0,
+        0.0,
+        false,
+        0.1,
+        0.04,
+        false,
+        0,
+        "#ffffff",
+        true,
+        16,
+        1024,
+        "pad_square",
+        0.5,
+        false
+      ],
+      "title": "\u2461 Isolate (SAM3 prompt = what to keep)"
+    },
+    {
+      "id": 3,
+      "type": "SaveImage",
+      "pos": [
+        740,
+        80
+      ],
+      "size": [
+        300,
+        300
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 2
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "isolate/part"
+      ],
+      "title": "Save Isolated (white BG)"
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [
+        740,
+        400
+      ],
+      "size": [
+        300,
+        280
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 3
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "Preview"
+    },
+    {
+      "id": 5,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        440
+      ],
+      "size": [
+        320,
+        260
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "## Isolate Part / Subject\n\n`BD Remove Background` (SAM3 + matting). The **prompts** are *what to keep* \u2014 set to a clothing item or part (`tank top`, `jacket`) to isolate just that, or `person` for the whole subject.\n\nSaves the clean **white-bg** crop. Stage 1 of the SAM3\u2192Trellis chain (`run_part_to_3d.py`): isolate \u2192 feed the PNG into the Trellis Unreal FBX dispatcher.\n\nRun: `run_bd.py --workflow isolate_part --image x.png --set \"BD_RemoveBackground.prompts=tank top\"`\n\n---\n**BrainDeadGuild** \u2014 created by **BizaNator**"
+      ],
+      "title": "\u2139\ufe0f About \u2014 \ud83e\udde0 BrainDead Isolate Part"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      2,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      2,
+      2,
+      4,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

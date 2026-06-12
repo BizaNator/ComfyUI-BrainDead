@@ -22,7 +22,7 @@ AN internally-used node pack for Biloxi Studios designed to help with character,
 
 ## Workflow Templates
 
-Seventeen ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
+Eighteen ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
 
 <table>
 <tr>

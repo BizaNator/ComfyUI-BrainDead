@@ -33,7 +33,7 @@ GALLERY_SLUG = {
     "BD-character_consistency": "character", "BD-background_removal": "bgremoval",
     "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
     "BD-game_engine_packing": "packing", "BD-atlas_flipbook": "flipbook",
-    "BD-trellis2_unreal_fbx": "unrealfbx",
+    "BD-trellis2_unreal_fbx": "unrealfbx", "BD-isolate_part": "isolatepart",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -63,6 +63,13 @@ CONFIGS = {
                     "Orient Mesh (upright / forward)", "Export GLB + Preview 3D"],
         "chips": ["albedo", "normal", "rough", "metal"],
         "background": "screenshots/pixal3d_bg.png"},
+    "BD-isolate_part": {
+        "title": "Isolate Part / Subject", "subtitle": "SAM3 + matting -> clean white-bg crop",
+        "bullets": ["Load -> BD Remove Background (SAM3 prompt = what to keep)",
+                    "Set prompts to a part (tank top / jacket) or 'person'",
+                    "pymatting refines alpha at fine edges",
+                    "Saves the clean white-bg crop -- stage 1 of SAM3->Trellis"],
+        "chips": ["SAM3", "matting", "white BG"]},
     "BD-trellis2_unreal_fbx": {
         "title": "TRELLIS2 -> Unreal FBX", "subtitle": "Low-poly game-ready FBX (Blender)",
         "bullets": ["Image -> RMBG -> Trellis2 -> OVoxel Bake",

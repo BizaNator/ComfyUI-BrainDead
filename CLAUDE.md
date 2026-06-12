@@ -247,10 +247,16 @@ example_workflows/BD-<name>.jpg         # ④ branded card thumbnail (jpg only)
   NEVER drop a raw screenshot in as the `.jpg` — it skips the branded card (wordmark, footer,
   BizaNator logo). The card can use a screenshot as a faded `background`.
 
-### Studio pipeline handoff (Seam 4)
-- `run_unreal_fbx.py --image --name --part [--decimation] [--detail-strength]` is the per-part
-  Trellis→FBX dispatcher; it submits the **COB** export and copies fbx+maps into
+### Workflow launchers (use these — don't write a `run_<x>.py` per workflow)
+- `run_workflow.py` (`/opt/comfyui/`) — runs any workflow JSON as-is → outputs (no param injection).
+- **`run_bd.py`** — generic launcher: `--workflow <name|path>` + `--image` (uploads, sets LoadImage) +
+  repeatable `--set "NodeType.input=value"` (or `id.input=value`) + collects saved `/history` images →
+  `--output-dir` / character folder. Works for ANY template that has Save nodes.
+- `run_unreal_fbx.py --image --name --part [--decimation] [--detail-strength]` — specialized per-part
+  Trellis→FBX dispatcher; submits the **COB** export, copies fbx+maps+thumbnail into
   `Characters/<name>/models/<part>/unreal/`. Source of truth stays in this repo.
+- **`run_part_to_3d.py`** — SAM3→Trellis chain: `--image --prompts "tank top" --name --part` →
+  `BD-isolate_part` (SAM3 isolate) → `run_unreal_fbx.py`.
 - Studio convention: `COB_<category>_<name>_v<NN>_API.json` in `/mnt/tank/Studio/Brains/Workflows/`,
   run via `/opt/comfyui/run_workflow.py`. Studio skill: `/mnt/tank/Studio/Brains/Skills/Pipeline/`.
 
