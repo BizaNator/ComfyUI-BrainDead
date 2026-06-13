@@ -87,19 +87,20 @@ def cubepart_all(mesh_path, cube_parts, name, args):
     parts = [p.strip() for p in cube_parts.split(",") if p.strip()][:8]  # CubePart caps at 8
     sv = args.server
     api = {"1": _node(sv, "BD_CubePartSegment", mesh_path=mesh_path, parts=", ".join(parts), seed=0)}
-    # Per part: GetPart → MeshToOVoxel → OVoxelBake (decimate + UV + bake the vertex colors) →
-    # ExportMeshWithColors (textured glb) + MeshPreview (textured turnaround thumbnail).
+    # Per part: GetPart → CuMesh Simplify (GPU decimate, vertex colors preserved) →
+    # ExportMeshWithColors (vertex-colored glb) + MeshPreview thumbnail. CubePart sub-meshes are
+    # vertex-coloured (no UV/texture), so CuMesh is the right decimator; MeshPreview 'textured'
+    # falls back to those vertex colors for the thumbnail.
     dec = args.decimation or 5000
     nid = 2
     for i, p in enumerate(parts):
-        gp, mv, bk, ex, pv, si = (str(nid + k) for k in range(6)); nid += 6
+        gp, cm, ex, pv, si = (str(nid + k) for k in range(5)); nid += 5
         slug = _slug(p)
         api[gp] = _node(sv, "BD_CubePartGetPart", parts=["1", 0], index=i)
-        api[mv] = _node(sv, "BD_MeshToOVoxel", mesh=[gp, 0])
-        api[bk] = _node(sv, "BD_OVoxelBake", voxelgrid=[mv, 0], decimation_target=dec, texture_size=2048)
-        api[ex] = _node(sv, "BD_ExportMeshWithColors", mesh=[bk, 0], diffuse=[bk, 1], normal=[bk, 2],
-                        format="glb", auto_increment=False, filename=f"{name}_{slug}_seg", name_prefix="")
-        api[pv] = _node(sv, "BD_MeshPreview", mesh=[bk, 0], shading="textured", views=4,
+        api[cm] = _node(sv, "BD_CuMeshSimplify", mesh=[gp, 0], target_faces=dec)
+        api[ex] = _node(sv, "BD_ExportMeshWithColors", mesh=[cm, 0], format="glb",
+                        auto_increment=False, filename=f"{name}_{slug}_seg", name_prefix="")
+        api[pv] = _node(sv, "BD_MeshPreview", mesh=[cm, 0], shading="textured", views=4,
                         tile_size=512, background="dark")
         api[si] = _node(sv, "SaveImage", images=[pv, 0], filename_prefix=f"{name}_{slug}_segthumb")
     # submit + poll
