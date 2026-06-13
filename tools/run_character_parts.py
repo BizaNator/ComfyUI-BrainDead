@@ -86,27 +86,21 @@ def cubepart_all(mesh_path, cube_parts, name, args):
     """Build an inline API graph that segments the mesh once and exports each part. Returns result."""
     parts = [p.strip() for p in cube_parts.split(",") if p.strip()][:8]  # CubePart caps at 8
     sv = args.server
-    # CubePart emits clean but UNCOLOURED geometry. Colour each part from the SOURCE mesh:
-    # load the source once + bake its texture → vertex colours, then transfer onto each part by
-    # nearest surface (the parts are canonically aligned with the source).
-    api = {
-        "1": _node(sv, "BD_CubePartSegment", mesh_path=mesh_path, parts=", ".join(parts), seed=0),
-        "2": _node(sv, "BD_LoadMesh", file_path=mesh_path),
-        "3": _node(sv, "BD_BakeVertexColorsFromTexture", mesh=["2", 0]),
-    }
-    # Per part: GetPart → CuMesh decimate → Transfer Vertex Colours (from source) →
-    # ExportMeshWithColors (coloured glb) + MeshPreview thumbnail.
+    # CubePart emits clean, canonically-aligned but UNCOLOURED geometry in its own normalized
+    # space — it does NOT carry the source texture, and its space doesn't align with the source
+    # mesh, so colour must be projected on in Blender (per the studio projection-bake step).
+    # Here we deliver: CuMesh-decimated sub-mesh + a 4-angle geometry thumbnail per part.
+    api = {"1": _node(sv, "BD_CubePartSegment", mesh_path=mesh_path, parts=", ".join(parts), seed=0)}
     dec = args.decimation or 5000
-    nid = 4
+    nid = 2
     for i, p in enumerate(parts):
-        gp, cm, tv, ex, pv, si = (str(nid + k) for k in range(6)); nid += 6
+        gp, cm, ex, pv, si = (str(nid + k) for k in range(5)); nid += 5
         slug = _slug(p)
         api[gp] = _node(sv, "BD_CubePartGetPart", parts=["1", 0], index=i)
         api[cm] = _node(sv, "BD_CuMeshSimplify", mesh=[gp, 0], target_faces=dec)
-        api[tv] = _node(sv, "BD_TransferVertexColors", source_mesh=["3", 0], target_mesh=[cm, 0])
-        api[ex] = _node(sv, "BD_ExportMeshWithColors", mesh=[tv, 0], format="glb",
+        api[ex] = _node(sv, "BD_ExportMeshWithColors", mesh=[cm, 0], format="glb",
                         auto_increment=False, filename=f"{name}_{slug}_seg", name_prefix="")
-        api[pv] = _node(sv, "BD_MeshPreview", mesh=[tv, 0], shading="textured", views=4,
+        api[pv] = _node(sv, "BD_MeshPreview", mesh=[cm, 0], shading="solid", views=4,
                         tile_size=512, background="dark")
         api[si] = _node(sv, "SaveImage", images=[pv, 0], filename_prefix=f"{name}_{slug}_segthumb")
     # submit + poll
