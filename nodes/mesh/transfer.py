@@ -529,16 +529,21 @@ Typical workflow:
         except:
             default_rgba = np.array([1.0, 0.0, 1.0, 1.0], dtype=np.float32)
 
-        # Get source vertex colors
+        # Get source vertex colors. Read COLOR_0 from vertex_attributes FIRST — it's safe for
+        # TextureVisuals meshes (e.g. from BD_BakeVertexColorsFromTexture, which keeps the material
+        # and stores colors in COLOR_0); accessing TextureVisuals.vertex_colors rasterizes/may grey out.
+        import trimesh.visual as _tv
         source_colors = None
-        if hasattr(source_mesh, 'visual') and hasattr(source_mesh.visual, 'vertex_colors'):
+        if hasattr(source_mesh, 'vertex_attributes') and 'COLOR_0' in source_mesh.vertex_attributes:
+            source_colors = np.array(source_mesh.vertex_attributes['COLOR_0'], dtype=np.float32)
+        elif (hasattr(source_mesh, 'visual') and source_mesh.visual is not None
+              and not isinstance(source_mesh.visual, _tv.TextureVisuals)
+              and hasattr(source_mesh.visual, 'vertex_colors')):
             source_colors = np.array(source_mesh.visual.vertex_colors, dtype=np.float32)
-            if source_colors.max() > 1.0:
-                source_colors = source_colors / 255.0
         elif hasattr(source_mesh, 'vertex_colors') and source_mesh.vertex_colors is not None:
             source_colors = np.array(source_mesh.vertex_colors, dtype=np.float32)
-            if source_colors.max() > 1.0:
-                source_colors = source_colors / 255.0
+        if source_colors is not None and source_colors.size and source_colors.max() > 1.0:
+            source_colors = source_colors / 255.0
 
         if source_colors is None:
             return io.NodeOutput(target_mesh, "ERROR: Source mesh has no vertex colors")
