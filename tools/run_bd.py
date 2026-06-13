@@ -115,7 +115,9 @@ def apply_set(api, selector_value):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workflow", required=True, help="path | BD-<name> template | <name>.api.json | COB")
-    ap.add_argument("--image", default=None, help="upload + point every LoadImage at it")
+    ap.add_argument("--image", default=None, help="upload + point LoadImage(s) at it")
+    ap.add_argument("--image-node", default=None,
+                    help="only set this LoadImage node id (default: all LoadImage nodes)")
     ap.add_argument("--set", action="append", default=[], dest="sets",
                     help="override 'NodeType.input=value' or 'id.input=value' (repeatable)")
     ap.add_argument("--server", default="http://127.0.0.1:8188")
@@ -132,8 +134,8 @@ def main():
 
     if args.image:
         up = upload_image(args.image, args.server)
-        for n in api.values():
-            if n.get("class_type") == "LoadImage":
+        for nid, n in api.items():
+            if n.get("class_type") == "LoadImage" and (args.image_node is None or nid == args.image_node):
                 n.setdefault("inputs", {})["image"] = up
     for s in args.sets:
         apply_set(api, s)
