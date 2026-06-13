@@ -70,7 +70,8 @@ def main():
         "status": fbx.get("status"),
         "part_prompt": args.prompts,
         "isolated_image": isolated,
-        "fbx": fbx.get("fbx"),
+        "asset": fbx.get("asset"),
+        "character_source": fbx.get("character_source"),   # <name>_<part>.png that generated the mesh
         "character_fbx": fbx.get("character_fbx"),
         "character_thumbnail": fbx.get("character_preview"),
         "character_maps": fbx.get("character_maps"),

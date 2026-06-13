@@ -90,15 +90,16 @@ def main():
     for nid in find_nodes(api, "LoadImage"):
         api[nid]["inputs"]["image"] = uploaded
 
-    # 2. naming + output dir
+    # 2. naming + output dir — every asset is named "<name>_<part>" (mesh, maps, thumbnail)
+    base = f"{args.name}_{args.part}"
     for nid in find_nodes(api, "BD_PackBundle"):
-        api[nid]["inputs"]["name"] = args.name
+        api[nid]["inputs"]["name"] = base
     for nid in find_nodes(api, "BD_BlenderExportMesh"):
         api[nid]["inputs"]["output_dir"] = args.output_dir
     for nid in find_nodes(api, "SaveImage"):
         pre = api[nid]["inputs"].get("filename_prefix", "")
-        tex = pre.split("/")[-1] if "/" in pre else pre  # diffuse / normal
-        api[nid]["inputs"]["filename_prefix"] = f"{args.output_dir}/{args.name}_{tex}"
+        tex = pre.split("/")[-1] if "/" in pre else pre  # diffuse / normal / preview
+        api[nid]["inputs"]["filename_prefix"] = f"{args.output_dir}/{base}_{tex}"
 
     # 3. optional poly-count / detail-normal overrides
     if args.decimation is not None:
@@ -122,30 +123,36 @@ def main():
     else:
         print(json.dumps({"status": "error", "error": "timeout", "prompt_id": pid})); sys.exit(1)
 
-    # 5. resolve outputs on disk (ComfyUI output dir)
+    # 5. resolve outputs on disk (ComfyUI output dir) — all named "<name>_<part>"
     out_dir = os.path.join(args.output_base, args.output_dir)
-    fbx = os.path.join(out_dir, f"{args.name}.fbx")
-    maps = {t: os.path.join(out_dir, f"{args.name}_{t}.png")
+    fbx = os.path.join(out_dir, f"{base}.fbx")
+    maps = {t: os.path.join(out_dir, f"{base}_{t}.png")
             for t in ("diffuse", "normal", "metallic", "roughness", "alpha")}
     maps = {k: v for k, v in maps.items() if os.path.exists(v)}
     # DAM preview thumbnail (BD_MeshPreview grid → SaveImage, auto-numbered)
     import glob as _glob
-    _prev = sorted(_glob.glob(os.path.join(out_dir, f"{args.name}_preview*.png")), key=os.path.getmtime)
+    _prev = sorted(_glob.glob(os.path.join(out_dir, f"{base}_preview*.png")), key=os.path.getmtime)
     preview = _prev[-1] if _prev else None
 
     # 6. copy into the studio character folder (Seam 1 bridge) — canonical layout for Blender→Unreal
-    char_fbx, char_maps, char_preview = None, {}, None
+    #    Characters/<name>/models/<part>/<name>_<part>.png   ← SOURCE image used to generate the mesh
+    #    Characters/<name>/models/<part>/unreal/<name>_<part>.{fbx, _diffuse.png, …, _thumbnail.png}
+    char_fbx, char_maps, char_preview, char_source = None, {}, None, None
     if args.char_base and os.path.exists(fbx):
-        dest = os.path.join(args.char_base, args.name, "models", args.part, "unreal")
+        part_dir = os.path.join(args.char_base, args.name, "models", args.part)
+        dest = os.path.join(part_dir, "unreal")
         os.makedirs(dest, exist_ok=True)
-        char_fbx = os.path.join(dest, f"{args.name}.fbx")
+        # save the SOURCE image that generated this mesh, alongside the part
+        if args.image and os.path.exists(args.image):
+            char_source = os.path.join(part_dir, f"{base}{os.path.splitext(args.image)[1] or '.png'}")
+            shutil.copy2(args.image, char_source)
+        char_fbx = os.path.join(dest, f"{base}.fbx")
         shutil.copy2(fbx, char_fbx)
         for t, p in maps.items():
-            d = os.path.join(dest, f"{args.name}_{t}.png")
+            d = os.path.join(dest, f"{base}_{t}.png")
             shutil.copy2(p, d); char_maps[t] = d
         if preview and os.path.exists(preview):
-            # Named "<mesh>_thumbnail.png" so the DAM recognizes it as the mesh's thumbnail.
-            char_preview = os.path.join(dest, f"{args.name}_thumbnail.png")
+            char_preview = os.path.join(dest, f"{base}_thumbnail.png")
             shutil.copy2(preview, char_preview)   # DAM renders this; no Blender needed
 
     result = {
@@ -153,9 +160,11 @@ def main():
         "prompt_id": pid,
         "name": args.name,
         "part": args.part,
+        "asset": base,
         "fbx": fbx if os.path.exists(fbx) else None,
         "maps": maps,
         "preview": preview,
+        "character_source": char_source,      # <name>_<part>.png used to generate the mesh
         "character_fbx": char_fbx,            # canonical studio location (Blender→Unreal picks this up)
         "character_maps": char_maps,
         "character_preview": char_preview,    # DAM thumbnail (textured-look mesh render)
