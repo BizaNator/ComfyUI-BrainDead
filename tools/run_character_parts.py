@@ -73,13 +73,25 @@ def cubepart_all(mesh_path, cube_parts, name, args):
                          "scheduler": "dpm_solver", "timeshift": 4.0, "num_samples": 128000,
                          "auto_download": True}},
     }
+    # Per part: GetPart → MeshToOVoxel → OVoxelBake (decimate + UV + bake the vertex colors) →
+    # ExportMeshWithColors (textured glb) + MeshPreview (textured turnaround thumbnail).
+    dec = args.decimation or 5000
     nid = 2
     for i, p in enumerate(parts):
-        gp, ex = str(nid), str(nid + 1); nid += 2
+        gp, mv, bk, ex, pv, sv = (str(nid + k) for k in range(6)); nid += 6
+        slug = _slug(p)
         api[gp] = {"class_type": "BD_CubePartGetPart", "inputs": {"parts": ["1", 0], "index": i}}
+        api[mv] = {"class_type": "BD_MeshToOVoxel", "inputs": {"mesh": [gp, 0]}}
+        api[bk] = {"class_type": "BD_OVoxelBake",
+                   "inputs": {"voxelgrid": [mv, 0], "decimation_target": dec, "texture_size": 2048}}
         api[ex] = {"class_type": "BD_ExportMeshWithColors",
-                   "inputs": {"mesh": [gp, 0], "format": "glb", "auto_increment": False,
-                              "filename": f"{name}_{_slug(p)}_seg", "name_prefix": ""}}
+                   "inputs": {"mesh": [bk, 0], "diffuse": [bk, 1], "normal": [bk, 2], "format": "glb",
+                              "auto_increment": False, "filename": f"{name}_{slug}_seg", "name_prefix": ""}}
+        api[pv] = {"class_type": "BD_MeshPreview",
+                   "inputs": {"mesh": [bk, 0], "shading": "textured", "views": 4,
+                              "tile_size": 512, "background": "dark"}}
+        api[sv] = {"class_type": "SaveImage",
+                   "inputs": {"images": [pv, 0], "filename_prefix": f"{name}_{slug}_segthumb"}}
     # submit + poll
     pid = json.loads(urllib.request.urlopen(urllib.request.Request(
         f"{args.server}/prompt", data=json.dumps({"client_id": uuid.uuid4().hex, "prompt": api}).encode(),
@@ -94,19 +106,24 @@ def cubepart_all(mesh_path, cube_parts, name, args):
         time.sleep(3.0)
     else:
         return {"status": "error", "stage": "cubepart-timeout", "prompt_id": pid}
-    # collect exported glbs + copy to char folder
+    # collect textured glbs + thumbnails → char folder
+    import shutil
     res = []
     for p in parts:
-        src = sorted(glob.glob(os.path.join(args.output_base, f"{name}_{_slug(p)}_seg*.glb")),
-                     key=os.path.getmtime)
-        gpath = src[-1] if src else None
-        cpath = None
-        if gpath and args.char_base:
-            dest = os.path.join(args.char_base, name, "models", _slug(p), "unreal")
+        slug = _slug(p)
+        def _newest(pat):
+            g = sorted(glob.glob(os.path.join(args.output_base, pat)), key=os.path.getmtime)
+            return g[-1] if g else None
+        gpath = _newest(f"{name}_{slug}_seg*.glb")
+        tpath = _newest(f"{name}_{slug}_segthumb*.png")
+        cglb, cthumb = None, None
+        if args.char_base and gpath:
+            dest = os.path.join(args.char_base, name, "models", slug, "unreal")
             os.makedirs(dest, exist_ok=True)
-            cpath = os.path.join(dest, f"{name}_{_slug(p)}_seg.glb")
-            import shutil; shutil.copy2(gpath, cpath)
-        res.append({"part": _slug(p), "glb": gpath, "character_glb": cpath})
+            cglb = os.path.join(dest, f"{name}_{slug}_seg.glb"); shutil.copy2(gpath, cglb)
+            if tpath:
+                cthumb = os.path.join(dest, f"{name}_{slug}_seg_thumbnail.png"); shutil.copy2(tpath, cthumb)
+        res.append({"part": slug, "glb": gpath, "character_glb": cglb, "character_thumbnail": cthumb})
     return {"status": "success", "prompt_id": pid, "parts": res}
 
 
