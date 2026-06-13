@@ -58,40 +58,50 @@ def find_partbuilder_image(part_images_dir, part):
 
 
 # ---- CubePart: one graph, segment once, export every part ----------------------------------------
-def _api_get(server):
-    with urllib.request.urlopen(f"{server}/object_info", timeout=30) as r:
-        return json.loads(r.read())
+_OI = {}
+def _node_defaults(server, ct):
+    """Widget-input defaults for a node (API /prompt requires ALL required inputs present)."""
+    if ct not in _OI:
+        d = json.loads(urllib.request.urlopen(f"{server}/object_info/{ct}", timeout=20).read())[ct]
+        a = {**d['input'].get('required', {}), **d['input'].get('optional', {})}
+        out = {}
+        for k, v in a.items():
+            t = v[0]; meta = v[1] if len(v) > 1 and isinstance(v[1], dict) else {}
+            if isinstance(t, list):
+                out[k] = meta.get('default', t[0] if t else None)
+            elif t == "COMBO":
+                opts = meta.get('options', []); out[k] = meta.get('default', opts[0] if opts else None)
+            elif t in ("INT", "FLOAT", "STRING", "BOOLEAN"):
+                out[k] = meta.get('default')
+            # connection types (TRIMESH/VOXELGRID/IMAGE/…) are wired explicitly, not defaulted
+        _OI[ct] = out
+    return dict(_OI[ct])
+
+
+def _node(server, ct, **inputs):
+    return {"class_type": ct, "inputs": {**_node_defaults(server, ct), **inputs}}
 
 
 def cubepart_all(mesh_path, cube_parts, name, args):
     """Build an inline API graph that segments the mesh once and exports each part. Returns result."""
     parts = [p.strip() for p in cube_parts.split(",") if p.strip()][:8]  # CubePart caps at 8
-    api = {
-        "1": {"class_type": "BD_CubePartSegment",
-              "inputs": {"mesh_path": mesh_path, "parts": ", ".join(parts), "seed": 0,
-                         "guidance_scale": 7.5, "num_inference_steps": 50, "resolution_base": 8.5,
-                         "scheduler": "dpm_solver", "timeshift": 4.0, "num_samples": 128000,
-                         "auto_download": True}},
-    }
+    sv = args.server
+    api = {"1": _node(sv, "BD_CubePartSegment", mesh_path=mesh_path, parts=", ".join(parts), seed=0)}
     # Per part: GetPart → MeshToOVoxel → OVoxelBake (decimate + UV + bake the vertex colors) →
     # ExportMeshWithColors (textured glb) + MeshPreview (textured turnaround thumbnail).
     dec = args.decimation or 5000
     nid = 2
     for i, p in enumerate(parts):
-        gp, mv, bk, ex, pv, sv = (str(nid + k) for k in range(6)); nid += 6
+        gp, mv, bk, ex, pv, si = (str(nid + k) for k in range(6)); nid += 6
         slug = _slug(p)
-        api[gp] = {"class_type": "BD_CubePartGetPart", "inputs": {"parts": ["1", 0], "index": i}}
-        api[mv] = {"class_type": "BD_MeshToOVoxel", "inputs": {"mesh": [gp, 0]}}
-        api[bk] = {"class_type": "BD_OVoxelBake",
-                   "inputs": {"voxelgrid": [mv, 0], "decimation_target": dec, "texture_size": 2048}}
-        api[ex] = {"class_type": "BD_ExportMeshWithColors",
-                   "inputs": {"mesh": [bk, 0], "diffuse": [bk, 1], "normal": [bk, 2], "format": "glb",
-                              "auto_increment": False, "filename": f"{name}_{slug}_seg", "name_prefix": ""}}
-        api[pv] = {"class_type": "BD_MeshPreview",
-                   "inputs": {"mesh": [bk, 0], "shading": "textured", "views": 4,
-                              "tile_size": 512, "background": "dark"}}
-        api[sv] = {"class_type": "SaveImage",
-                   "inputs": {"images": [pv, 0], "filename_prefix": f"{name}_{slug}_segthumb"}}
+        api[gp] = _node(sv, "BD_CubePartGetPart", parts=["1", 0], index=i)
+        api[mv] = _node(sv, "BD_MeshToOVoxel", mesh=[gp, 0])
+        api[bk] = _node(sv, "BD_OVoxelBake", voxelgrid=[mv, 0], decimation_target=dec, texture_size=2048)
+        api[ex] = _node(sv, "BD_ExportMeshWithColors", mesh=[bk, 0], diffuse=[bk, 1], normal=[bk, 2],
+                        format="glb", auto_increment=False, filename=f"{name}_{slug}_seg", name_prefix="")
+        api[pv] = _node(sv, "BD_MeshPreview", mesh=[bk, 0], shading="textured", views=4,
+                        tile_size=512, background="dark")
+        api[si] = _node(sv, "SaveImage", images=[pv, 0], filename_prefix=f"{name}_{slug}_segthumb")
     # submit + poll
     pid = json.loads(urllib.request.urlopen(urllib.request.Request(
         f"{args.server}/prompt", data=json.dumps({"client_id": uuid.uuid4().hex, "prompt": api}).encode(),
