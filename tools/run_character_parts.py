@@ -94,13 +94,16 @@ def cubepart_all(mesh_path, cube_parts, name, args):
     dec = args.decimation or 5000
     nid = 2
     for i, p in enumerate(parts):
-        gp, cm, ex, pv, si = (str(nid + k) for k in range(5)); nid += 5
+        gp, cm, ori, ex, pv, si = (str(nid + k) for k in range(6)); nid += 6
         slug = _slug(p)
         api[gp] = _node(sv, "BD_CubePartGetPart", parts=["1", 0], index=i)
         api[cm] = _node(sv, "BD_CuMeshSimplify", mesh=[gp, 0], target_faces=dec)
-        api[ex] = _node(sv, "BD_ExportMeshWithColors", mesh=[cm, 0], format="glb",
+        # CubePart output is Z-up; glTF/Blender + the thumbnail camera are Y-up → rotate_x=-90 so the
+        # exported glb imports upright AND the thumbnail renders upright.
+        api[ori] = _node(sv, "BD_OrientMesh", mesh=[cm, 0], rotate_x=-90.0)
+        api[ex] = _node(sv, "BD_ExportMeshWithColors", mesh=[ori, 0], format="glb",
                         auto_increment=False, filename=f"{name}_{slug}_seg", name_prefix="")
-        api[pv] = _node(sv, "BD_MeshPreview", mesh=[cm, 0], shading="solid", views=4,
+        api[pv] = _node(sv, "BD_MeshPreview", mesh=[ori, 0], shading="solid", views=4,
                         tile_size=512, background="dark")
         api[si] = _node(sv, "SaveImage", images=[pv, 0], filename_prefix=f"{name}_{slug}_segthumb")
     # submit + poll
