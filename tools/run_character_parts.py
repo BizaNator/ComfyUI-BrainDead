@@ -148,7 +148,9 @@ def main():
     ap.add_argument("--part-prompts", default="", help="comma-separated parts to 3D (2D→Trellis path)")
     ap.add_argument("--part-images", default=None, help="dir of PartBuilder/SkinMaker exports (<tag>.png)")
     ap.add_argument("--cubepart-mesh", default=None, help="base mesh to split with CubePart")
-    ap.add_argument("--cube-parts", default="", help="comma-separated names for CubePart split (max 8)")
+    ap.add_argument("--cube-parts",
+                    default="head, torso, left arm, right arm, left leg, right leg, left hand, right hand",
+                    help="comma-separated names for CubePart split (max 8; default = the 8 standard body parts)")
     ap.add_argument("--server", default="http://127.0.0.1:8188")
     ap.add_argument("--output-dir", default="char_parts")
     ap.add_argument("--output-base", default="/srv/AI_Stuff/outputs")
