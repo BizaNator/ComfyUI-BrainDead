@@ -16,7 +16,8 @@ import argparse, json, os, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN_BD = os.path.join(HERE, "run_bd.py")
 TURNER = "COB_CharacterTurner_api"
-TURNER_BODY_NODE = "11"   # "Load Flux Upscale Body T Pose" (LoadFace=43 left untouched)
+TURNER_BODY_NODE = "11"    # "Load Flux Upscale Body T Pose" (LoadFace=43 left untouched)
+TURNER_NAME_NODE = "165"   # PrimitiveString that names the saved views (<name>_body_front, …)
 
 
 def _run_json(cmd):
@@ -61,7 +62,9 @@ def main():
     # ---- Stage 2: turnaround views from the mannequin ----------------------------------------
     if not args.no_turn:
         turn, _ = _run_json([RUN_BD, "--workflow", TURNER, "--image", mannequin,
-                             "--image-node", TURNER_BODY_NODE, "--name", args.name, "--part", "body",
+                             "--image-node", TURNER_BODY_NODE,
+                             "--set", f"{TURNER_NAME_NODE}.value={args.name}",   # name views <name>_*
+                             "--name", args.name, "--part", "body",
                              "--char-base", args.char_base, "--output-dir", stage,
                              "--server", args.server, "--timeout", str(args.timeout)])
         if turn.get("status") == "success":
