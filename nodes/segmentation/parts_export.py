@@ -249,10 +249,10 @@ class BD_PartsExport(io.ComfyNode):
                                         "Per-tag files use suffix=tag; composite uses suffix='_composite'."),
                 io.Boolean.Input("save_pngs", default=True, optional=True,
                                  tooltip="Write one RGBA PNG per tag."),
-                io.Boolean.Input("save_depth", default=False, optional=True,
+                io.Boolean.Input("save_depth", default=True, optional=True,
                                  tooltip="Also write {tag}_depth.png grayscale per part. "
                                          "Requires bundle to carry per-part depth (wire depth_image into BD_PartsBuilder)."),
-                io.Boolean.Input("save_masks", default=False, optional=True,
+                io.Boolean.Input("save_masks", default=True, optional=True,
                                  tooltip="Also write {tag}_mask.png — single-channel grayscale of "
                                          "the ORIGINAL SAM3 mask (the visible region in the source, "
                                          "before Qwen redraw), resized to match the rebuilt part "
@@ -277,7 +277,7 @@ class BD_PartsExport(io.ComfyNode):
                              tooltip="Max side length of composite PNG AND PSD canvas. Scales xyxy "
                                      "and layer dims to match. 0 = use frame_size as-is. Set to e.g. "
                                      "4096 for 4K production output."),
-                io.Boolean.Input("save_psd", default=False, optional=True,
+                io.Boolean.Input("save_psd", default=True, optional=True,
                                  tooltip="Also write {filename}.psd — single layered file with one "
                                          "layer per tag at its xyxy position. Layer order: back-to-front "
                                          "by depth_median. RAW compression (Photoshop-compatible)."),
@@ -339,10 +339,10 @@ class BD_PartsExport(io.ComfyNode):
     @classmethod
     def execute(cls, parts, filename="parts", name_prefix="",
                 auto_increment=True, context_id="",
-                save_pngs=True, save_depth=False, save_masks=False,
+                save_pngs=True, save_depth=True, save_masks=True,
                 save_masked_pngs=False,
                 save_composite=True, composite_size=0,
-                save_psd=False, base_image=None, background_image=None,
+                save_psd=True, base_image=None, background_image=None,
                 category_table=None, category_table_path="") -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
 
@@ -554,13 +554,16 @@ class BD_PartsExport(io.ComfyNode):
                 rgba = np.concatenate([rgb, a[..., None]], axis=-1)
 
                 if use_context:
+                    _scene_vars = "slug=\nregion="
                     comp_path, _ = resolve_context_path(
                         effective_ctx_id, "_composite", "png",
                         node_filename=filename, node_name_prefix=name_prefix,
+                        node_custom_vars=_scene_vars,
                     )
                     alpha_path, _ = resolve_context_path(
                         effective_ctx_id, "_composite_alpha", "png",
                         node_filename=filename, node_name_prefix=name_prefix,
+                        node_custom_vars=_scene_vars,
                     )
                     os.makedirs(os.path.dirname(comp_path), exist_ok=True)
                 else:
@@ -577,6 +580,7 @@ class BD_PartsExport(io.ComfyNode):
                 psd_path, _ = resolve_context_path(
                     effective_ctx_id, "", "psd",
                     node_filename=filename, node_name_prefix=name_prefix,
+                    node_custom_vars="slug=\nregion=",
                 )
                 os.makedirs(os.path.dirname(psd_path), exist_ok=True)
             else:

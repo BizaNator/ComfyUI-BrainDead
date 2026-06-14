@@ -1,6 +1,6 @@
 {
   "id": "bd-parts-builder",
-  "revision": 1,
+  "revision": 2,
   "last_node_id": 36,
   "last_link_id": 45,
   "nodes": [
@@ -1323,7 +1323,7 @@
         true,
         true,
         6144,
-        false,
+        true,
         "",
         ""
       ],
