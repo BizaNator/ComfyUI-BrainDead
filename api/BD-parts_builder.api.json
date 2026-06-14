@@ -1,0 +1,597 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "character.png"
+    },
+    "_meta": {
+      "title": "\u2460 Load Image"
+    }
+  },
+  "3": {
+    "class_type": "ImageScaleToMaxDimension",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "upscale_method": "area",
+      "largest_size": 1536
+    },
+    "_meta": {
+      "title": "\u2461 Scale (1536px max)"
+    }
+  },
+  "4": {
+    "class_type": "BD_Lotus2ModelLoader",
+    "inputs": {
+      "task": "depth",
+      "dtype": "bf16",
+      "device": "auto",
+      "flux_repo_id": "black-forest-labs/FLUX.1-dev",
+      "lotus2_weights_dir": "",
+      "cpu_offload": true
+    },
+    "_meta": {
+      "title": "Lotus2 Model Loader"
+    }
+  },
+  "5": {
+    "class_type": "BD_Lotus2Predict",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "image": [
+        "3",
+        0
+      ],
+      "num_inference_steps": 10,
+      "process_res": 1024,
+      "guidance_scale": 3.5,
+      "timestep_core_predictor": 1
+    },
+    "_meta": {
+      "title": "Lotus2 Depth Predict"
+    }
+  },
+  "6": {
+    "class_type": "BD_CacheImage",
+    "inputs": {
+      "image": [
+        "5",
+        1
+      ],
+      "cache_name": "cached_image",
+      "seed": 0,
+      "force_refresh": true,
+      "name_prefix": "depthmap"
+    },
+    "_meta": {
+      "title": "Cache Depth Map (force_refresh ON \u2014 set to false after first run to cache)"
+    }
+  },
+  "7": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Depth Preview"
+    }
+  },
+  "8": {
+    "class_type": "AILab_QwenVL",
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct",
+      "quantization": "None (FP16)",
+      "attention_mode": "auto",
+      "preset_prompt": "\ud83d\uddbc\ufe0f Tags",
+      "custom_prompt": "Analyze the character image and output a strict list of every visible clothing item, accessory, prop, and worn object. Follow these rules exactly:\n- Output single tag csv for each object,\n- Explicitly separate left and right side items using \"left \" or \"right \" prefixes (e.g., \"left white sleeve\", \"right white sleeve\").\n- Include only the item name and its color/pattern.\n- NEVER combine, group, or describe layering in a single line. (e.g., NEVER write \"white apron over black dress\", \"black dress with white apron\", \"paired boots\", or \"matching gloves\").\n- NEVER use commas, conjunctions, or relational words (over, under, with, and, plus, etc.).\n- If an item is centered or covers both sides equally, list each side seperatly not together, right glove, left glove.\n- If an item has multiple visible colors/patterns, list only the dominant one.\n\nExample output:\nwhite apron\nblack dress\nleft brown leather glove\nright brown leather glove\nleft blue shoe\nright blue shoe\nsilver pendant necklace\nblack belt with silver belt buckel\ndark blue trousers",
+      "max_tokens": 1024,
+      "keep_model_loaded": true,
+      "seed": 1,
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2462 QwenVL - Get Clothing Tags"
+    }
+  },
+  "9": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "8",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VLM Tags (raw CSV)"
+    }
+  },
+  "10": {
+    "class_type": "StringReplace",
+    "inputs": {
+      "string": [
+        "9",
+        0
+      ],
+      "find": ",",
+      "replace": "\n"
+    },
+    "_meta": {
+      "title": "CSV \u2192 Lines"
+    }
+  },
+  "11": {
+    "class_type": "StringConcatenate",
+    "inputs": {
+      "string_a": [
+        "10",
+        0
+      ],
+      "string_b": "belt with buckle \n\nright arm\nright hand\nright leg\nright foot\nleft arm\nleft hand\nleft leg\nleft foot\nneck\nface \nlips\nleft eye\nright eye\neye brows\nnose\nears\nfacial hair\nbeard\nhair\nearings\ntorso \nchest \nwaist\n",
+      "delimiter": "\\n"
+    },
+    "_meta": {
+      "title": "Append Body Parts"
+    }
+  },
+  "12": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "11",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "All Prompts (clothing + body)"
+    }
+  },
+  "13": {
+    "class_type": "BD_SAM3MultiPrompt",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "prompts": [
+        "12",
+        0
+      ],
+      "negative_prompts": "",
+      "combine_mode": "union",
+      "vote_threshold": 1,
+      "vote_pos_min": 0.5,
+      "vote_neg_min": 0.5,
+      "color_filter": "off",
+      "color_strength": 0.7,
+      "color_threshold": 0.3,
+      "color_mode": "fixed_hsv",
+      "adaptive_tolerance": 25,
+      "adaptive_sample_threshold": 0.5,
+      "adaptive_min_samples": 50,
+      "enforce_silhouette": true,
+      "include_dilate_radius": 64,
+      "masked_image_bg": "white",
+      "invert_negatives_in_per_prompt": true,
+      "confidence_threshold": 0.5,
+      "device": "Auto",
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "unload_model": false,
+      "invert_combined": false,
+      "mask_threshold": 0,
+      "silhouette_composite_enable": false
+    },
+    "_meta": {
+      "title": "\u2463 SAM3 Multi-Prompt Segment"
+    }
+  },
+  "14": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "13",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "SAM3 Masked Image"
+    }
+  },
+  "15": {
+    "class_type": "MaskPreview",
+    "inputs": {
+      "mask": [
+        "13",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "SAM3 Combined Mask"
+    }
+  },
+  "16": {
+    "class_type": "BD_PartsRefine",
+    "inputs": {
+      "masks": [
+        "13",
+        2
+      ],
+      "labels": [
+        "12",
+        0
+      ],
+      "iou_threshold": 0.7,
+      "merge_strategy": "union",
+      "max_parts": 15,
+      "min_pixels": 64,
+      "image": [
+        "3",
+        0
+      ],
+      "output_debug_viz": true
+    },
+    "_meta": {
+      "title": "\u2464 Parts Refine"
+    }
+  },
+  "17": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "16",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "Refine Debug Overlay"
+    }
+  },
+  "18": {
+    "class_type": "BD_FillMaskHoles",
+    "inputs": {
+      "mask": [
+        "16",
+        0
+      ],
+      "threshold": 0.5,
+      "closing_radius": 4,
+      "smooth_edges": 0
+    },
+    "_meta": {
+      "title": "Fill Mask Holes"
+    }
+  },
+  "19": {
+    "class_type": "MaskPreview",
+    "inputs": {
+      "mask": [
+        "18",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Filled Mask Preview"
+    }
+  },
+  "20": {
+    "class_type": "BD_PartsBuilder",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "selection_mode": "all",
+      "padding_pixels": 5,
+      "output_size": "native",
+      "square_pad": "none",
+      "background": "black",
+      "min_pixels": 64,
+      "masks": [
+        "18",
+        0
+      ],
+      "mask_labels": [
+        "16",
+        1
+      ],
+      "depth_image": [
+        "6",
+        0
+      ],
+      "selection_list": "",
+      "output_size_custom": 1024,
+      "background_hex": "#888888"
+    },
+    "_meta": {
+      "title": "\u2465 Parts Builder"
+    }
+  },
+  "21": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "20",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Parts Batch Preview"
+    }
+  },
+  "22": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "20",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Part Labels"
+    }
+  },
+  "23": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2511_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Qwen Edit Model"
+    }
+  },
+  "24": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "23",
+        0
+      ],
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoRA - Lightning 4-Step"
+    }
+  },
+  "25": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "24",
+        0
+      ],
+      "lora_name": "QwenImageEditInpaint_v1.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoRA - Inpaint v1"
+    }
+  },
+  "26": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIP Loader"
+    }
+  },
+  "27": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "_meta": {
+      "title": "VAE Loader"
+    }
+  },
+  "28": {
+    "class_type": "BD_PartsBatchEdit",
+    "inputs": {
+      "parts": [
+        "20",
+        3
+      ],
+      "model": [
+        "25",
+        0
+      ],
+      "clip": [
+        "26",
+        0
+      ],
+      "vae": [
+        "27",
+        0
+      ],
+      "prompt_template": "Inpaint the missing areas Recreating the complete {tag} in the same  style, sharp clean edges, fill any occluded or missing regions, no holes or gaps inside the {tag}, preserve original colors return on pure white #FFFFFF background ",
+      "inpaint_mode": "flatten_redraw",
+      "latent_upscale_method": "nearest-exact",
+      "prefill_mode": "nearest_part_pixel",
+      "target_pixels": "1024x1024",
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "alpha_after_edit": "auto_from_white_bg",
+      "source_image": [
+        "3",
+        0
+      ],
+      "latent_upscale_factor": 1.25,
+      "model_sampling_shift": 3,
+      "cfg_norm_strength": 1,
+      "tonemap_reinhard_multiplier": 2,
+      "context_extend_factor": 1,
+      "flatten_pad_factor": 1.25,
+      "mask_expand_pixels": 4,
+      "mask_blend_pixels": 1,
+      "target_pixels_custom": 1048576,
+      "negative_prompt": "",
+      "skip_tags": "",
+      "min_pixels": 64,
+      "white_threshold": 0.85,
+      "auto_crop_to_content": true,
+      "mask_dilate_pixels": 2
+    },
+    "_meta": {
+      "title": "\u2466 Parts Batch Edit (Qwen Inpaint)"
+    }
+  },
+  "29": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "28",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "Edited Parts Preview"
+    }
+  },
+  "30": {
+    "class_type": "BD_PartsExport",
+    "inputs": {
+      "parts": [
+        "28",
+        0
+      ],
+      "filename": "parts",
+      "name_prefix": "",
+      "auto_increment": true,
+      "context_id": "",
+      "save_pngs": true,
+      "save_depth": true,
+      "save_masks": true,
+      "save_masked_pngs": true,
+      "save_composite": true,
+      "composite_size": 6144,
+      "save_psd": true,
+      "base_image": [
+        "34",
+        1
+      ],
+      "category_table": "",
+      "category_table_path": ""
+    },
+    "_meta": {
+      "title": "\u2467 Parts Export"
+    }
+  },
+  "31": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "30",
+        3
+      ]
+    },
+    "_meta": {
+      "title": "Composite Preview"
+    }
+  },
+  "32": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "30",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Output Directory"
+    }
+  },
+  "34": {
+    "class_type": "BD_PartsUnderpaint",
+    "inputs": {
+      "parts": [
+        "28",
+        0
+      ],
+      "model": [
+        "25",
+        0
+      ],
+      "clip": [
+        "26",
+        0
+      ],
+      "vae": [
+        "27",
+        0
+      ],
+      "source_image": [
+        "3",
+        0
+      ],
+      "mode": "per_part_sequential",
+      "prompt_template": "Remove the {tag} from this image. Fill the region with whatever would naturally be visible underneath or behind the {tag} in this scene \u2014 skin, clothing, background surface, or interior. Preserve all surrounding pixels exactly.",
+      "prefill_mode": "color_spread",
+      "latent_upscale_method": "nearest-exact",
+      "target_pixels": "1024x1024",
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "remove_order": "",
+      "all_parts_prompt": "Remove all the highlighted parts from this image and reveal the complete underlying surface \u2014 bare skin, undergarments, interior, or background \u2014 as it would naturally appear with all parts absent.",
+      "context_extend_factor": 1.5,
+      "skip_tags": "",
+      "mask_dilate_pixels": 4,
+      "mask_blend_pixels": 4,
+      "latent_upscale_factor": 1.25,
+      "model_sampling_shift": 3.0,
+      "cfg_norm_strength": 0.85,
+      "tonemap_reinhard_multiplier": 2.0,
+      "target_pixels_custom": 1048576,
+      "negative_prompt": ""
+    },
+    "_meta": {
+      "title": "\u2469 BD Parts Underpaint (reveal beneath)"
+    }
+  },
+  "35": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "34",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "\u246a Base Image (bare surface)"
+    }
+  },
+  "36": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "34",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "\u246b Underpaint Steps (per-part frames)"
+    }
+  }
+}
