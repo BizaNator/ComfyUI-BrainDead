@@ -81,6 +81,7 @@ Eyeglass        = eyeglass:accessories
 ~heel           = heel:footwear
 ~sandal         = sandal:footwear
 ~slipper        = slipper:footwear
+~kicks          = sneaker:footwear
 
 # Clothing — upper body
 ~jacket         = jacket:clothing
@@ -109,9 +110,16 @@ Eyeglass        = eyeglass:accessories
 ~legging        = leggings:clothing
 ~skirt          = skirt:clothing
 
+# Lower body — extra
+~overall        = overalls:clothing
+~swimsuit       = swimsuit:clothing
+~bikini         = bikini:clothing
+~armor          = armor:clothing
+
 # Accessories
 ~sunglasses     = sunglasses:accessories
 ~eyeglass       = glasses:accessories
+~goggles        = goggles:accessories
 ~glasses        = glasses:accessories
 ~watch          = watch:accessories
 ~bracelet       = bracelet:accessories
@@ -122,8 +130,14 @@ Eyeglass        = eyeglass:accessories
 ~headphone      = headphones:accessories
 ~hat            = hat:accessories
 ~cap            = cap:accessories
+~helmet         = helmet:accessories
+~beanie         = beanie:accessories
+~headband       = headband:accessories
 ~scarf          = scarf:accessories
+~left glove     = left_glove:accessories
+~right glove    = right_glove:accessories
 ~glove          = glove:accessories
+~face mask      = face_mask:accessories
 ~bag            = bag:accessories
 ~backpack       = backpack:accessories
 ~purse          = purse:accessories
