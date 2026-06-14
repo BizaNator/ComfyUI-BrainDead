@@ -25,7 +25,10 @@ import folder_paths
 import comfy.utils
 from comfy_api.latest import io
 
-from .parts_types import PARTS_BUNDLE, ensure_bundle, frame_size as _frame_size
+from .parts_types import (
+    PARTS_BUNDLE, ensure_bundle, frame_size as _frame_size,
+    parse_category_table, DEFAULT_CATEGORY_TABLE, CATEGORY_TABLE_DEFAULT_PATH,
+)
 
 
 def _safe_filename(name: str) -> str:
@@ -292,6 +295,31 @@ class BD_PartsExport(io.ComfyNode):
                             "outputs by default — keeps the composite clean. PSD layer order back-to-"
                             "front: background_image → base_image → parts (z-sorted) → mask layers.",
                 ),
+                io.String.Input(
+                    "category_table", multiline=True,
+                    default=DEFAULT_CATEGORY_TABLE, optional=True,
+                    tooltip=(
+                        "Maps part tags → (slug, region) for template-based path naming.\n"
+                        "Format per line:  tag = slug:region\n"
+                        "  %slug%   — short filename-safe name (e.g. 'face_neck')\n"
+                        "  %region% — body region for folder grouping (e.g. 'head')\n"
+                        "Lines starting with # are comments. Empty table = passthrough "
+                        "(tag used as slug, region='').\n\n"
+                        "Only active when a BD_SaveContext is wired (context mode).\n"
+                        "Ignored in legacy (no-context) mode.\n\n"
+                        f"Default loaded from: {CATEGORY_TABLE_DEFAULT_PATH}"
+                    ),
+                ),
+                io.String.Input(
+                    "category_table_path", default="", optional=True,
+                    tooltip=(
+                        "Path to an external category table .txt file. When set and the file "
+                        "exists, its contents REPLACE the category_table widget text above — "
+                        "useful for a team-shared centralized mapping.\n\n"
+                        f"Leave empty to use the widget text above.\n"
+                        f"Default bundled file: {CATEGORY_TABLE_DEFAULT_PATH}"
+                    ),
+                ),
             ],
             outputs=[
                 io.Custom(PARTS_BUNDLE).Output(display_name="parts"),
@@ -314,10 +342,21 @@ class BD_PartsExport(io.ComfyNode):
                 save_pngs=True, save_depth=False, save_masks=False,
                 save_masked_pngs=False,
                 save_composite=True, composite_size=0,
-                save_psd=False, base_image=None, background_image=None) -> io.NodeOutput:
+                save_psd=False, base_image=None, background_image=None,
+                category_table=None, category_table_path="") -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
 
         from ..cache.save_context import resolve_context_path, get_context, auto_pick_context
+
+        # Resolve category table: external file takes priority over inline widget.
+        _cat_text = category_table or ""
+        if category_table_path:
+            try:
+                with open(category_table_path) as _f:
+                    _cat_text = _f.read()
+            except OSError as _e:
+                print(f"[BD PartsExport] category_table_path not readable ({_e}); using inline table", flush=True)
+        cat_map = parse_category_table(_cat_text)
 
         effective_ctx_id = context_id
         if not effective_ctx_id:
@@ -346,6 +385,11 @@ class BD_PartsExport(io.ComfyNode):
         comp_path: str | None = None
         psd_path: str | None = None
 
+        def _tag_custom_vars(tag: str, tag_safe: str) -> str:
+            """Build node_custom_vars string for a given tag using cat_map lookup."""
+            slug, region = cat_map.get(tag, (tag_safe, ""))
+            return f"slug={slug}\nregion={region}"
+
         # Per-tag PNGs (and optional depth)
         if save_pngs:
             for tag, info in tag2pinfo.items():
@@ -363,6 +407,7 @@ class BD_PartsExport(io.ComfyNode):
                     png_path, _ = resolve_context_path(
                         effective_ctx_id, f"_{tag_safe}", "png",
                         node_filename=filename, node_name_prefix=name_prefix,
+                        node_custom_vars=_tag_custom_vars(tag, tag_safe),
                     )
                     os.makedirs(os.path.dirname(png_path), exist_ok=True)
                 else:
@@ -381,6 +426,7 @@ class BD_PartsExport(io.ComfyNode):
                         depth_path, _ = resolve_context_path(
                             effective_ctx_id, f"_{tag_safe}_depth", "png",
                             node_filename=filename, node_name_prefix=name_prefix,
+                            node_custom_vars=_tag_custom_vars(tag, tag_safe),
                         )
                         os.makedirs(os.path.dirname(depth_path), exist_ok=True)
                     else:
@@ -403,6 +449,7 @@ class BD_PartsExport(io.ComfyNode):
                             mask_path, _ = resolve_context_path(
                                 effective_ctx_id, f"_{tag_safe}_mask", "png",
                                 node_filename=filename, node_name_prefix=name_prefix,
+                                node_custom_vars=_tag_custom_vars(tag, tag_safe),
                             )
                             os.makedirs(os.path.dirname(mask_path), exist_ok=True)
                         else:
@@ -431,6 +478,7 @@ class BD_PartsExport(io.ComfyNode):
                         masked_path, _ = resolve_context_path(
                             effective_ctx_id, f"_{tag_safe}_masked", "png",
                             node_filename=filename, node_name_prefix=name_prefix,
+                            node_custom_vars=_tag_custom_vars(tag, tag_safe),
                         )
                         os.makedirs(os.path.dirname(masked_path), exist_ok=True)
                     else:

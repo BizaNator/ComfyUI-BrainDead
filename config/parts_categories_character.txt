@@ -1,0 +1,57 @@
+# BD Parts Category Table — Character (Sapiens2 taxonomy)
+# Format:  tag = slug:region
+#   tag    — exact part tag from BD_PartsBuilder (must match case)
+#   slug   — short filename-safe name exposed as %slug% in BD_SaveContext templates
+#   region — body region for folder/path grouping exposed as %region% in templates
+#
+# Lines starting with # are ignored. Blank lines are ignored.
+# tag = slug      (no colon) sets slug only, region stays empty.
+# Empty table (all lines blank/comments) = passthrough: tag is used as slug, region is "".
+#
+# Example template using these vars:
+#   %character%/%region%/%slug%%suffix%
+#   → Letti/head/face_0001.png, Letti/clothing/upper_shirt_0001.png
+
+# ── Head ──────────────────────────────────────────────────────────────────────
+Face_Neck       = face_neck:head
+Hair            = hair:head
+
+# ── Body ──────────────────────────────────────────────────────────────────────
+Torso           = torso:body
+
+# ── Clothing ──────────────────────────────────────────────────────────────────
+Upper_Clothing  = upper_clothing:clothing
+Lower_Clothing  = lower_clothing:clothing
+Apparel         = apparel:clothing
+
+# ── Arms ──────────────────────────────────────────────────────────────────────
+Left_Upper_Arm  = left_upper_arm:arms
+Left_Lower_Arm  = left_lower_arm:arms
+Left_Hand       = left_hand:arms
+Right_Upper_Arm = right_upper_arm:arms
+Right_Lower_Arm = right_lower_arm:arms
+Right_Hand      = right_hand:arms
+
+# ── Legs ──────────────────────────────────────────────────────────────────────
+Left_Upper_Leg  = left_upper_leg:legs
+Left_Lower_Leg  = left_lower_leg:legs
+Left_Foot       = left_foot:legs
+Right_Upper_Leg = right_upper_leg:legs
+Right_Lower_Leg = right_lower_leg:legs
+Right_Foot      = right_foot:legs
+
+# ── Footwear ──────────────────────────────────────────────────────────────────
+Left_Shoe       = left_shoe:footwear
+Left_Sock       = left_sock:footwear
+Right_Shoe      = right_shoe:footwear
+Right_Sock      = right_sock:footwear
+
+# ── Face detail ───────────────────────────────────────────────────────────────
+Lower_Lip       = lower_lip:face
+Upper_Lip       = upper_lip:face
+Lower_Teeth     = lower_teeth:face
+Upper_Teeth     = upper_teeth:face
+Tongue          = tongue:face
+
+# ── Accessories ───────────────────────────────────────────────────────────────
+Eyeglass        = eyeglass:accessories
