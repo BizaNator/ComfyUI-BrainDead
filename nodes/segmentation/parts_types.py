@@ -40,18 +40,62 @@ def _load_file_safe(path: str) -> str:
         return ""
 
 
-def parse_category_table(text: str) -> dict[str, tuple[str, str]]:
-    """Parse 'tag = slug:region' lines.  Returns {tag: (slug, region)}.
+class CategoryTable:
+    """Result of parse_category_table().
 
-    # comment lines and blank lines are ignored.
-    'tag = slug' (no colon) sets slug only; region stays ''.
-    Empty / all-comment text → {} (passthrough: tag used as slug, region='').
+    Lookup order per tag:
+      1. Exact match (case-sensitive, O(1)).
+      2. Substring match via ~ lines (case-insensitive).
+         Among all matching ~patterns, the longest wins (most-specific).
+      3. Default supplied by caller (passthrough: tag as slug, region='').
     """
-    result: dict[str, tuple[str, str]] = {}
+
+    __slots__ = ("_exact", "_fuzzy")
+
+    def __init__(self, exact: dict, fuzzy: list):
+        self._exact = exact
+        # Sort descending by pattern length so longest wins when multiple match.
+        self._fuzzy: list[tuple[str, tuple[str, str]]] = sorted(
+            fuzzy, key=lambda kv: len(kv[0]), reverse=True
+        )
+
+    def get(self, tag: str, default: tuple = ("", "")) -> tuple[str, str]:
+        if tag in self._exact:
+            return self._exact[tag]
+        tag_lower = tag.lower()
+        for pattern, value in self._fuzzy:
+            if pattern in tag_lower:
+                return value
+        return default
+
+    def __bool__(self) -> bool:
+        return bool(self._exact or self._fuzzy)
+
+    def __len__(self) -> int:
+        return len(self._exact) + len(self._fuzzy)
+
+
+def parse_category_table(text: str) -> CategoryTable:
+    """Parse a category table into a CategoryTable.
+
+    Line formats:
+      tag = slug:region       exact match (case-sensitive)
+      ~pattern = slug:region  substring match (case-insensitive); longest wins
+      tag = slug              slug only, region=''
+      # comment               ignored
+      blank lines             ignored
+
+    Empty / all-comment text → empty CategoryTable (passthrough mode).
+    """
+    exact: dict[str, tuple[str, str]] = {}
+    fuzzy: list[tuple[str, tuple[str, str]]] = []
     for line in (text or "").splitlines():
         line = line.split("#")[0].strip()
         if not line or "=" not in line:
             continue
+        is_fuzzy = line.startswith("~")
+        if is_fuzzy:
+            line = line[1:].strip()
         tag, rest = line.split("=", 1)
         tag = tag.strip()
         rest = rest.strip()
@@ -59,10 +103,16 @@ def parse_category_table(text: str) -> dict[str, tuple[str, str]]:
             continue
         if ":" in rest:
             slug, region = rest.split(":", 1)
-            result[tag] = (slug.strip(), region.strip())
+            value: tuple[str, str] = (slug.strip(), region.strip())
         elif rest:
-            result[tag] = (rest, "")
-    return result
+            value = (rest, "")
+        else:
+            continue
+        if is_fuzzy:
+            fuzzy.append((tag.lower(), value))
+        else:
+            exact[tag] = value
+    return CategoryTable(exact, fuzzy)
 
 
 # Pre-loaded default so the widget has it as default value at schema build time.

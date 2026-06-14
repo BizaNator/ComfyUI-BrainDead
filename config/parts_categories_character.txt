@@ -8,6 +8,14 @@
 # tag = slug      (no colon) sets slug only, region stays empty.
 # Empty table (all lines blank/comments) = passthrough: tag is used as slug, region is "".
 #
+# Fuzzy / substring matching (Qwen-VL free-form tags):
+# Prefix a line with ~ to do a case-insensitive substring match instead of exact.
+# Among all matching ~patterns, the LONGEST wins (most-specific first).
+# Put more-specific patterns before less-specific ones in this file for readability;
+# the parser sorts by length automatically so ordering doesn't matter for correctness.
+#   ~sneaker    matches "blue left sneaker", "right white sneaker", etc.
+#   ~left shoe  matches "left red shoe" (wins over ~shoe for left-side tags)
+#
 # Example template using these vars:
 #   %character%/%region%/%slug%%suffix%
 #   → Letti/head/face_0001.png, Letti/clothing/upper_shirt_0001.png
@@ -55,3 +63,70 @@ Tongue          = tongue:face
 
 # ── Accessories ───────────────────────────────────────────────────────────────
 Eyeglass        = eyeglass:accessories
+
+# ── Qwen-VL fuzzy matches (~pattern = case-insensitive substring) ─────────────
+# Footwear — side-specific first (longer = wins over bare "shoe"/"sneaker")
+~left sneaker   = left_sneaker:footwear
+~right sneaker  = right_sneaker:footwear
+~left shoe      = left_shoe:footwear
+~right shoe     = right_shoe:footwear
+~left boot      = left_boot:footwear
+~right boot     = right_boot:footwear
+~left sock      = left_sock:footwear
+~right sock     = right_sock:footwear
+~sneaker        = sneaker:footwear
+~shoe           = shoe:footwear
+~boot           = boot:footwear
+~sock           = sock:footwear
+~heel           = heel:footwear
+~sandal         = sandal:footwear
+~slipper        = slipper:footwear
+
+# Clothing — upper body
+~jacket         = jacket:clothing
+~coat           = coat:clothing
+~hoodie         = hoodie:clothing
+~sweater        = sweater:clothing
+~sweatshirt     = sweatshirt:clothing
+~shirt          = shirt:clothing
+~blouse         = blouse:clothing
+~top            = top:clothing
+~dress          = dress:clothing
+~skirt          = skirt:clothing
+~vest           = vest:clothing
+~suit           = suit:clothing
+~blazer         = blazer:clothing
+~cardigan       = cardigan:clothing
+~tank           = tank_top:clothing
+
+# Clothing — lower body (more specific before less specific)
+~denim jean     = jeans:clothing
+~jean           = jeans:clothing
+~denim          = jeans:clothing
+~trouser        = trousers:clothing
+~pant           = pants:clothing
+~short          = shorts:clothing
+~legging        = leggings:clothing
+~skirt          = skirt:clothing
+
+# Accessories
+~sunglasses     = sunglasses:accessories
+~eyeglass       = glasses:accessories
+~glasses        = glasses:accessories
+~watch          = watch:accessories
+~bracelet       = bracelet:accessories
+~necklace       = necklace:accessories
+~chain          = chain:accessories
+~earring        = earring:accessories
+~ring           = ring:accessories
+~headphone      = headphones:accessories
+~hat            = hat:accessories
+~cap            = cap:accessories
+~scarf          = scarf:accessories
+~glove          = glove:accessories
+~bag            = bag:accessories
+~backpack       = backpack:accessories
+~purse          = purse:accessories
+~belt           = belt:accessories
+~tie            = tie:accessories
+~bow tie        = bow_tie:accessories
