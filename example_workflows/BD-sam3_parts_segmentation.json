@@ -1,6 +1,6 @@
 {
   "id": "bd-sam3-parts-builder",
-  "revision": 0,
+  "revision": 1,
   "last_node_id": 36,
   "last_link_id": 45,
   "nodes": [
@@ -22,7 +22,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "# BrainDead - SAM3 Parts Builder\n\nFull character part decomposition pipeline matching the COB_PartBuilder workflow.\n\n## Flow\n1. **Load Image** \u2192 scale to max 1536px\n2. **Lotus2 Depth** \u2192 depth map cached for parts *(Cache node: force_refresh=ON by default \u2014 flip to OFF after first run to reuse cached depth)*\n3. **QwenVL Tags** \u2192 auto-list clothing items + body parts as SAM3 prompts\n4. **BD_SAM3MultiPrompt** \u2192 segments each tag into a per-part mask\n5. **BD_PartsRefine** \u2192 cleans up mask overlap (IoU merge)\n6. **BD_FillMaskHoles** \u2192 fills holes in refined masks\n7. **BD_PartsBuilder** \u2192 crops each part to its own RGBA image (PARTS_BUNDLE)\n8. **BD_PartsBatchEdit** \u2192 Qwen Image Edit reconstructs each occluded part\n9. **BD_PartsExport** \u2192 writes per-part RGBA PNGs + composite\n\n## Models Required\n- `qwen_image_edit_2511_bf16.safetensors` (UNET)\n- `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` (LoRA)\n- `QwenImageEditInpaint_v1.safetensors` (LoRA)\n- `qwen_2.5_vl_7b_fp8_scaled.safetensors` (CLIP)\n- `qwen_image_vae.safetensors` (VAE)\n- `Qwen3-VL-8B-Instruct` (QwenVL captioner)\n- `Lotus2` depth model (auto-downloads FLUX.1-dev)\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
+        "# BrainDead - SAM3 Parts Builder\n\nFull character part decomposition pipeline matching the COB_PartBuilder workflow.\n\n## Flow\n1. **Load Image** \u2192 scale to max 1536px\n2. **Lotus2 Depth** \u2192 depth map cached for parts *(Cache node: force_refresh=ON by default \u2014 flip to OFF after first run to reuse cached depth)*\n3. **QwenVL Tags** \u2192 auto-list clothing items + body parts as SAM3 prompts\n4. **BD_SAM3MultiPrompt** \u2192 segments each tag into a per-part mask\n5. **BD_PartsRefine** \u2192 cleans up mask overlap (IoU merge)\n6. **BD_FillMaskHoles** \u2192 fills holes in refined masks\n7. **BD_PartsBuilder** \u2192 crops each part to its own RGBA image (PARTS_BUNDLE)\n8. **BD_PartsBatchEdit** \u2192 Qwen Image Edit reconstructs each occluded part\n9. **BD_PartsExport** \u2192 writes per-part RGBA PNGs + composite\n   - `category_table` widget: maps SAM3 tags \u2192 slug:region for template path naming (%slug%, %region% vars)\n   - `category_table_path`: point to an external .txt file for team-wide centralized mapping\n\n## Models Required\n- `qwen_image_edit_2511_bf16.safetensors` (UNET)\n- `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` (LoRA)\n- `QwenImageEditInpaint_v1.safetensors` (LoRA)\n- `qwen_2.5_vl_7b_fp8_scaled.safetensors` (CLIP)\n- `qwen_image_vae.safetensors` (VAE)\n- `Qwen3-VL-8B-Instruct` (QwenVL captioner)\n- `Lotus2` depth model (auto-downloads FLUX.1-dev)\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) \u00b7 [BrainDead.TV](https://BrainDead.TV) \u00b7 [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) \u00b7 [Discord](https://braindeadguild.com/discord)\n"
       ],
       "title": "\u2139\ufe0f About \u2014 BrainDead Parts Builder"
     },
@@ -249,7 +249,7 @@
         true,
         "depthmap"
       ],
-      "title": "Cache Depth Map (force_refresh ON — set to false after first run to cache)"
+      "title": "Cache Depth Map (force_refresh ON \u2014 set to false after first run to cache)"
     },
     {
       "id": 7,
@@ -1323,7 +1323,9 @@
         true,
         true,
         6144,
-        false
+        false,
+        "",
+        ""
       ],
       "title": "\u2467 Parts Export"
     },

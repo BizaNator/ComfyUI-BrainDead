@@ -27,7 +27,8 @@ PARTS_BUNDLE = "PARTS_BUNDLE"
 
 # Path to the bundled default character category table shipped with the node.
 CATEGORY_TABLE_DEFAULT_PATH = _os.path.join(
-    _os.path.dirname(_os.path.dirname(__file__)), "config", "parts_categories_character.txt"
+    _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))),
+    "config", "parts_categories_character.txt"
 )
 
 
