@@ -28,7 +28,7 @@ STABLE_EW = "/opt/comfyui/stable/custom_nodes/ComfyUI-BrainDead/example_workflow
 GALLERY_SLUG = {
     "BD-CubePart_Part_Decomposition": "cubepart", "BD-trellis2_shape_to_texture": "trellis2",
     "BD-ovoxel_pbr_bake": "ovoxel", "BD-pixal3d_image_to_3d": "pixal3d",
-    "BD-sam3_parts_segmentation": "sam3", "BD-lotus2_depth_normal": "lotus2",
+    "BD-parts_builder": "partsbuilder", "BD-lotus2_depth_normal": "lotus2",
     "BD-facewrap_pipeline": "facewrap", "BD-glsl_skin_tinting": "glsl",
     "BD-character_consistency": "character", "BD-background_removal": "bgremoval",
     "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
@@ -79,11 +79,11 @@ CONFIGS = {
                     "~3k tris, flat-shaded -- studio Seam-4 dispatcher"],
         "chips": ["FBX", "low-poly", "vcol", "Unreal"],
         "background": "screenshots/trellis_unreal_fbx_bg.png"},
-    "BD-sam3_parts_segmentation": {
-        "title": "SAM3 Parts", "subtitle": "Prompt-driven part segmentation + edit",
+    "BD-parts_builder": {
+        "title": "BD Parts Builder", "subtitle": "Prompt-driven part segmentation + edit",
         "bullets": ["Image -> Lotus2 depth -> QwenVL tags", "SAM3 Multi-Prompt -> Parts Refine",
                     "Fill Holes -> Parts Builder", "PartsBatchEdit (Qwen Inpaint)",
-                    "Parts Export (per-part + PSD)"]},
+                    "Parts Export (per-part RGBA + PSD + category table)"]},
     "BD-lotus2_depth_normal": {
         "title": "Lotus-2", "subtitle": "FLUX diffusion depth + normal",
         "bullets": ["Load Image -> Lotus-2 Loader", "Predict depth or normal",
