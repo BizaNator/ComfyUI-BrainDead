@@ -261,7 +261,7 @@ class BD_PartsExport(io.ComfyNode):
                                          "Black = was occluded.\n\n"
                                          "If the bundle was never edited (no PartsBatchEdit step), "
                                          "falls back to the part's current alpha channel."),
-                io.Boolean.Input("save_masked_pngs", default=False, optional=True,
+                io.Boolean.Input("save_masked_pngs", default=True, optional=True,
                                  tooltip="Also write {tag}_masked.png — RGBA PNG where RGB = the "
                                          "Qwen-rebuilt content and alpha = the ORIGINAL SAM3 "
                                          "visibility mask. Ready to composite back onto the body "
@@ -340,7 +340,7 @@ class BD_PartsExport(io.ComfyNode):
     def execute(cls, parts, filename="parts", name_prefix="",
                 auto_increment=True, context_id="",
                 save_pngs=True, save_depth=True, save_masks=True,
-                save_masked_pngs=False,
+                save_masked_pngs=True,
                 save_composite=True, composite_size=0,
                 save_psd=True, base_image=None, background_image=None,
                 category_table=None, category_table_path="") -> io.NodeOutput:
