@@ -40,6 +40,18 @@ def _load_file_safe(path: str) -> str:
         return ""
 
 
+def _fuzzy_match(pattern: str, tag_lower: str) -> bool:
+    """True if all words in pattern appear (as substrings) in tag_lower.
+
+    Single-word patterns: simple substring check.
+    Multi-word patterns: every word must be present — allows "left sneaker"
+    to match "left blue sneaker" even though the words aren't consecutive.
+    """
+    if " " not in pattern:
+        return pattern in tag_lower
+    return all(w in tag_lower for w in pattern.split())
+
+
 class CategoryTable:
     """Result of parse_category_table().
 
@@ -64,7 +76,7 @@ class CategoryTable:
             return self._exact[tag]
         tag_lower = tag.lower()
         for pattern, value in self._fuzzy:
-            if pattern in tag_lower:
+            if _fuzzy_match(pattern, tag_lower):
                 return value
         return default
 
