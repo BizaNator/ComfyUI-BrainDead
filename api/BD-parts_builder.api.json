@@ -466,6 +466,27 @@
       "title": "Edited Parts Preview"
     }
   },
+  "37": {
+    "class_type": "BD_SaveContext",
+    "inputs": {
+      "context_id": "parts-export",
+      "template": "%character%/%region%/%slug%",
+      "character": "",
+      "name": "parts",
+      "version": "01",
+      "project": "",
+      "base_dir": "",
+      "subfolder": "",
+      "tag": "",
+      "custom_vars": "",
+      "auto_increment": false,
+      "increment_padding": 3,
+      "strict": false
+    },
+    "_meta": {
+      "title": "\u2467 Save Context"
+    }
+  },
   "30": {
     "class_type": "BD_PartsExport",
     "inputs": {
@@ -476,7 +497,10 @@
       "filename": "parts",
       "name_prefix": "",
       "auto_increment": true,
-      "context_id": "",
+      "context_id": [
+        "37",
+        0
+      ],
       "save_pngs": true,
       "save_depth": true,
       "save_masks": true,
@@ -492,7 +516,7 @@
       "category_table_path": ""
     },
     "_meta": {
-      "title": "\u2467 Parts Export"
+      "title": "\u2468 Parts Export"
     }
   },
   "31": {
