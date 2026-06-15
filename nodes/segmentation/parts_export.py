@@ -303,8 +303,8 @@ class BD_PartsExport(io.ComfyNode):
                         "Format per line:  tag = slug:region\n"
                         "  %slug%   — short filename-safe name (e.g. 'face_neck')\n"
                         "  %region% — body region for folder grouping (e.g. 'head')\n"
-                        "Lines starting with # are comments. Empty table = passthrough "
-                        "(tag used as slug, region='').\n\n"
+                        "Lines starting with # are comments. Leave empty to use the bundled "
+                        "default character category table.\n\n"
                         "Only active when a BD_SaveContext is wired (context mode).\n"
                         "Ignored in legacy (no-context) mode.\n\n"
                         f"Default loaded from: {CATEGORY_TABLE_DEFAULT_PATH}"
@@ -356,7 +356,7 @@ class BD_PartsExport(io.ComfyNode):
                     _cat_text = _f.read()
             except OSError as _e:
                 print(f"[BD PartsExport] category_table_path not readable ({_e}); using inline table", flush=True)
-        cat_map = parse_category_table(_cat_text)
+        cat_map = parse_category_table(_cat_text or DEFAULT_CATEGORY_TABLE)
 
         effective_ctx_id = context_id
         if not effective_ctx_id:
