@@ -4,23 +4,21 @@ run_parts_builder.py — studio-pipeline handoff wrapper for the BD-parts_builde
 workflow (Qwen-VL + SAM3 + BD_PartsBuilder + BD_PartsExport).
 
 Self-contained: submits the frozen API contract (BD-parts_builder.api.json) to a
-ComfyUI server, then drops the per-part PNGs into the canonical character
-layout:
+ComfyUI server, then moves the per-part PNGs into the canonical character layout:
 
-    Characters/<name>/images/parts/<slug>/<n>_<descriptor>.png
+    Characters/<name>/images/parts/<region>/<slug>_<descriptor>_NNN.png
 
-Slug routing is driven by BD_PartsExport's category_table (see
+Slug routing is driven by BD_PartsExport's built-in category table (see
 ComfyUI-BrainDead/config/parts_categories_character.txt). Tags that don't match
-any entry fall through to the table's default region/slug — they get saved but
-in the catch-all bucket so they're not lost.
+any entry fall through to the bundled default — they get saved but labelled with
+their raw tag so nothing is lost.
 
 Usage:
     run_parts_builder.py --image /path/<char>_composite.png --name <char>
     run_parts_builder.py --image x.png --name Bob --server http://10.15.0.20:8188
 
 The wrapper does NOT trellis the parts — that's the next pipeline stage. After
-this completes, the runner can iterate parts/<slug>/ dirs and fire
-run_unreal_fbx.py per part.
+this completes, iterate parts/<region>/ dirs and fire run_unreal_fbx.py per part.
 """
 import argparse, json, os, shutil, sys, time, uuid
 import urllib.request, urllib.error
@@ -77,18 +75,13 @@ def main():
     ap.add_argument("--api", default=DEFAULT_API)
     ap.add_argument("--server", default="http://127.0.0.1:8188")
     ap.add_argument("--category-table-path", default="",
-                    help="Override BD_PartsExport.category_table_path. Default = bundled config.")
-    ap.add_argument("--filename-template",
-                    default="%character%/images/parts/%region%/%slug%/%suffix%",
-                    help="BD_PartsExport.filename template. %%region%%/%%slug%% gives the canonical layout.")
+                    help="Override BD_PartsExport.category_table_path. "
+                         "Default: empty (node uses bundled config automatically).")
     ap.add_argument("--output-base", default="/srv/AI_Stuff/outputs",
-                    help="ComfyUI output dir on disk (parts land under here first).")
+                    help="ComfyUI output dir on disk (parts land under <output-base>/<name>/ first).")
     ap.add_argument("--char-base", default=CHAR_BASE,
-                    help="Studio Characters root. Empty disables the character-folder copy.")
+                    help="Studio Characters root. Empty disables the character-folder move.")
     ap.add_argument("--timeout", type=int, default=1800)
-    ap.add_argument("--no-region-tier", action="store_true",
-                    help="Drop the %%region%% tier from the path template, "
-                         "yielding parts/<slug>/<n>.png (skips intermediate region group).")
     args = ap.parse_args()
 
     if not os.path.exists(args.image):
@@ -104,27 +97,23 @@ def main():
     for nid in find_nodes(api, "LoadImage"):
         api[nid]["inputs"]["image"] = uploaded
 
-    # ── 2. wire BD_PartsExport for the canonical save layout ──────────────
-    template = args.filename_template
-    if args.no_region_tier:
-        template = template.replace("/%region%/", "/")
-    for nid in find_nodes(api, "BD_PartsExport"):
-        api[nid]["inputs"]["filename"] = template
-        # BD_PartsExport reads BD_SaveContext for %character% etc., so set it
-        # via name_prefix only if context isn't wired. Most workflows DO wire
-        # one — leaving these defaults alone keeps that working.
-        if args.category_table_path:
-            api[nid]["inputs"]["category_table_path"] = args.category_table_path
-
-    # ── 3. set BD_SaveContext (if present) so %character% resolves ────────
+    # ── 2. BD_SaveContext drives the save path — inject character name only ─
+    # The workflow template owns the path layout (%region%/%slug% etc.).
+    # We only inject the per-run value: the character name.
+    save_ctx_set = False
     for nid in find_nodes(api, "BD_SaveContext"):
-        api[nid]["inputs"].update({
-            "character": args.name,
-            "name": "parts",
-            "project": "PartsBuilder",
-            "base_dir": "",
-            "subfolder": "",
-        })
+        api[nid]["inputs"]["character"] = args.name
+        save_ctx_set = True
+    if not save_ctx_set:
+        print("[run_parts_builder] WARN: workflow has no BD_SaveContext; "
+              "BD_PartsExport will save with raw template literals.",
+              file=sys.stderr)
+
+    # ── 3. BD_PartsExport — optional category table path override ─────────
+    # When empty, the node auto-uses the bundled parts_categories_character.txt.
+    if args.category_table_path:
+        for nid in find_nodes(api, "BD_PartsExport"):
+            api[nid]["inputs"]["category_table_path"] = args.category_table_path
 
     # ── 4. submit + wait ──────────────────────────────────────────────────
     submit = _post(f"{args.server}/prompt", {"prompt": api})
@@ -151,15 +140,43 @@ def main():
     else:
         sys.exit(f"timeout after {args.timeout}s")
 
-    # ── 5. report which slugs landed on disk ──────────────────────────────
+    # ── 5. move outputs → Characters/<char>/images/parts/<region>/ ────────
+    # BD_SaveContext template (%character%/%region%/%slug%%suffix%) saves files as:
+    #   <output_base>/<char>/<region>/<slug>_<descriptor>_NNN.png
+    # Move the whole <char>/<region>/ trees into the canonical character folder.
     char_dir = os.path.join(args.char_base, args.name)
     parts_dir = os.path.join(char_dir, "images", "parts")
+    src_root = os.path.join(args.output_base, args.name)
+    if args.char_base and os.path.isdir(src_root):
+        os.makedirs(parts_dir, exist_ok=True)
+        for region in sorted(os.listdir(src_root)):
+            src_region = os.path.join(src_root, region)
+            if not os.path.isdir(src_region):
+                continue
+            dst_region = os.path.join(parts_dir, region)
+            os.makedirs(dst_region, exist_ok=True)
+            for fname in sorted(os.listdir(src_region)):
+                src_f = os.path.join(src_region, fname)
+                dst_f = os.path.join(dst_region, fname)
+                if os.path.isfile(src_f):
+                    shutil.move(src_f, dst_f)
+            try:
+                os.rmdir(src_region)
+            except OSError:
+                pass
+        try:
+            os.rmdir(src_root)
+        except OSError:
+            pass
+
+    # ── 6. report which slugs landed on disk ──────────────────────────────
     found = {}
     if os.path.isdir(parts_dir):
         for region in sorted(os.listdir(parts_dir)):
             region_dir = os.path.join(parts_dir, region)
-            if not os.path.isdir(region_dir): continue
-            # Two valid shapes: parts/<region>/<slug>/*.png  OR  parts/<slug>/*.png
+            if not os.path.isdir(region_dir):
+                continue
+            # Two valid layouts: parts/<region>/<slug>/*.png  OR  parts/<region>/*.png
             sub = [d for d in os.listdir(region_dir)
                    if os.path.isdir(os.path.join(region_dir, d))]
             if sub:
