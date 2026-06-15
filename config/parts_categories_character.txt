@@ -65,6 +65,101 @@ Tongue          = tongue:face
 Eyeglass        = eyeglass:accessories
 
 # ── Qwen-VL fuzzy matches (~pattern = case-insensitive substring) ─────────────
+
+# Body parts — head/face (side-specific first, then generic)
+~eye brows      = eyebrows:head
+~left eye       = left_eye:head
+~right eye      = right_eye:head
+~eye brow       = eyebrow:head
+~facial hair    = facial_hair:head
+~left ear       = left_ear:head
+~right ear      = right_ear:head
+~eye            = eye:head
+~ear            = ear:head
+~nose           = nose:head
+~mouth          = mouth:head
+~lips           = lips:head
+~lip            = lip:head
+~beard          = beard:head
+~mustache       = mustache:head
+~face           = face:head
+~hair           = hair:head
+~neck           = neck:head
+~head           = head:head
+
+# Body parts — torso/upper body
+~left shoulder  = left_shoulder:body
+~right shoulder = right_shoulder:body
+~shoulder       = shoulder:body
+~chest          = chest:body
+~torso          = torso:body
+~upper body     = upper_body:body
+~abdomen        = abdomen:body
+~belly          = belly:body
+~waist          = waist:body
+~back           = back:body
+~spine          = spine:body
+
+# Body parts — arms/hands (side-specific first)
+~left upper arm  = left_upper_arm:arms
+~right upper arm = right_upper_arm:arms
+~left lower arm  = left_lower_arm:arms
+~right lower arm = right_lower_arm:arms
+~left arm        = left_arm:arms
+~right arm       = right_arm:arms
+~left hand       = left_hand:arms
+~right hand      = right_hand:arms
+~left forearm    = left_forearm:arms
+~right forearm   = right_forearm:arms
+~left wrist      = left_wrist:arms
+~right wrist     = right_wrist:arms
+~left elbow      = left_elbow:arms
+~right elbow     = right_elbow:arms
+~arm             = arm:arms
+~hand            = hand:arms
+~forearm         = forearm:arms
+~wrist           = wrist:arms
+~elbow           = elbow:arms
+~fingers         = fingers:arms
+~finger          = finger:arms
+~palm            = palm:arms
+
+# Body parts — legs/feet (side-specific first)
+~left upper leg  = left_upper_leg:legs
+~right upper leg = right_upper_leg:legs
+~left lower leg  = left_lower_leg:legs
+~right lower leg = right_lower_leg:legs
+~left leg        = left_leg:legs
+~right leg       = right_leg:legs
+~left foot       = left_foot:legs
+~right foot      = right_foot:legs
+~left thigh      = left_thigh:legs
+~right thigh     = right_thigh:legs
+~left calf       = left_calf:legs
+~right calf      = right_calf:legs
+~left knee       = left_knee:legs
+~right knee      = right_knee:legs
+~left ankle      = left_ankle:legs
+~right ankle     = right_ankle:legs
+~leg             = leg:legs
+~foot            = foot:legs
+~thigh           = thigh:legs
+~calf            = calf:legs
+~knee            = knee:legs
+~ankle           = ankle:legs
+~toe             = toe:legs
+~toes            = toes:legs
+
+# Clothing — skin/body coverings
+~skin           = skin:body
+~body           = body:body
+~nude           = nude:body
+~underwear      = underwear:clothing
+~underpants     = underwear:clothing
+~bra            = bra:clothing
+~panties        = panties:clothing
+~boxer          = boxers:clothing
+~apron          = apron:clothing
 # Footwear — side-specific first (longer = wins over bare "shoe"/"sneaker")
 ~left sneaker   = left_sneaker:footwear
 ~right sneaker  = right_sneaker:footwear
