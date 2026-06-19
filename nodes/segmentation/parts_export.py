@@ -388,6 +388,8 @@ class BD_PartsExport(io.ComfyNode):
         def _tag_custom_vars(tag: str, tag_safe: str) -> str:
             """Build node_custom_vars string for a given tag using cat_map lookup."""
             slug, region = cat_map.get(tag, (tag_safe, ""))
+            if not region:
+                print(f"[BD PartsExport] tag={tag!r}: slug={slug!r}, region='' (no category table match — file will land flat)", flush=True)
             return f"slug={slug}\nregion={region}"
 
         # Per-tag PNGs (and optional depth)
