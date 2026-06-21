@@ -98,7 +98,7 @@
       "properties": {
         "Node name for S&R": "BD_AutoRigUEFN"
       },
-      "widgets_values": [""],
+      "widgets_values": ["", "uefn_rig", "", true, "", "", ""],
       "title": "③ BD AutoRig → UEFN Skeleton"
     },
     {
@@ -299,7 +299,7 @@
       "properties": {
         "Node name for S&R": "BD_AnimRetarget"
       },
-      "widgets_values": ["", "", 30, ""],
+      "widgets_values": ["", "", 30, "anim_retarget", "", true, "", "", ""],
       "title": "⑩ BD Anim Retarget (SMPL-H → UEFN)"
     },
     {

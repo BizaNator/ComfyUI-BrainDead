@@ -105,7 +105,7 @@
       "properties": {
         "Node name for S&R": "BD_AutoRigUEFN"
       },
-      "widgets_values": [""],
+      "widgets_values": ["", "uefn_rig", "", true, "", "", ""],
       "title": "③ BD AutoRig → UEFN Skeleton (weight transfer)"
     },
     {
