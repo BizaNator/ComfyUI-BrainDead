@@ -1,21 +1,20 @@
 """
-BD_AutoRigMIA — One-shot auto-rigger using Make-It-Animatable.
+BD_AutoRigMIA — fast humanoid auto-rigging using vendored Make-It-Animatable.
 
-Wraps the sibling pack `ComfyUI-UniRig`'s `mia_inference.run_mia_inference()`
-with a single-node convenience interface: takes a trimesh, returns a path to a
-rigged FBX (Mixamo skeleton). Optionally chains BD_MixamoToUEFN immediately so
-the output is already UEFN-named.
+NO dependency on ComfyUI-UniRig pack. The MIA inference code lives in
+<pack>/lib/autorig/, vendored from PozzettiAndrea's ComfyUI-UniRig
+(MIT licensed). Model weights auto-download from HuggingFace
+(jasongzy/Make-It-Animatable) on first use into
+<ComfyUI>/models/autorig/mia/.
 
-Use this when you have a single mesh and want a UEFN-ready rig in one step
-with no separate model-loading wire-up.
-
-For workflow flexibility (re-use a loaded model across many meshes) use
-the upstream MIALoadModel + MIAAutoRig nodes from the UniRig pack and feed
-the FBX into BD_MixamoToUEFN.
+Workflow:
+    Mesh (TRIMESH) → BD_AutoRigMIA → FBX path (rigged, Mixamo skeleton)
+    Then chain through BD_MixamoToUEFN to rename to UEFN_Mannequin.
 
 Upstream:
-  Make-It-Animatable — https://github.com/jasongzy/Make-It-Animatable (MIT)
-  ComfyUI-UniRig    — https://github.com/PozzettiAndrea/ComfyUI-UniRig
+    Make-It-Animatable — https://github.com/jasongzy/Make-It-Animatable (MIT)
+    MIA ComfyUI wrapper code vendored from
+    https://github.com/PozzettiAndrea/ComfyUI-UniRig (MIT)
 """
 
 import os
@@ -29,58 +28,53 @@ import folder_paths
 from comfy_api.latest import io
 
 from ..mesh.types import TrimeshInput
-from ..blender.base import BlenderNodeMixin
 
 
-# ── Sibling pack discovery (ComfyUI-UniRig provides MIA inference) ──────────
+# ── Vendored MIA discovery ──────────────────────────────────────────────────
 _THIS = Path(__file__).resolve()
 _PACK_ROOT = _THIS.parent.parent.parent           # ComfyUI-BrainDead/
-_CUSTOM_NODES_DIR = _PACK_ROOT.parent             # ComfyUI/custom_nodes/
-_UNIRIG_PACK = _CUSTOM_NODES_DIR / "ComfyUI-UniRig"
-_UNIRIG_LIB = _UNIRIG_PACK / "lib"
+_VENDORED_LIB = _PACK_ROOT / "lib" / "autorig"    # vendored MIA inference
 
 
-def _ensure_unirig_lib_on_path() -> bool:
-    """Add the sibling UniRig lib dir to sys.path if present. Returns True on
-    success, False if the pack isn't installed."""
-    if not _UNIRIG_LIB.is_dir():
-        return False
-    if str(_UNIRIG_LIB) not in sys.path:
-        sys.path.insert(0, str(_UNIRIG_LIB))
-    if str(_UNIRIG_PACK) not in sys.path:
-        sys.path.insert(0, str(_UNIRIG_PACK))
-    return True
+def _ensure_vendored_lib_on_path() -> None:
+    """Add the pack root to sys.path so `from lib.autorig.mia_inference`
+    resolves. Also make sure the autorig lib dir itself is reachable so
+    its relative imports work."""
+    lib_root = str(_VENDORED_LIB.parent)  # <pack>/lib
+    if lib_root not in sys.path:
+        sys.path.insert(0, lib_root)
+    pack_str = str(_PACK_ROOT)
+    if pack_str not in sys.path:
+        sys.path.insert(0, pack_str)
 
 
-# Cache the loaded MIA model across invocations so we don't pay HF-load cost
-# every call.
+# Per-process model cache so successive calls reuse loaded weights.
 _MIA_MODEL_CACHE: dict = {}
 _MIA_MODEL_LOCK = threading.Lock()
 
 
 def _load_mia_model(device: str = "auto"):
-    """Load the Make-It-Animatable model and memoize it process-wide."""
-    if not _ensure_unirig_lib_on_path():
-        raise RuntimeError(
-            "ComfyUI-UniRig pack is not installed in custom_nodes/. "
-            "Install from https://github.com/PozzettiAndrea/ComfyUI-UniRig "
-            "or use the upstream MIA nodes directly."
-        )
-
+    """Auto-download weights + load model. Memoized per device."""
+    _ensure_vendored_lib_on_path()
     key = device
     with _MIA_MODEL_LOCK:
         if key in _MIA_MODEL_CACHE:
             return _MIA_MODEL_CACHE[key]
-
-        # Import lazily so a fresh ComfyUI install doesn't crash at module
-        # load time when the sibling pack hasn't been added yet.
-        from mia_inference import load_mia_models  # type: ignore
-
-        print(f"[BD_AutoRigMIA] Loading MIA model on device={device}...")
+        # Lazy import — the vendored module pulls in PyTorch + MIA arch
+        from autorig.mia_inference import (  # type: ignore
+            ensure_mia_models, load_mia_models,
+        )
+        if not ensure_mia_models():
+            raise RuntimeError(
+                "Failed to download Make-It-Animatable model weights "
+                "from HuggingFace. Check internet connectivity + write "
+                "permissions on <ComfyUI>/models/autorig/."
+            )
+        print(f"[BD_AutoRigMIA] Loading MIA model (device={device}) ...")
         t0 = time.time()
-        # PozzettiAndrea's load_mia_models() takes a device string.
-        model = load_mia_models(device=device)
-        print(f"[BD_AutoRigMIA] Model loaded in {time.time()-t0:.1f}s.")
+        cache_to_gpu = device in ("auto", "cuda")
+        model = load_mia_models(cache_to_gpu=cache_to_gpu)
+        print(f"[BD_AutoRigMIA] Loaded in {time.time() - t0:.1f}s.")
         _MIA_MODEL_CACHE[key] = model
         return model
 
@@ -88,10 +82,9 @@ def _load_mia_model(device: str = "auto"):
 def _run_mia_inference(mesh, model, output_path: str, *,
                         no_fingers: bool, use_normal: bool,
                         reset_to_rest: bool) -> str:
-    """Thin wrapper around the sibling pack's run_mia_inference()."""
-    if not _ensure_unirig_lib_on_path():
-        raise RuntimeError("ComfyUI-UniRig pack not on path.")
-    from mia_inference import run_mia_inference  # type: ignore
+    """Wrap the vendored run_mia_inference call."""
+    _ensure_vendored_lib_on_path()
+    from autorig.mia_inference import run_mia_inference  # type: ignore
     return run_mia_inference(
         mesh=mesh,
         models=model,
@@ -103,12 +96,14 @@ def _run_mia_inference(mesh, model, output_path: str, *,
 
 
 class BD_AutoRigMIA(io.ComfyNode):
-    """One-shot Make-It-Animatable auto-rigger. Trimesh in → rigged FBX path
-    out. Auto-loads + memoizes the MIA model. Optionally appends a UEFN
-    bone-name remap so the output is UEFN-ready.
+    """Fast humanoid auto-rigging via Make-It-Animatable (vendored).
 
-    Per upstream: <1s on humanoid characters with a warm model. First call
-    pays HF download + model load (~10-20s)."""
+    Trimesh in → rigged FBX path out, with optional inline Mixamo → UEFN
+    bone-name remap. Per upstream: <1s/char on humanoid with warm model
+    (first call pays HF download + model load, ~10–20s).
+
+    Model weights auto-download from HuggingFace on first use.
+    """
 
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -117,21 +112,25 @@ class BD_AutoRigMIA(io.ComfyNode):
             display_name="BD AutoRig (Make-It-Animatable)",
             category="🧠BrainDead/AutoRig",
             description=(
-                "Convenience wrapper: takes a trimesh, calls Make-It-Animatable "
-                "inference (loaded from sibling ComfyUI-UniRig pack), and "
-                "returns a path to a rigged FBX. Optionally also runs the "
-                "Mixamo → UEFN bone-name remap so downstream UE imports see "
-                "the canonical skeleton convention.\n\n"
-                "MIA is humanoid-only and outputs a Mixamo skeleton "
-                "(52 bones with fingers — or 22 bones if no_fingers=True). "
-                "For non-humanoid meshes use BD AutoRig (UniRig)."
+                "Make-It-Animatable auto-rigger for humanoid meshes.\n\n"
+                "Predicts skeleton joint positions and blend skinning "
+                "weights from a Trimesh in one pass. Outputs a Mixamo-"
+                "compatible rigged FBX (52 bones, or 22 if no_fingers=True).\n\n"
+                "Model weights auto-download from HuggingFace on first "
+                "use to <ComfyUI>/models/autorig/mia/. Subsequent calls "
+                "reuse the cached weights. No dependency on ComfyUI-"
+                "UniRig — inference code is vendored.\n\n"
+                "Chain output through BD Mixamo → UEFN Rename for the "
+                "canonical UEFN_Mannequin skeleton naming, or set "
+                "remap_to_uefn=True (default) to do it inline."
             ),
             inputs=[
                 TrimeshInput("mesh"),
                 io.String.Input(
                     "fbx_name",
                     default="",
-                    tooltip="Output filename (no extension). Empty = timestamped.",
+                    tooltip="Output filename stem (no extension). Empty = "
+                            "timestamped.",
                     optional=True,
                 ),
                 io.Combo.Input(
@@ -143,31 +142,32 @@ class BD_AutoRigMIA(io.ComfyNode):
                 io.Boolean.Input(
                     "no_fingers",
                     default=True,
-                    tooltip="Merge finger weights into the hand bone. Recommended "
-                            "for our 25-head pipeline — the studio characters "
-                            "don't have animated fingers.",
+                    tooltip="Merge finger weights into the hand bone. "
+                            "Recommended for the studio 27-char batch — "
+                            "characters don't have animated fingers.",
                     optional=True,
                 ),
                 io.Boolean.Input(
                     "use_normal",
                     default=False,
-                    tooltip="Use surface normals for tighter skinning weights. "
-                            "Helps when limbs touch (arms-to-torso pose).",
+                    tooltip="Use surface normals for tighter skinning. "
+                            "Helps when limbs touch (arms-to-torso poses).",
                     optional=True,
                 ),
                 io.Boolean.Input(
                     "reset_to_rest",
                     default=True,
-                    tooltip="Transform output mesh into T-pose rest position. "
-                            "Required for downstream PoseFixer to retarget cleanly.",
+                    tooltip="Transform output mesh into T-pose rest "
+                            "position. Required for downstream PoseFixer "
+                            "to retarget cleanly.",
                     optional=True,
                 ),
                 io.Boolean.Input(
                     "remap_to_uefn",
                     default=True,
-                    tooltip="Append the Mixamo → UEFN bone-name remap step so "
-                            "the output FBX uses UEFN_Mannequin bone names "
-                            "(pelvis, spine_01, upperarm_l, hand_l, ...).",
+                    tooltip="Append the Mixamo → UEFN bone-name remap "
+                            "step inline. Output FBX uses pelvis, "
+                            "spine_01..05, upperarm_l, etc.",
                     optional=True,
                 ),
             ],
@@ -190,10 +190,7 @@ class BD_AutoRigMIA(io.ComfyNode):
         out_dir = Path(folder_paths.get_output_directory())
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        if fbx_name:
-            stem = fbx_name
-        else:
-            stem = f"rigged_mia_{time.strftime('%Y%m%d_%H%M%S')}"
+        stem = fbx_name or f"rigged_mia_{time.strftime('%Y%m%d_%H%M%S')}"
         mia_fbx = out_dir / f"{stem}_mixamo.fbx"
 
         model = _load_mia_model(device=device)
@@ -206,23 +203,25 @@ class BD_AutoRigMIA(io.ComfyNode):
             use_normal=use_normal,
             reset_to_rest=reset_to_rest,
         )
-        print(f"[BD_AutoRigMIA] Inference complete in {time.time()-t0:.2f}s → "
-               f"{result}")
+        print(f"[BD_AutoRigMIA] Inference complete in "
+               f"{time.time() - t0:.2f}s → {result}")
 
         if not os.path.exists(result):
-            raise RuntimeError(f"MIA inference returned {result} but file missing")
+            raise RuntimeError(
+                f"MIA inference returned {result} but file missing")
 
         if not remap_to_uefn:
             return io.NodeOutput(str(result))
 
-        # Chain the remap node inline
+        # Inline chain the bone-name remap
         from .bone_remap import BD_MixamoToUEFN
         remap_out = BD_MixamoToUEFN.execute(
             input_fbx=str(result),
             output_name=f"{stem}_uefn",
         )
-        # NodeOutput is a tuple-ish wrapper; .result[0] holds the string
-        uefn_fbx = remap_out.result[0] if hasattr(remap_out, "result") else str(remap_out)
+        uefn_fbx = (remap_out.result[0]
+                     if hasattr(remap_out, "result")
+                     else str(remap_out))
         return io.NodeOutput(str(uefn_fbx))
 
 

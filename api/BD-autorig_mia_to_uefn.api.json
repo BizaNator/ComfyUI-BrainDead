@@ -1,0 +1,27 @@
+{
+  "1": {
+    "class_type": "UniRigLoadMesh",
+    "inputs": {
+      "source_folder": "input",
+      "file_path": "character.glb"
+    },
+    "_meta": {
+      "title": "① Load Mesh"
+    }
+  },
+  "2": {
+    "class_type": "BD_AutoRigMIA",
+    "inputs": {
+      "mesh": ["1", 0],
+      "fbx_name": "autorig_uefn",
+      "device": "auto",
+      "no_fingers": true,
+      "use_normal": false,
+      "reset_to_rest": true,
+      "remap_to_uefn": true
+    },
+    "_meta": {
+      "title": "② BD AutoRig (MIA) → UEFN"
+    }
+  }
+}
