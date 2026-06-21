@@ -34,6 +34,9 @@ GALLERY_SLUG = {
     "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
     "BD-game_engine_packing": "packing", "BD-atlas_flipbook": "flipbook",
     "BD-trellis2_unreal_fbx": "unrealfbx", "BD-isolate_part": "isolatepart",
+    "BD-clothing_remover": "clothingremover",
+    "BD-autorig_mia_to_uefn": "autorignuefn",
+    "BD-autorig_mia_uefn_full": "autoriguefnfull",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -154,6 +157,29 @@ CONFIGS = {
                     "layout JSON = per-cell UV rects for the engine",
                     "Or wire packed textures into image_1..image_8"],
         "chips": ["grid", "strip", "UV", "flipbook"]},
+    "BD-clothing_remover": {
+        "title": "Clothing Remover", "subtitle": "Qwen Image Edit + ControlNet pose guidance",
+        "bullets": ["Load Image -> Sapiens2 Pose (optional) -> ControlNet",
+                    "Qwen Image Edit Plus — prompt-driven clothing swap / removal",
+                    "Switch: use pose control or run unguided",
+                    "LoRA stack (detail + style) + CFGNorm quality pass",
+                    "KSampler -> VAEDecode -> Save"],
+        "chips": ["Qwen", "ControlNet", "LoRA", "pose"]},
+    "BD-autorig_mia_to_uefn": {
+        "title": "AutoRig: MIA -> UEFN", "subtitle": "ML humanoid rigging in <1s",
+        "bullets": ["Load mesh (GLB/OBJ) -> Make-It-Animatable (GPU)",
+                    "Predicts Mixamo 52-bone skeleton + blend weights",
+                    "Bone remap: Mixamo -> UEFN_Mannequin naming",
+                    "Output FBX ready for weight-transfer or UEFN import"],
+        "chips": ["MIA", "Mixamo", "UEFN", "FBX"]},
+    "BD-autorig_mia_uefn_full": {
+        "title": "AutoRig: Full UEFN Pipeline", "subtitle": "Mesh -> genuine UEFN skeleton (2 steps)",
+        "bullets": ["Step 1: BD AutoRig MIA — ML Mixamo rigging (<1s GPU)",
+                    "Step 2: BD AutoRig UEFN — Blender Data Transfer",
+                    "Bundled SKM_UEFN_Mannequin as weight donor",
+                    "Scale match + align + bake + transfer + bind",
+                    "Output FBX importable directly into UEFN / Fortnite"],
+        "chips": ["MIA", "UEFN", "Blender", "FBX"]},
 }
 
 
