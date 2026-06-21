@@ -174,6 +174,7 @@ class BD_AutoRigMIA(io.ComfyNode):
             outputs=[
                 io.String.Output(display_name="fbx_path"),
             ],
+            is_output_node=True,
         )
 
     @classmethod
