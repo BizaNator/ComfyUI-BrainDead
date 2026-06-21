@@ -239,6 +239,7 @@ class BD_MixamoToUEFN(io.ComfyNode, BlenderNodeMixin):
             outputs=[
                 io.String.Output(display_name="output_fbx"),
             ],
+            is_output_node=True,
         )
 
     @classmethod
