@@ -9,16 +9,20 @@ ends up with the canonical Fortnite/UEFN skeleton naming.
 Nodes:
   • BD_AutoRigMIA      — fast humanoid rigging via Make-It-Animatable (<1s)
   • BD_AutoRigUniRig   — general autoregressive-transformer rigging
-  • BD_MixamoToUEFN    — bone-name remap, FBX in → FBX out
+  • BD_MixamoToUEFN    — bone-name remap only, FBX in → FBX out
+  • BD_AutoRigUEFN     — full UEFN skeleton conversion (step 2 of pipeline)
 
-Workflow:
-    Mesh → BD_AutoRigMIA  (remap_to_uefn=True)  →  UEFN-ready FBX
-    Mesh → BD_AutoRigUniRig (skeleton_template=mixamo, remap_to_uefn=True)
-                                                  →  UEFN-ready FBX
+Pipeline:
+    Mesh → BD_AutoRigMIA  →  BD_AutoRigUEFN  →  UEFN FBX (ready for import)
 
-After this node pack's FBX comes back to Blender, run PoseFixer_v1 from the
-BrainDeadBlender uefn_pipeline to retarget the rest pose from T-pose to the
-canonical UEFN A-pose.
+    BD_AutoRigMIA produces a Mixamo-rigged FBX.
+    BD_AutoRigUEFN transfers weights from the bundled SKM_UEFN_Mannequin
+    reference via Blender's Data Transfer modifier, producing a character
+    bound to the genuine UEFN/Fortnite armature.
+
+    BD_MixamoToUEFN is a lightweight alternative that only renames bones
+    (no weight transfer) — use when you have an existing Mixamo FBX and
+    want the name convention only.
 """
 
 from .bone_remap import (
@@ -39,30 +43,40 @@ from .unirig_autorig import (
     UNIRIG_NODES,
     UNIRIG_DISPLAY_NAMES,
 )
+from .uefn_skeleton import (
+    BD_AutoRigUEFN,
+    UEFN_SKEL_V3_NODES,
+    UEFN_SKEL_NODES,
+    UEFN_SKEL_DISPLAY_NAMES,
+)
 
 
 AUTORIG_V3_NODES = [
     *BONE_REMAP_V3_NODES,
     *MIA_V3_NODES,
     *UNIRIG_V3_NODES,
+    *UEFN_SKEL_V3_NODES,
 ]
 
 AUTORIG_NODES = {
     **BONE_REMAP_NODES,
     **MIA_NODES,
     **UNIRIG_NODES,
+    **UEFN_SKEL_NODES,
 }
 
 AUTORIG_DISPLAY_NAMES = {
     **BONE_REMAP_DISPLAY_NAMES,
     **MIA_DISPLAY_NAMES,
     **UNIRIG_DISPLAY_NAMES,
+    **UEFN_SKEL_DISPLAY_NAMES,
 }
 
 __all__ = [
     "BD_MixamoToUEFN",
     "BD_AutoRigMIA",
     "BD_AutoRigUniRig",
+    "BD_AutoRigUEFN",
     "AUTORIG_V3_NODES",
     "AUTORIG_NODES",
     "AUTORIG_DISPLAY_NAMES",

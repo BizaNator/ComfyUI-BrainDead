@@ -1,5 +1,5 @@
 {
-  "1": {
+  "2": {
     "class_type": "UniRigLoadMesh",
     "inputs": {
       "source_folder": "input",
@@ -9,34 +9,46 @@
       "title": "\u2460 Load Mesh"
     }
   },
-  "2": {
+  "3": {
     "class_type": "BD_AutoRigMIA",
     "inputs": {
       "mesh": [
-        "1",
+        "2",
         0
       ],
-      "fbx_name": "autorig_uefn",
+      "fbx_name": "autorig_mixamo",
       "device": "auto",
       "no_fingers": true,
       "use_normal": false,
       "reset_to_rest": true,
-      "remap_to_uefn": true
+      "remap_to_uefn": false
     },
     "_meta": {
-      "title": "\u2461 BD AutoRig (Make-It-Animatable) \u2192 UEFN"
+      "title": "\u2461 BD AutoRig (Make-It-Animatable) \u2192 Mixamo"
     }
   },
-  "3": {
-    "class_type": "PreviewAny",
+  "4": {
+    "class_type": "BD_AutoRigUEFN",
     "inputs": {
-      "source": [
-        "2",
+      "input_fbx": [
+        "3",
         0
       ]
     },
     "_meta": {
-      "title": "\u2462 Output FBX Path"
+      "title": "\u2462 BD AutoRig \u2192 UEFN Skeleton (weight transfer)"
+    }
+  },
+  "5": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "4",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2463 Output FBX Path"
     }
   }
 }
