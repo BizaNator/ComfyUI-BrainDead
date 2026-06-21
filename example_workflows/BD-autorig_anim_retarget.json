@@ -1,0 +1,398 @@
+{
+  "id": "bd-autorig-anim-retarget",
+  "revision": 0,
+  "last_node_id": 11,
+  "last_link_id": 12,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [40, 20],
+      "size": [600, 220],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "## ℹ️ About — 🧠 BrainDead AutoRig + Animation Retargeting\n\n**Full pipeline: mesh → rig → animate → export**\n\n- **BD_AutoRigMIA**: ML Mixamo rigging (<1s GPU)\n- **BD_AutoRigUEFN**: UEFN skeleton via Blender Data Transfer\n- **HunyuanMotion**: Text-to-motion generation (SMPL-H FBX)\n- **BD_AnimRetarget**: Map SMPL-H bones → UEFN, bake, export\n\nOutput FBX: animated character with UEFN skeleton, ready for UEFN/Fortnite."
+      ],
+      "title": "ℹ️ About — 🧠 BrainDead AutoRig + Animation Retargeting"
+    },
+    {
+      "id": 2,
+      "type": "UniRigLoadMesh",
+      "pos": [40, 280],
+      "size": [320, 100],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [1],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UniRigLoadMesh"
+      },
+      "widgets_values": ["input", "character.glb"],
+      "title": "① Load Character Mesh"
+    },
+    {
+      "id": 3,
+      "type": "BD_AutoRigMIA",
+      "pos": [400, 280],
+      "size": [340, 250],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fbx_path",
+          "type": "STRING",
+          "links": [2],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_AutoRigMIA"
+      },
+      "widgets_values": ["autorig_mixamo", "auto", true, false, true, false],
+      "title": "② BD AutoRig MIA → Mixamo FBX"
+    },
+    {
+      "id": 4,
+      "type": "BD_AutoRigUEFN",
+      "pos": [780, 280],
+      "size": [320, 130],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "input_fbx",
+          "type": "STRING",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fbx_path",
+          "type": "STRING",
+          "links": [3],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_AutoRigUEFN"
+      },
+      "widgets_values": [""],
+      "title": "③ BD AutoRig → UEFN Skeleton"
+    },
+    {
+      "id": 5,
+      "type": "HYMotionLoadLLMGGUF",
+      "pos": [40, 580],
+      "size": [300, 100],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "llm",
+          "type": "HYMOTION_LLM",
+          "links": [5],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "HYMotionLoadLLMGGUF"
+      },
+      "widgets_values": ["Qwen3-8B-Q4_K_M.gguf", false],
+      "title": "④ Load LLM (Qwen3-8B GGUF)"
+    },
+    {
+      "id": 6,
+      "type": "HYMotionLoadNetwork",
+      "pos": [40, 720],
+      "size": [300, 80],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "network",
+          "type": "HYMOTION_NET",
+          "links": [6],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "HYMotionLoadNetwork"
+      },
+      "widgets_values": ["HY-Motion-1.0-Lite"],
+      "title": "⑤ Load Motion Network"
+    },
+    {
+      "id": 7,
+      "type": "HYMotionEncodeText",
+      "pos": [380, 580],
+      "size": [360, 120],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "llm",
+          "type": "HYMOTION_LLM",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "conditioning",
+          "type": "HYMOTION_COND",
+          "links": [7],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "HYMotionEncodeText"
+      },
+      "widgets_values": ["A person walks forward at a normal pace."],
+      "title": "⑥ Encode Motion Prompt"
+    },
+    {
+      "id": 8,
+      "type": "HYMotionGenerate",
+      "pos": [780, 580],
+      "size": [320, 200],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "network",
+          "type": "HYMOTION_NET",
+          "link": 6
+        },
+        {
+          "name": "conditioning",
+          "type": "HYMOTION_COND",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "motion_data",
+          "type": "HYMOTION_DATA",
+          "links": [8, 9],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "HYMotionGenerate"
+      },
+      "widgets_values": [3.0, 42, 5.0, 1],
+      "title": "⑦ Generate Motion"
+    },
+    {
+      "id": 9,
+      "type": "HYMotionPreview",
+      "pos": [1140, 580],
+      "size": [320, 170],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "motion_data",
+          "type": "HYMOTION_DATA",
+          "link": 8
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [10],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "HYMotionPreview"
+      },
+      "widgets_values": [0, 5, 512],
+      "title": "⑧ Motion Preview (skeleton strip)"
+    },
+    {
+      "id": 10,
+      "type": "HYMotionExportFBX",
+      "pos": [1140, 790],
+      "size": [320, 120],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "motion_data",
+          "type": "HYMOTION_DATA",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fbx_paths",
+          "type": "STRING",
+          "links": [11],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "HYMotionExportFBX"
+      },
+      "widgets_values": ["hymotion_fbx", "motion"],
+      "title": "⑨ Export SMPL-H Motion FBX"
+    },
+    {
+      "id": 11,
+      "type": "BD_AnimRetarget",
+      "pos": [1500, 580],
+      "size": [360, 200],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "motion_fbx",
+          "type": "STRING",
+          "link": 11
+        },
+        {
+          "name": "character_fbx",
+          "type": "STRING",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "animated_fbx",
+          "type": "STRING",
+          "links": [12],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_AnimRetarget"
+      },
+      "widgets_values": ["", 30],
+      "title": "⑩ BD Anim Retarget (SMPL-H → UEFN)"
+    },
+    {
+      "id": 12,
+      "type": "PreviewAny",
+      "pos": [1900, 580],
+      "size": [300, 90],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 12
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "Animated FBX Path"
+    },
+    {
+      "id": 13,
+      "type": "PreviewImage",
+      "pos": [1500, 790],
+      "size": [320, 200],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 10
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "Motion Preview Frames"
+    }
+  ],
+  "links": [
+    [1,  2,  0,  3,  0, "TRIMESH"],
+    [2,  3,  0,  4,  0, "STRING"],
+    [3,  4,  0, 11,  1, "STRING"],
+    [5,  5,  0,  7,  0, "HYMOTION_LLM"],
+    [6,  6,  0,  8,  0, "HYMOTION_NET"],
+    [7,  7,  0,  8,  1, "HYMOTION_COND"],
+    [8,  8,  0,  9,  0, "HYMOTION_DATA"],
+    [9,  8,  0, 10,  0, "HYMOTION_DATA"],
+    [10, 9,  0, 13,  0, "IMAGE"],
+    [11, 10, 0, 11,  0, "STRING"],
+    [12, 11, 0, 12,  0, "*"]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "Step 1: Auto-Rig Character (MIA → UEFN)",
+      "bounding": [20, 250, 1100, 400],
+      "color": "#3f789e",
+      "font_size": 20,
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "Step 2: Generate Motion (HunyuanMotion)",
+      "bounding": [20, 550, 1440, 420],
+      "color": "#5e4a8a",
+      "font_size": 20,
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "Step 3: Retarget Animation → Animated Character FBX",
+      "bounding": [1470, 550, 760, 420],
+      "color": "#4a7a5e",
+      "font_size": 20,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.55,
+      "offset": [0, 0]
+    },
+    "frontendVersion": "1.30.0"
+  },
+  "version": 0.4
+}

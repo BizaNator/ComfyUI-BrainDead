@@ -39,6 +39,7 @@ GALLERY_SLUG = {
     "BD-autorig_mia_uefn_full": "autoriguefnfull",
     "BD-autorig_rig_preview": "autorigpreview",
     "BD-autorig_hymotion": "autorighymotion",
+    "BD-autorig_anim_retarget": "autoriganim",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -198,6 +199,14 @@ CONFIGS = {
                     "HYMotionExportFBX: animated SMPL-H FBX output",
                     "Pair with BD AutoRig for full character pipeline"],
         "chips": ["HunyuanMotion", "Qwen3", "motion", "FBX"]},
+    "BD-autorig_anim_retarget": {
+        "title": "AutoRig + Anim Retarget", "subtitle": "Mesh → rig → motion → animated FBX",
+        "bullets": ["BD AutoRig MIA (ML Mixamo rig) → BD AutoRig UEFN (skeleton)",
+                    "HunyuanMotion text-to-motion (Qwen3-8B + HY-Motion-1.0-Lite)",
+                    "HYMotionExportFBX: SMPL-H animated FBX",
+                    "BD Anim Retarget: SMPL-H → UEFN bone mapping + Blender bake",
+                    "Output: animated character FBX for UEFN / Fortnite"],
+        "chips": ["MIA", "UEFN", "HunyuanMotion", "retarget"]},
 }
 
 

@@ -12,6 +12,7 @@ Nodes:
   • BD_MixamoToUEFN    — bone-name remap only, FBX in → FBX out
   • BD_AutoRigUEFN     — full UEFN skeleton conversion (step 2 of pipeline)
   • BD_RigPreview      — render rigged FBX as skeleton image (bone visualization)
+  • BD_AnimRetarget    — retarget HunyuanMotion SMPL-H animation → UEFN character
 
 Pipeline:
     Mesh → BD_AutoRigMIA  →  BD_AutoRigUEFN  →  UEFN FBX (ready for import)
@@ -24,6 +25,9 @@ Pipeline:
     BD_MixamoToUEFN is a lightweight alternative that only renames bones
     (no weight transfer) — use when you have an existing Mixamo FBX and
     want the name convention only.
+
+    BD_AnimRetarget wires into HunyuanMotion's output to retarget the
+    SMPL-H skeleton onto any UEFN-rigged character, producing an animated FBX.
 """
 
 from .bone_remap import (
@@ -56,6 +60,12 @@ from .rig_preview import (
     RIG_PREVIEW_NODES,
     RIG_PREVIEW_DISPLAY_NAMES,
 )
+from .anim_retarget import (
+    BD_AnimRetarget,
+    ANIM_RETARGET_V3_NODES,
+    ANIM_RETARGET_NODES,
+    ANIM_RETARGET_DISPLAY_NAMES,
+)
 
 
 AUTORIG_V3_NODES = [
@@ -64,6 +74,7 @@ AUTORIG_V3_NODES = [
     *UNIRIG_V3_NODES,
     *UEFN_SKEL_V3_NODES,
     *RIG_PREVIEW_V3_NODES,
+    *ANIM_RETARGET_V3_NODES,
 ]
 
 AUTORIG_NODES = {
@@ -72,6 +83,7 @@ AUTORIG_NODES = {
     **UNIRIG_NODES,
     **UEFN_SKEL_NODES,
     **RIG_PREVIEW_NODES,
+    **ANIM_RETARGET_NODES,
 }
 
 AUTORIG_DISPLAY_NAMES = {
@@ -80,6 +92,7 @@ AUTORIG_DISPLAY_NAMES = {
     **UNIRIG_DISPLAY_NAMES,
     **UEFN_SKEL_DISPLAY_NAMES,
     **RIG_PREVIEW_DISPLAY_NAMES,
+    **ANIM_RETARGET_DISPLAY_NAMES,
 }
 
 __all__ = [
@@ -88,6 +101,7 @@ __all__ = [
     "BD_AutoRigUniRig",
     "BD_AutoRigUEFN",
     "BD_RigPreview",
+    "BD_AnimRetarget",
     "AUTORIG_V3_NODES",
     "AUTORIG_NODES",
     "AUTORIG_DISPLAY_NAMES",
