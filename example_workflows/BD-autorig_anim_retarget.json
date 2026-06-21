@@ -299,7 +299,7 @@
       "properties": {
         "Node name for S&R": "BD_AnimRetarget"
       },
-      "widgets_values": ["", 30],
+      "widgets_values": ["", "", 30, ""],
       "title": "⑩ BD Anim Retarget (SMPL-H → UEFN)"
     },
     {

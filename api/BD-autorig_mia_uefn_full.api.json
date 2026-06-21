@@ -50,5 +50,44 @@
     "_meta": {
       "title": "\u2463 Output FBX Path"
     }
+  },
+  "6": {
+    "class_type": "BD_Preview3D",
+    "inputs": {
+      "model_path": [
+        "4",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2464 BD Preview 3D (interactive viewer)"
+    }
+  },
+  "7": {
+    "class_type": "BD_RigPreview",
+    "inputs": {
+      "fbx_path": [
+        "4",
+        0
+      ],
+      "view_mode": "all_views",
+      "mesh_opacity": 0.25,
+      "resolution": 768
+    },
+    "_meta": {
+      "title": "\u2465 BD Rig Preview (bone visualization)"
+    }
+  },
+  "8": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2466 Rig Preview Image"
+    }
   }
 }

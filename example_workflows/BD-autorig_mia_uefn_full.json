@@ -1,14 +1,14 @@
 {
   "id": "bd-autorig-mia-uefn-full",
   "revision": 0,
-  "last_node_id": 5,
-  "last_link_id": 4,
+  "last_node_id": 8,
+  "last_link_id": 7,
   "nodes": [
     {
       "id": 1,
       "type": "MarkdownNote",
       "pos": [40, 20],
-      "size": [420, 160],
+      "size": [460, 170],
       "flags": {},
       "order": 0,
       "mode": 0,
@@ -16,7 +16,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "## ℹ️ About — 🧠 BrainDead AutoRig Full UEFN Pipeline\n\n**Step 1** BD_AutoRigMIA: ML-based Mixamo rigging (<1s GPU)\n**Step 2** BD_AutoRigUEFN: Weight transfer from bundled SKM_UEFN_Mannequin → genuine UEFN skeleton\n\nOutput FBX is importable directly into UEFN / Fortnite Creative."
+        "## ℹ️ About — 🧠 BrainDead AutoRig Full UEFN Pipeline\n\n**Step 1** BD_AutoRigMIA: ML-based Mixamo rigging (<1s GPU)\n**Step 2** BD_AutoRigUEFN: Weight transfer from bundled SKM_UEFN_Mannequin → genuine UEFN skeleton\n**Step 3** BD Rig Preview: Blender EEVEE bone visualization (4-view render)\n**Step 4** BD Preview 3D: Interactive 3D viewer\n\nOutput FBX is importable directly into UEFN / Fortnite Creative."
       ],
       "title": "ℹ️ About — 🧠 BrainDead AutoRig Full UEFN Pipeline"
     },
@@ -98,7 +98,7 @@
         {
           "name": "fbx_path",
           "type": "STRING",
-          "links": [3],
+          "links": [3, 5, 6],
           "slot_index": 0
         }
       ],
@@ -129,18 +129,94 @@
       },
       "widgets_values": [],
       "title": "④ Output FBX Path"
+    },
+    {
+      "id": 6,
+      "type": "BD_Preview3D",
+      "pos": [1500, 220],
+      "size": [300, 90],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model_path",
+          "type": "STRING",
+          "link": 5
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "BD_Preview3D"
+      },
+      "widgets_values": [""],
+      "title": "⑤ BD Preview 3D (interactive viewer)"
+    },
+    {
+      "id": 7,
+      "type": "BD_RigPreview",
+      "pos": [1140, 360],
+      "size": [340, 180],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "fbx_path",
+          "type": "STRING",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "preview",
+          "type": "IMAGE",
+          "links": [7],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_RigPreview"
+      },
+      "widgets_values": ["", "all_views", 0.25, 768],
+      "title": "⑥ BD Rig Preview (bone visualization)"
+    },
+    {
+      "id": 8,
+      "type": "PreviewImage",
+      "pos": [1500, 360],
+      "size": [300, 90],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 7
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "⑦ Rig Preview Image"
     }
   ],
   "links": [
     [1, 2, 0, 3, 0, "TRIMESH"],
     [2, 3, 0, 4, 0, "STRING"],
-    [3, 4, 0, 5, 0, "*"]
+    [3, 4, 0, 5, 0, "*"],
+    [5, 4, 0, 6, 0, "STRING"],
+    [6, 4, 0, 7, 0, "STRING"],
+    [7, 7, 0, 8, 0, "IMAGE"]
   ],
   "groups": [
     {
       "id": 1,
-      "title": "BD AutoRig: T-pose mesh → Full UEFN skeleton (2 steps)",
-      "bounding": [20, 190, 1440, 340],
+      "title": "BD AutoRig: T-pose mesh → Full UEFN skeleton → Preview",
+      "bounding": [20, 190, 1810, 510],
       "color": "#3f789e",
       "font_size": 24,
       "flags": {}
@@ -149,7 +225,7 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.8,
+      "scale": 0.7,
       "offset": [0, 0]
     },
     "frontendVersion": "1.30.0"
