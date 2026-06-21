@@ -114,9 +114,9 @@ import json
 import os
 import sys
 
-INPUT_FBX  = os.environ["BD_INPUT_FBX"]
-OUTPUT_FBX = os.environ["BD_OUTPUT_FBX"]
-BONE_MAP   = json.loads(os.environ["BD_BONE_MAP"])
+INPUT_FBX  = os.environ["BLENDER_INPUT_PATH"]
+OUTPUT_FBX = os.environ["BLENDER_OUTPUT_PATH"]
+BONE_MAP   = json.loads(os.environ["BLENDER_ARG_BONE_MAP"])
 
 print(f"[BD_MixamoToUEFN] in:  {INPUT_FBX}", flush=True)
 print(f"[BD_MixamoToUEFN] out: {OUTPUT_FBX}", flush=True)
@@ -258,16 +258,14 @@ class BD_MixamoToUEFN(io.ComfyNode, BlenderNodeMixin):
             raise RuntimeError(blender_path_or_err)
 
         import json
-        env = {
-            "BD_INPUT_FBX":  str(input_fbx),
-            "BD_OUTPUT_FBX": str(output_fbx),
-            "BD_BONE_MAP":   json.dumps(MIXAMO_TO_UEFN),
-        }
+        # BlenderNodeMixin sets BLENDER_INPUT_PATH + BLENDER_OUTPUT_PATH
+        # from input_path/output_path, and prefixes extra_args keys with
+        # BLENDER_ARG_. So our script reads BLENDER_ARG_BONE_MAP.
         ok, msg, lines = cls._run_blender_script(
             script=_REMAP_SCRIPT,
             input_path=str(input_fbx),
             output_path=str(output_fbx),
-            extra_args=env,
+            extra_args={"BONE_MAP": json.dumps(MIXAMO_TO_UEFN)},
             timeout=300,
         )
         if not ok:
