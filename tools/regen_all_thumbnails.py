@@ -37,6 +37,8 @@ GALLERY_SLUG = {
     "BD-clothing_remover": "clothingremover",
     "BD-autorig_mia_to_uefn": "autorignuefn",
     "BD-autorig_mia_uefn_full": "autoriguefnfull",
+    "BD-autorig_rig_preview": "autorigpreview",
+    "BD-autorig_hymotion": "autorighymotion",
 }
 
 # name (== <name>.json) -> card config. Background auto-draws from the sibling json.
@@ -180,6 +182,22 @@ CONFIGS = {
                     "Scale match + align + bake + transfer + bind",
                     "Output FBX importable directly into UEFN / Fortnite"],
         "chips": ["MIA", "UEFN", "Blender", "FBX"]},
+    "BD-autorig_rig_preview": {
+        "title": "AutoRig Rig Preview", "subtitle": "Full pipeline + bone visualization image",
+        "bullets": ["Load Mesh -> BD AutoRig MIA (Mixamo rig)",
+                    "BD AutoRig UEFN (weight transfer -> UEFN skeleton)",
+                    "BD Rig Preview: headless Blender EEVEE render",
+                    "2x2 grid: front / side / back / perspective views",
+                    "Orange = joints, blue-white = bones, transparent = mesh"],
+        "chips": ["EEVEE", "4-view", "bones", "joints"]},
+    "BD-autorig_hymotion": {
+        "title": "AutoRig + HunyuanMotion", "subtitle": "Text-to-motion generation + FBX export",
+        "bullets": ["Load Qwen3-8B GGUF + HY-Motion-1.0-Lite network",
+                    "Encode motion prompt -> Generate motion data",
+                    "HYMotionPreview: skeleton animation strip (IMAGE)",
+                    "HYMotionExportFBX: animated SMPL-H FBX output",
+                    "Pair with BD AutoRig for full character pipeline"],
+        "chips": ["HunyuanMotion", "Qwen3", "motion", "FBX"]},
 }
 
 

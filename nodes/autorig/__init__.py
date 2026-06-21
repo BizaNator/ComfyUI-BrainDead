@@ -11,6 +11,7 @@ Nodes:
   • BD_AutoRigUniRig   — general autoregressive-transformer rigging
   • BD_MixamoToUEFN    — bone-name remap only, FBX in → FBX out
   • BD_AutoRigUEFN     — full UEFN skeleton conversion (step 2 of pipeline)
+  • BD_RigPreview      — render rigged FBX as skeleton image (bone visualization)
 
 Pipeline:
     Mesh → BD_AutoRigMIA  →  BD_AutoRigUEFN  →  UEFN FBX (ready for import)
@@ -49,6 +50,12 @@ from .uefn_skeleton import (
     UEFN_SKEL_NODES,
     UEFN_SKEL_DISPLAY_NAMES,
 )
+from .rig_preview import (
+    BD_RigPreview,
+    RIG_PREVIEW_V3_NODES,
+    RIG_PREVIEW_NODES,
+    RIG_PREVIEW_DISPLAY_NAMES,
+)
 
 
 AUTORIG_V3_NODES = [
@@ -56,6 +63,7 @@ AUTORIG_V3_NODES = [
     *MIA_V3_NODES,
     *UNIRIG_V3_NODES,
     *UEFN_SKEL_V3_NODES,
+    *RIG_PREVIEW_V3_NODES,
 ]
 
 AUTORIG_NODES = {
@@ -63,6 +71,7 @@ AUTORIG_NODES = {
     **MIA_NODES,
     **UNIRIG_NODES,
     **UEFN_SKEL_NODES,
+    **RIG_PREVIEW_NODES,
 }
 
 AUTORIG_DISPLAY_NAMES = {
@@ -70,6 +79,7 @@ AUTORIG_DISPLAY_NAMES = {
     **MIA_DISPLAY_NAMES,
     **UNIRIG_DISPLAY_NAMES,
     **UEFN_SKEL_DISPLAY_NAMES,
+    **RIG_PREVIEW_DISPLAY_NAMES,
 }
 
 __all__ = [
@@ -77,6 +87,7 @@ __all__ = [
     "BD_AutoRigMIA",
     "BD_AutoRigUniRig",
     "BD_AutoRigUEFN",
+    "BD_RigPreview",
     "AUTORIG_V3_NODES",
     "AUTORIG_NODES",
     "AUTORIG_DISPLAY_NAMES",

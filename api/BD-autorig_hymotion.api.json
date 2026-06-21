@@ -1,0 +1,106 @@
+{
+  "2": {
+    "class_type": "HYMotionLoadLLMGGUF",
+    "inputs": {
+      "gguf_file": "Qwen3-8B-Q4_K_M.gguf",
+      "offload_to_cpu": false
+    },
+    "_meta": {
+      "title": "\u2460 Load LLM (Qwen3-8B GGUF)"
+    }
+  },
+  "3": {
+    "class_type": "HYMotionLoadNetwork",
+    "inputs": {
+      "model_name": "HY-Motion-1.0-Lite"
+    },
+    "_meta": {
+      "title": "\u2461 Load Motion Network"
+    }
+  },
+  "4": {
+    "class_type": "HYMotionEncodeText",
+    "inputs": {
+      "llm": [
+        "2",
+        0
+      ],
+      "text": "A person walks forward at a normal pace."
+    },
+    "_meta": {
+      "title": "\u2462 Encode Motion Prompt"
+    }
+  },
+  "5": {
+    "class_type": "HYMotionGenerate",
+    "inputs": {
+      "network": [
+        "3",
+        0
+      ],
+      "conditioning": [
+        "4",
+        0
+      ],
+      "duration": 3.0,
+      "seed": 42,
+      "cfg_scale": 1
+    },
+    "_meta": {
+      "title": "\u2463 Generate Motion"
+    }
+  },
+  "6": {
+    "class_type": "HYMotionPreview",
+    "inputs": {
+      "motion_data": [
+        "5",
+        0
+      ],
+      "sample_index": 0,
+      "frame_step": 5,
+      "image_size": 512
+    },
+    "_meta": {
+      "title": "\u2464 Motion Preview (skeleton strip)"
+    }
+  },
+  "7": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2465 Preview Animation Frames"
+    }
+  },
+  "8": {
+    "class_type": "HYMotionExportFBX",
+    "inputs": {
+      "motion_data": [
+        "5",
+        0
+      ],
+      "output_dir": "hymotion_fbx",
+      "filename_prefix": "motion"
+    },
+    "_meta": {
+      "title": "\u2466 Export Animation FBX"
+    }
+  },
+  "9": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "8",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2467 FBX Path"
+    }
+  }
+}
