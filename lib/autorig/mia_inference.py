@@ -418,7 +418,7 @@ def _export_mia_fbx(
                 raise FileNotFoundError(f"No Mixamo template found. Expected at: {template_path}")
 
         # Build Blender command - use our own script (no torch dependency)
-        blender_script = LIB_DIR / "blender_export_fbx.py"
+        blender_script = LIB_DIR / "blender" / "mia_export.py"
 
         cmd = [
             str(BLENDER_EXE),
