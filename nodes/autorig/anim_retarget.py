@@ -86,8 +86,20 @@ class BD_AnimRetarget(io.ComfyNode, BlenderNodeMixin):
     ) -> io.NodeOutput:
         import folder_paths
 
-        motion_fbx    = str(Path(motion_fbx).resolve())
-        character_fbx = str(Path(character_fbx).resolve())
+        output_dir_root = folder_paths.get_output_directory()
+
+        def resolve_path(p: str) -> str:
+            resolved = str(Path(p).resolve())
+            if not os.path.exists(resolved):
+                # HYMotionExportFBX and similar nodes return paths relative to
+                # COMFY_OUTPUT_DIR rather than absolute paths.
+                via_output = str(Path(output_dir_root) / p)
+                if os.path.exists(via_output):
+                    return via_output
+            return resolved
+
+        motion_fbx    = resolve_path(motion_fbx)
+        character_fbx = resolve_path(character_fbx)
 
         if not os.path.exists(motion_fbx):
             raise FileNotFoundError(f"BD_AnimRetarget: motion_fbx not found: {motion_fbx}")
