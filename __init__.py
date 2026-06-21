@@ -35,6 +35,7 @@ from .nodes.facewrap import FACEWRAP_V3_NODES
 from .nodes.glsl import GLSL_V3_NODES
 from .nodes.pixal3d import PIXAL3D_V3_NODES
 from .nodes.cubepart import CUBEPART_V3_NODES
+from .nodes.autorig import AUTORIG_V3_NODES
 
 # =============================================================================
 # V3 Extension Entry Point
@@ -58,6 +59,7 @@ class BrainDeadExtension(ComfyExtension):
             *GLSL_V3_NODES,
             *PIXAL3D_V3_NODES,
             *CUBEPART_V3_NODES,
+            *AUTORIG_V3_NODES,
         ]
 
 
@@ -83,6 +85,7 @@ from .nodes.facewrap import NODE_CLASS_MAPPINGS as FACEWRAP_NODES, NODE_DISPLAY_
 from .nodes.glsl import NODE_CLASS_MAPPINGS as GLSL_NODES, NODE_DISPLAY_NAME_MAPPINGS as GLSL_DISPLAY
 from .nodes.pixal3d import NODE_CLASS_MAPPINGS as PIXAL3D_NODES, NODE_DISPLAY_NAME_MAPPINGS as PIXAL3D_DISPLAY
 from .nodes.cubepart import NODE_CLASS_MAPPINGS as CUBEPART_NODES, NODE_DISPLAY_NAME_MAPPINGS as CUBEPART_DISPLAY
+from .nodes.autorig import AUTORIG_NODES, AUTORIG_DISPLAY_NAMES
 
 # Aggregate all node mappings for V1 registration
 NODE_CLASS_MAPPINGS = {
@@ -98,6 +101,7 @@ NODE_CLASS_MAPPINGS = {
     **GLSL_NODES,
     **PIXAL3D_NODES,
     **CUBEPART_NODES,
+    **AUTORIG_NODES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -113,6 +117,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **GLSL_DISPLAY,
     **PIXAL3D_DISPLAY,
     **CUBEPART_DISPLAY,
+    **AUTORIG_DISPLAY_NAMES,
 }
 
 # Web directory for JavaScript extensions (toast notifications, etc.)
@@ -146,4 +151,5 @@ print(f"  - FaceWrap: {len(FACEWRAP_NODES)} nodes")
 print(f"  - GLSL: {len(GLSL_NODES)} nodes")
 print(f"  - Pixal3D: {len(PIXAL3D_NODES)} nodes")
 print(f"  - CubePart: {len(CUBEPART_NODES)} nodes")
+print(f"  - AutoRig:  {len(AUTORIG_NODES)} nodes")
 print("=" * 60)
