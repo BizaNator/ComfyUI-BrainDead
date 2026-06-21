@@ -27,6 +27,7 @@ Accepts both Mixamo-named (Hips/LeftShoulder) and already-UEFN-renamed
 """
 
 import os
+from glob import glob
 from pathlib import Path
 
 import folder_paths
@@ -74,12 +75,44 @@ class BD_AutoRigUEFN(io.ComfyNode, BlenderNodeMixin):
                     ),
                 ),
                 io.String.Input(
-                    "output_name",
+                    "filename",
+                    default="uefn_rig",
+                    tooltip="Base filename without extension.",
+                    optional=True,
+                ),
+                io.String.Input(
+                    "name_prefix",
+                    default="",
+                    tooltip="Prepended to filename. Supports subdirs (e.g. 'autorig/mychar').",
+                    optional=True,
+                ),
+                io.Boolean.Input(
+                    "auto_increment",
+                    default=True,
+                    tooltip="Auto-increment filename to avoid overwriting.",
+                    optional=True,
+                ),
+                io.String.Input(
+                    "context_id",
                     default="",
                     tooltip=(
-                        "Output filename without extension. "
-                        "If empty, appends '_uefn_skel' to the input name."
+                        "BD_SaveContext id for template-based naming. Empty + one registered "
+                        "context = auto-pick. When resolved, filename/name_prefix pass through "
+                        "as %filename%/%name_prefix%."
                     ),
+                    optional=True,
+                ),
+                io.String.Input(
+                    "suffix",
+                    default="",
+                    tooltip="Per-save suffix → %suffix% in the context template.",
+                    optional=True,
+                ),
+                io.String.Input(
+                    "context_custom_vars",
+                    multiline=True,
+                    default="",
+                    tooltip="Extra key=value template vars (one per line). Only used when context_id resolves.",
                     optional=True,
                 ),
             ],
@@ -90,7 +123,16 @@ class BD_AutoRigUEFN(io.ComfyNode, BlenderNodeMixin):
         )
 
     @classmethod
-    def execute(cls, input_fbx: str, output_name: str = "") -> io.NodeOutput:
+    def execute(
+        cls,
+        input_fbx: str,
+        filename: str = "uefn_rig",
+        name_prefix: str = "",
+        auto_increment: bool = True,
+        context_id: str = "",
+        suffix: str = "",
+        context_custom_vars: str = "",
+    ) -> io.NodeOutput:
         input_fbx = str(Path(input_fbx).resolve())
         if not os.path.exists(input_fbx):
             raise FileNotFoundError(f"BD_AutoRigUEFN: input_fbx not found: {input_fbx}")
@@ -106,9 +148,53 @@ class BD_AutoRigUEFN(io.ComfyNode, BlenderNodeMixin):
                 f"BD_AutoRigUEFN: headless Blender script not found: {_BLENDER_SCRIPT}"
             )
 
-        out_dir = Path(folder_paths.get_output_directory())
-        stem = output_name.strip() if output_name.strip() else (Path(input_fbx).stem + "_uefn_skel")
-        output_fbx = out_dir / f"{stem}.fbx"
+        base_output_dir = folder_paths.get_output_directory()
+
+        from ..cache.save_context import resolve_context_path, get_context, auto_pick_context
+
+        effective_ctx_id = context_id.strip() if context_id else ""
+        if not effective_ctx_id:
+            picked = auto_pick_context()
+            if picked is not None:
+                effective_ctx_id = picked
+        use_context = bool(effective_ctx_id) and get_context(effective_ctx_id) is not None
+
+        if use_context:
+            file_path, _rel = resolve_context_path(
+                effective_ctx_id, suffix, "fbx",
+                node_filename=filename, node_name_prefix=name_prefix,
+                node_custom_vars=context_custom_vars,
+            )
+            output_dir = os.path.dirname(file_path)
+            os.makedirs(output_dir, exist_ok=True)
+        else:
+            full_name = f"{name_prefix}_{filename}" if name_prefix else filename
+            full_name = full_name.replace("\\", "/")
+            if "/" in full_name:
+                subdir, base_filename = full_name.rsplit("/", 1)
+                output_dir = os.path.join(base_output_dir, subdir)
+            else:
+                output_dir = base_output_dir
+                base_filename = full_name
+
+            os.makedirs(output_dir, exist_ok=True)
+
+            if auto_increment:
+                pattern = os.path.join(output_dir, f"{base_filename}_*.fbx")
+                existing = glob(pattern)
+                if existing:
+                    numbers = []
+                    for f in existing:
+                        try:
+                            numbers.append(int(os.path.basename(f).replace(".fbx", "").split("_")[-1]))
+                        except Exception:
+                            pass
+                    next_num = max(numbers) + 1 if numbers else 1
+                else:
+                    next_num = 1
+                file_path = os.path.join(output_dir, f"{base_filename}_{next_num:03d}.fbx")
+            else:
+                file_path = os.path.join(output_dir, f"{base_filename}.fbx")
 
         ok, blender_path_or_err = cls._check_blender()
         if not ok:
@@ -119,7 +205,7 @@ class BD_AutoRigUEFN(io.ComfyNode, BlenderNodeMixin):
         ok, msg, lines = cls._run_blender_script(
             script=script_text,
             input_path=input_fbx,
-            output_path=str(output_fbx),
+            output_path=file_path,
             extra_args={"UEFN_MANNY_FBX": str(_UEFN_REF_FBX)},
             timeout=600,
         )
@@ -127,7 +213,7 @@ class BD_AutoRigUEFN(io.ComfyNode, BlenderNodeMixin):
             tail = "\n".join(lines[-30:]) if lines else msg
             raise RuntimeError(f"BD_AutoRigUEFN failed:\n{tail}")
 
-        return io.NodeOutput(str(output_fbx))
+        return io.NodeOutput(file_path)
 
 
 UEFN_SKEL_V3_NODES       = [BD_AutoRigUEFN]

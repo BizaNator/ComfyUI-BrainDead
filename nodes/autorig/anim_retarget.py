@@ -11,6 +11,7 @@ The SMPL-H skeleton (Pelvis, L_Hip, Spine1...) is mapped to the UEFN skeleton
 """
 
 import os
+from glob import glob
 from pathlib import Path
 
 from comfy_api.latest import io
@@ -57,18 +58,53 @@ class BD_AnimRetarget(io.ComfyNode, BlenderNodeMixin):
                         "The mesh and skeleton that will be animated."
                     ),
                 ),
-                io.String.Input(
-                    "output_name",
-                    default="",
-                    optional=True,
-                    tooltip="Custom output filename (no extension). Auto-generated if empty.",
-                ),
                 io.Int.Input(
                     "fps",
                     default=30,
                     min=1,
                     max=120,
                     tooltip="Frame rate of the source animation (must match HunyuanMotion generation fps).",
+                ),
+                io.String.Input(
+                    "filename",
+                    default="anim_retarget",
+                    tooltip="Base filename without extension.",
+                    optional=True,
+                ),
+                io.String.Input(
+                    "name_prefix",
+                    default="",
+                    tooltip="Prepended to filename. Supports subdirs (e.g. 'autorig/mychar').",
+                    optional=True,
+                ),
+                io.Boolean.Input(
+                    "auto_increment",
+                    default=True,
+                    tooltip="Auto-increment filename to avoid overwriting.",
+                    optional=True,
+                ),
+                io.String.Input(
+                    "context_id",
+                    default="",
+                    tooltip=(
+                        "BD_SaveContext id for template-based naming. Empty + one registered "
+                        "context = auto-pick. When resolved, filename/name_prefix pass through "
+                        "as %filename%/%name_prefix%."
+                    ),
+                    optional=True,
+                ),
+                io.String.Input(
+                    "suffix",
+                    default="",
+                    tooltip="Per-save suffix → %suffix% in the context template.",
+                    optional=True,
+                ),
+                io.String.Input(
+                    "context_custom_vars",
+                    multiline=True,
+                    default="",
+                    tooltip="Extra key=value template vars (one per line). Only used when context_id resolves.",
+                    optional=True,
                 ),
             ],
             outputs=[
@@ -81,25 +117,29 @@ class BD_AnimRetarget(io.ComfyNode, BlenderNodeMixin):
         cls,
         motion_fbx: str,
         character_fbx: str,
-        output_name: str = "",
         fps: int = 30,
+        filename: str = "anim_retarget",
+        name_prefix: str = "",
+        auto_increment: bool = True,
+        context_id: str = "",
+        suffix: str = "",
+        context_custom_vars: str = "",
     ) -> io.NodeOutput:
         import folder_paths
 
-        output_dir_root = folder_paths.get_output_directory()
+        base_output_dir = folder_paths.get_output_directory()
 
-        def resolve_path(p: str) -> str:
+        def resolve_input_path(p: str) -> str:
             resolved = str(Path(p).resolve())
             if not os.path.exists(resolved):
-                # HYMotionExportFBX and similar nodes return paths relative to
-                # COMFY_OUTPUT_DIR rather than absolute paths.
-                via_output = str(Path(output_dir_root) / p)
+                # HYMotionExportFBX returns paths relative to COMFY_OUTPUT_DIR
+                via_output = str(Path(base_output_dir) / p)
                 if os.path.exists(via_output):
                     return via_output
             return resolved
 
-        motion_fbx    = resolve_path(motion_fbx)
-        character_fbx = resolve_path(character_fbx)
+        motion_fbx    = resolve_input_path(motion_fbx)
+        character_fbx = resolve_input_path(character_fbx)
 
         if not os.path.exists(motion_fbx):
             raise FileNotFoundError(f"BD_AnimRetarget: motion_fbx not found: {motion_fbx}")
@@ -112,28 +152,57 @@ class BD_AnimRetarget(io.ComfyNode, BlenderNodeMixin):
         if not ok:
             raise RuntimeError(f"BD_AnimRetarget: Blender unavailable — {err}")
 
-        # Derive output name from character FBX if not given
-        if not output_name:
-            base = Path(character_fbx).stem
-            output_name = f"{base}_animated"
+        from ..cache.save_context import resolve_context_path, get_context, auto_pick_context
 
-        output_dir = os.path.join(folder_paths.get_output_directory(), "autorig")
-        os.makedirs(output_dir, exist_ok=True)
+        effective_ctx_id = context_id.strip() if context_id else ""
+        if not effective_ctx_id:
+            picked = auto_pick_context()
+            if picked is not None:
+                effective_ctx_id = picked
+        use_context = bool(effective_ctx_id) and get_context(effective_ctx_id) is not None
 
-        # Auto-increment to avoid overwriting
-        idx = 1
-        while True:
-            candidate = os.path.join(output_dir, f"{output_name}_{idx:03d}.fbx")
-            if not os.path.exists(candidate):
-                break
-            idx += 1
-        output_fbx = candidate
+        if use_context:
+            file_path, _rel = resolve_context_path(
+                effective_ctx_id, suffix, "fbx",
+                node_filename=filename, node_name_prefix=name_prefix,
+                node_custom_vars=context_custom_vars,
+            )
+            output_dir = os.path.dirname(file_path)
+            os.makedirs(output_dir, exist_ok=True)
+        else:
+            full_name = f"{name_prefix}_{filename}" if name_prefix else filename
+            full_name = full_name.replace("\\", "/")
+            if "/" in full_name:
+                subdir, base_filename = full_name.rsplit("/", 1)
+                output_dir = os.path.join(base_output_dir, subdir)
+            else:
+                output_dir = base_output_dir
+                base_filename = full_name
+
+            os.makedirs(output_dir, exist_ok=True)
+
+            if auto_increment:
+                pattern = os.path.join(output_dir, f"{base_filename}_*.fbx")
+                existing = glob(pattern)
+                if existing:
+                    numbers = []
+                    for f in existing:
+                        try:
+                            numbers.append(int(os.path.basename(f).replace(".fbx", "").split("_")[-1]))
+                        except Exception:
+                            pass
+                    next_num = max(numbers) + 1 if numbers else 1
+                else:
+                    next_num = 1
+                file_path = os.path.join(output_dir, f"{base_filename}_{next_num:03d}.fbx")
+            else:
+                file_path = os.path.join(output_dir, f"{base_filename}.fbx")
 
         script = _BLENDER_SCRIPT.read_text(encoding="utf-8")
         ok, msg, lines = cls._run_blender_script(
             script=script,
             input_path=motion_fbx,
-            output_path=output_fbx,
+            output_path=file_path,
             extra_args={
                 "CHAR_FBX": character_fbx,
                 "FPS":      str(fps),
@@ -144,10 +213,10 @@ class BD_AnimRetarget(io.ComfyNode, BlenderNodeMixin):
             tail = "\n".join(lines[-30:]) if lines else msg
             raise RuntimeError(f"BD_AnimRetarget Blender failed:\n{tail}")
 
-        if not os.path.exists(output_fbx):
-            raise RuntimeError(f"BD_AnimRetarget: output FBX not created: {output_fbx}")
+        if not os.path.exists(file_path):
+            raise RuntimeError(f"BD_AnimRetarget: output FBX not created: {file_path}")
 
-        return io.NodeOutput(output_fbx)
+        return io.NodeOutput(file_path)
 
 
 ANIM_RETARGET_V3_NODES      = [BD_AnimRetarget]
