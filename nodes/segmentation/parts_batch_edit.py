@@ -374,6 +374,37 @@ def _encode_text_only_with_ref(clip, vae, prompt: str, image_rgb: torch.Tensor,
     return conditioning, ref_latent, (h_lat, w_lat)
 
 
+def _encode_kontext_cond(clip, vae, prompt: str, image_rgb: torch.Tensor,
+                          target_pixels: int = 1024 * 1024):
+    """Flux-Kontext conditioning: plain CLIPTextEncode + image_cond_latents.
+
+    Unlike _encode_qwen_edit_plus, no VLM image tokens are injected.
+    The source image is VAE-encoded and set as image_cond_latents so
+    flux1-kontext-dev can attend to it as edit context.
+
+    Returns (positive_conditioning, ref_latent, (h_lat_pixels, w_lat_pixels)).
+    """
+    samples = image_rgb.movedim(-1, 1)  # (1, 3, H, W)
+    in_h, in_w = samples.shape[2], samples.shape[3]
+    target_long = int(round(math.sqrt(float(target_pixels))))
+
+    longest = max(in_h, in_w)
+    scale = target_long / max(longest, 1)
+    w_lat = max(64, round(in_w * scale / 8.0) * 8)
+    h_lat = max(64, round(in_h * scale / 8.0) * 8)
+
+    s_lat = comfy.utils.common_upscale(samples, w_lat, h_lat, "area", "disabled")
+    ref_image = s_lat.movedim(1, -1)[:, :, :, :3]
+    ref_latent = vae.encode(ref_image)
+
+    tokens = clip.tokenize(prompt)
+    conditioning = clip.encode_from_tokens_scheduled(tokens)
+    conditioning = node_helpers.conditioning_set_values(
+        conditioning, {"image_cond_latents": ref_latent}, append=False,
+    )
+    return conditioning, ref_latent, (h_lat, w_lat)
+
+
 def _interpolate_template(template: str, tag: str) -> str:
     """Resolve {tag} placeholders. Falls back to literal template if no {tag}."""
     return template.replace("{tag}", tag).replace("%tag%", tag)

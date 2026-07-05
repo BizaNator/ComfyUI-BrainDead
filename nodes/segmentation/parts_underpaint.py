@@ -39,6 +39,8 @@ from .parts_types import PARTS_BUNDLE, ensure_bundle, empty_bundle, frame_size a
 from .parts_batch_edit import (
     _LLAMA_TEMPLATE,
     _encode_qwen_edit_plus,
+    _encode_kontext_cond,
+    _encode_text_only_with_ref,
     _encode_negative,
     _latent_spatial_dims,
     _upscale_latent_spatial,
@@ -152,6 +154,7 @@ def _run_underpaint_pass(
     sampler_name: str, scheduler: str, denoise: float,
     mask_dilate_pixels: int,
     mask_blend_pixels: int,
+    model_type: str = "qwen_edit",
 ) -> np.ndarray:
     """
     Inpaint the masked region in current_img_np and return the updated image.
@@ -180,10 +183,19 @@ def _run_underpaint_pass(
     # Reference tensor for Qwen
     ref_t = torch.from_numpy(prefilled.astype(np.float32) / 255.0).unsqueeze(0)
 
-    # Encode
-    pos_cond, ref_latent, (h_lat, w_lat) = _encode_qwen_edit_plus(
-        clip, vae, prompt, ref_t, target_pixels=tp,
-    )
+    # Encode — branch on model type
+    if model_type == "kontext_dev":
+        pos_cond, ref_latent, (h_lat, w_lat) = _encode_kontext_cond(
+            clip, vae, prompt, ref_t, target_pixels=tp,
+        )
+    elif model_type in ("flux_fill", "flux_text_only"):
+        pos_cond, ref_latent, (h_lat, w_lat) = _encode_text_only_with_ref(
+            clip, vae, prompt, ref_t, target_pixels=tp,
+        )
+    else:  # qwen_edit (default)
+        pos_cond, ref_latent, (h_lat, w_lat) = _encode_qwen_edit_plus(
+            clip, vae, prompt, ref_t, target_pixels=tp,
+        )
 
     # Build noise mask at latent spatial dims (the KSampler inpaint region)
     lat_h, lat_w = _latent_spatial_dims(ref_latent)
@@ -213,9 +225,13 @@ def _run_underpaint_pass(
         "samples": upscaled.to(dtype=torch.float32),
         "noise_mask": noise_mask_t,
     }
-    pos_cond = node_helpers.conditioning_set_values(
-        pos_cond, {"reference_latents": [upscaled]}, append=True,
-    )
+    # Qwen needs the upscaled reference injected into conditioning so it can
+    # attend to full-resolution source. Kontext sets image_cond_latents during
+    # encoding; flux_fill uses only the noise_mask.
+    if model_type == "qwen_edit":
+        pos_cond = node_helpers.conditioning_set_values(
+            pos_cond, {"reference_latents": [upscaled]}, append=True,
+        )
 
     # KSampler — only regenerates the masked region
     (out_latent,) = common_ksampler(
@@ -236,8 +252,12 @@ def _run_underpaint_pass(
     rgb_out_resized = _resize_rgb_to(rgb_out, crop_h, crop_w)
     rgb_np = (rgb_out_resized[0].cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
 
-    # Blend result back into current image using soft mask so edges are clean
-    mask_f = crop_mask.astype(np.float32) / 255.0
+    # Blend result back into current image.
+    # Use the dilated inpaint_mask for compositing so the blend transition zone
+    # falls inside the already-regenerated region — original object edges and
+    # halos never bleed through at the boundary.
+    compose_mask = inpaint_mask if mask_dilate_pixels > 0 else crop_mask
+    mask_f = compose_mask.astype(np.float32) / 255.0
     if mask_blend_pixels > 0:
         import cv2
         ksize = 2 * int(mask_blend_pixels) + 1
@@ -265,7 +285,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="BD_PartsUnderpaint",
-            display_name="BD Parts Underpaint (Qwen)",
+            display_name="BD Parts Underpaint",
             category="🧠BrainDead/Segmentation",
             description=(
                 "Inpaint the source image where each part was removed, revealing what is "
@@ -292,6 +312,23 @@ class BD_PartsUnderpaint(io.ComfyNode):
                     "source_image",
                     tooltip="Original full-resolution source image (before any parts were removed). "
                             "Required — this is what gets inpainted.",
+                ),
+                io.Combo.Input(
+                    "model_type",
+                    options=["qwen_edit", "kontext_dev", "flux_fill"],
+                    default="qwen_edit",
+                    tooltip=(
+                        "Which edit model is wired in:\n"
+                        "  qwen_edit — Qwen Image Edit (default). Uses VLM image tokens + "
+                        "reference_latents. Requires the Qwen Edit model stack (UNETLoader → "
+                        "Lightning LoRA → Inpaint LoRA).\n"
+                        "  kontext_dev — Flux Kontext Dev (flux1-kontext-dev). Uses plain "
+                        "CLIPTextEncode + image_cond_latents. Load flux1-kontext-dev.safetensors "
+                        "with UNETLoader and its matching dual CLIP.\n"
+                        "  flux_fill — Flux Fill Dev or any plain Flux inpaint model. Uses "
+                        "CLIPTextEncode + noise_mask only. Load flux1-fill-dev.safetensors."
+                    ),
+                    optional=True,
                 ),
                 io.Combo.Input(
                     "mode",
@@ -335,8 +372,8 @@ class BD_PartsUnderpaint(io.ComfyNode):
                         "as it would naturally appear with all parts absent."
                     ),
                     multiline=True, optional=True,
-                    tooltip="Prompt used in all_parts_combined mode (single Qwen call, all masks unioned). "
-                            "No {tag} substitution — describe the desired outcome directly.",
+                    tooltip="Prompt used in all_parts_combined mode (single inpaint call, all masks unioned). "
+                            "{tag} and {tags} are replaced with the comma-joined list of removed part labels.",
                 ),
                 io.Combo.Input(
                     "prefill_mode",
@@ -367,10 +404,12 @@ class BD_PartsUnderpaint(io.ComfyNode):
                             "be removed before the underpaint.",
                 ),
                 io.Int.Input(
-                    "mask_dilate_pixels", default=4, min=0, max=64, optional=True,
-                    tooltip="Dilate the noise_mask (the Qwen inpaint region) by N pixels beyond the "
-                            "exact part boundary. Gives Qwen a buffer zone so boundary pixels blend "
-                            "cleanly with the surrounding context. 4-8 recommended.",
+                    "mask_dilate_pixels", default=4, min=0, max=256, optional=True,
+                    tooltip="Expand the inpaint region N pixels beyond the exact part boundary. "
+                            "Also controls the compositing zone — blending back uses the dilated mask "
+                            "so original object edges/halos never leak through. "
+                            "4-8 for slight seam smoothing; 64-128 for aggressive background removal "
+                            "where outlines are still visible.",
                 ),
                 io.Int.Input(
                     "mask_blend_pixels", default=4, min=0, max=32, optional=True,
@@ -440,6 +479,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
 
     @classmethod
     def execute(cls, parts, model, clip, vae, source_image,
+                model_type="qwen_edit",
                 mode="per_part_sequential",
                 remove_order="",
                 prompt_template=(
@@ -534,6 +574,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
             sampler_name=sampler_name, scheduler=scheduler, denoise=float(denoise),
             mask_dilate_pixels=int(mask_dilate_pixels),
             mask_blend_pixels=int(mask_blend_pixels),
+            model_type=model_type,
         )
 
         run_start = _time.time()
@@ -590,10 +631,15 @@ class BD_PartsUnderpaint(io.ComfyNode):
 
             if (union_mask > 127).any() and processed_tags:
                 xyxy_union = [bbox_x1, bbox_y1, bbox_x2, bbox_y2]
+                tags_str = ", ".join(processed_tags)
+                combined_prompt = (all_parts_prompt or prompt_template)
+                combined_prompt = (combined_prompt
+                    .replace("{tags}", tags_str).replace("{tag}", tags_str)
+                    .replace("%tags%", tags_str).replace("%tag%", tags_str))
                 t0 = _time.time()
                 current_np = _run_underpaint_pass(
                     current_img_np=src_np.copy(), full_mask=union_mask,
-                    xyxy=xyxy_union, prompt=all_parts_prompt or prompt_template,
+                    xyxy=xyxy_union, prompt=combined_prompt,
                     **pass_kwargs,
                 )
                 dt = _time.time() - t0
