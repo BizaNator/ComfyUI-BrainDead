@@ -510,8 +510,8 @@
       "composite_size": 6144,
       "save_psd": true,
       "base_image": [
-        "34",
-        1
+        "39",
+        0
       ],
       "category_table": "",
       "category_table_path": ""
@@ -552,15 +552,15 @@
         0
       ],
       "model": [
-        "25",
+        "39",
         0
       ],
       "clip": [
-        "26",
+        "40",
         0
       ],
       "vae": [
-        "27",
+        "41",
         0
       ],
       "source_image": [
@@ -578,12 +578,12 @@
       "sampler_name": "euler",
       "scheduler": "simple",
       "denoise": 1.0,
-      "model_type": "qwen_edit",
+      "model_type": "kontext_dev",
       "remove_order": "",
       "all_parts_prompt": "Remove all the highlighted parts from this image and reveal the complete underlying surface \u2014 bare skin, undergarments, interior, or background \u2014 as it would naturally appear with all parts absent.",
       "context_extend_factor": 1.5,
       "skip_tags": "",
-      "mask_dilate_pixels": 4,
+      "mask_dilate_pixels": 64,
       "mask_blend_pixels": 4,
       "latent_upscale_factor": 1.25,
       "model_sampling_shift": 3.0,
@@ -593,15 +593,15 @@
       "negative_prompt": ""
     },
     "_meta": {
-      "title": "\u2469 BD Parts Underpaint (reveal beneath)"
+      "title": "\u2469 BD Parts Underpaint \u2014 Kontext (reveal beneath)"
     }
   },
   "35": {
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "34",
-        1
+        "40",
+        0
       ]
     },
     "_meta": {
@@ -612,12 +612,43 @@
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "34",
-        2
+        "41",
+        0
       ]
     },
     "_meta": {
       "title": "\u246b Underpaint Steps (per-part frames)"
+    }
+  },
+  "39": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux1-kontext-dev.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Kontext Model Loader"
+    }
+  },
+  "40": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "clip_name2": "clip_l.safetensors",
+      "type": "flux",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Kontext CLIP Loader"
+    }
+  },
+  "41": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "_meta": {
+      "title": "Kontext VAE Loader"
     }
   }
 }
