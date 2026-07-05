@@ -577,6 +577,7 @@
       "sampler_name": "euler",
       "scheduler": "simple",
       "denoise": 1.0,
+      "model_type": "qwen_edit",
       "remove_order": "",
       "all_parts_prompt": "Remove all the highlighted parts from this image and reveal the complete underlying surface \u2014 bare skin, undergarments, interior, or background \u2014 as it would naturally appear with all parts absent.",
       "context_extend_factor": 1.5,
