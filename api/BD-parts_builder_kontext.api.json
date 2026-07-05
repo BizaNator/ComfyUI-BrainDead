@@ -510,8 +510,8 @@
       "composite_size": 6144,
       "save_psd": true,
       "base_image": [
-        "39",
-        0
+        "34",
+        1
       ],
       "category_table": "",
       "category_table_path": ""
@@ -600,8 +600,8 @@
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "40",
-        0
+        "34",
+        1
       ]
     },
     "_meta": {
@@ -612,8 +612,8 @@
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "41",
-        0
+        "34",
+        2
       ]
     },
     "_meta": {

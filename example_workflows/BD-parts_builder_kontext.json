@@ -2,7 +2,7 @@
   "id": "bd-parts_builder-kontext",
   "revision": 3,
   "last_node_id": 41,
-  "last_link_id": 45,
+  "last_link_id": 49,
   "nodes": [
     {
       "id": 33,
@@ -1461,17 +1461,17 @@
         {
           "name": "model",
           "type": "MODEL",
-          "link": 43
+          "link": 47
         },
         {
           "name": "clip",
           "type": "CLIP",
-          "link": 44
+          "link": 48
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 45
+          "link": 49
         },
         {
           "name": "source_image",
@@ -1618,7 +1618,7 @@
           "name": "model",
           "type": "MODEL",
           "links": [
-            43
+            47
           ],
           "slot_index": 0
         }
@@ -1652,7 +1652,7 @@
           "name": "CLIP",
           "type": "CLIP",
           "links": [
-            44
+            48
           ],
           "slot_index": 0
         }
@@ -1688,7 +1688,7 @@
           "name": "VAE",
           "type": "VAE",
           "links": [
-            45
+            49
           ],
           "slot_index": 0
         }
@@ -2048,7 +2048,7 @@
       "STRING"
     ],
     [
-      43,
+      47,
       39,
       0,
       34,
@@ -2056,7 +2056,7 @@
       "MODEL"
     ],
     [
-      44,
+      48,
       40,
       0,
       34,
@@ -2064,7 +2064,7 @@
       "CLIP"
     ],
     [
-      45,
+      49,
       41,
       0,
       34,
