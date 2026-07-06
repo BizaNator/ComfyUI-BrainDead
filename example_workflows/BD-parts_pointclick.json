@@ -436,7 +436,7 @@
       "widgets_values": [
         "",
         "",
-        "\\n"
+        ""
       ],
       "title": "④ Interactive Items (paste here to add/override)"
     },
@@ -1269,7 +1269,7 @@
       "properties": {},
       "widgets_values": [
         "parts-export",
-        "%character%/%region%/%slug%",
+        "%filename%/%filename%%suffix%",
         "",
         "parts",
         "01",
@@ -1282,7 +1282,7 @@
         3,
         false
       ],
-      "title": "⑧ Save Context"
+      "title": "⑧ Save Context — scene export naming"
     },
     {
       "id": 30,

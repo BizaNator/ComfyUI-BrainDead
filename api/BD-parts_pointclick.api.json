@@ -139,7 +139,7 @@
         0
       ],
       "string_b": "",
-      "delimiter": "\\n"
+      "delimiter": ""
     },
     "_meta": {
       "title": "\u2463 Interactive Items (paste here to add/override)"
@@ -471,7 +471,7 @@
     "class_type": "BD_SaveContext",
     "inputs": {
       "context_id": "parts-export",
-      "template": "%character%/%region%/%slug%",
+      "template": "%filename%/%filename%%suffix%",
       "character": "",
       "name": "parts",
       "version": "01",
@@ -485,7 +485,7 @@
       "strict": false
     },
     "_meta": {
-      "title": "\u2467 Save Context"
+      "title": "\u2467 Save Context \u2014 scene export naming"
     }
   },
   "30": {
