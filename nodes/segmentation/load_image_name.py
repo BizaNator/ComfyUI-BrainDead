@@ -22,8 +22,20 @@ import comfy.model_management
 from comfy_api.latest import io
 
 
+def _resolve_path(image: str) -> str:
+    """Accept either an input-dir image name OR an absolute filesystem path.
+
+    The Combo widget lists input-dir files, but API callers (run_workflow.py)
+    often want to point at a scene PNG anywhere on disk without pre-uploading.
+    """
+    s = str(image).split(" [", 1)[0]
+    if os.path.isabs(s) and os.path.isfile(s):
+        return s
+    return folder_paths.get_annotated_filepath(image)
+
+
 def _load(image: str):
-    image_path = folder_paths.get_annotated_filepath(image)
+    image_path = _resolve_path(image)
     img = node_helpers.pillow(Image.open, image_path)
 
     output_images, output_masks = [], []
@@ -107,7 +119,7 @@ class BD_LoadImageWithName(io.ComfyNode):
 
     @classmethod
     def fingerprint_inputs(cls, image) -> str:
-        image_path = folder_paths.get_annotated_filepath(image)
+        image_path = _resolve_path(image)
         m = hashlib.sha256()
         with open(image_path, "rb") as f:
             m.update(f.read())
@@ -115,6 +127,9 @@ class BD_LoadImageWithName(io.ComfyNode):
 
     @classmethod
     def validate_inputs(cls, image) -> bool | str:
+        s = str(image).split(" [", 1)[0]
+        if os.path.isabs(s):
+            return True if os.path.isfile(s) else f"Invalid image file: {image}"
         if not folder_paths.exists_annotated_filepath(image):
             return f"Invalid image file: {image}"
         return True
