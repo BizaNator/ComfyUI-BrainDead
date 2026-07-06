@@ -700,10 +700,10 @@
       "properties": {},
       "widgets_values": [
         "",
-        0.7,
+        0.5,
         "union",
-        15,
-        64,
+        10,
+        200,
         true
       ],
       "title": "⑤ Parts Refine"

@@ -232,10 +232,10 @@
         "12",
         0
       ],
-      "iou_threshold": 0.7,
+      "iou_threshold": 0.5,
       "merge_strategy": "union",
-      "max_parts": 15,
-      "min_pixels": 64,
+      "max_parts": 10,
+      "min_pixels": 200,
       "image": [
         "3",
         0
