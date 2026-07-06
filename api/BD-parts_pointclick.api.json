@@ -1,0 +1,656 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "character.png"
+    },
+    "_meta": {
+      "title": "\u2460 Load Image"
+    }
+  },
+  "3": {
+    "class_type": "ImageScaleToMaxDimension",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "upscale_method": "area",
+      "largest_size": 1536
+    },
+    "_meta": {
+      "title": "\u2461 Scale (1536px max)"
+    }
+  },
+  "4": {
+    "class_type": "BD_Lotus2ModelLoader",
+    "inputs": {
+      "task": "depth",
+      "dtype": "bf16",
+      "device": "auto",
+      "flux_repo_id": "black-forest-labs/FLUX.1-dev",
+      "lotus2_weights_dir": "",
+      "cpu_offload": true
+    },
+    "_meta": {
+      "title": "Lotus2 Model Loader"
+    }
+  },
+  "5": {
+    "class_type": "BD_Lotus2Predict",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "image": [
+        "3",
+        0
+      ],
+      "num_inference_steps": 10,
+      "process_res": 1024,
+      "guidance_scale": 3.5,
+      "timestep_core_predictor": 1,
+      "bg_fill": "auto"
+    },
+    "_meta": {
+      "title": "Lotus2 Depth Predict"
+    }
+  },
+  "6": {
+    "class_type": "BD_CacheImage",
+    "inputs": {
+      "image": [
+        "5",
+        1
+      ],
+      "cache_name": "cached_image",
+      "seed": 0,
+      "force_refresh": true,
+      "name_prefix": "depthmap"
+    },
+    "_meta": {
+      "title": "Cache Depth Map (force_refresh ON \u2014 set to false after first run to cache)"
+    }
+  },
+  "7": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Depth Preview"
+    }
+  },
+  "8": {
+    "class_type": "AILab_QwenVL",
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct",
+      "quantization": "None (FP16)",
+      "attention_mode": "auto",
+      "preset_prompt": "\ud83d\uddbc\ufe0f Tags",
+      "custom_prompt": "This is a background scene for a point-and-click adventure game. Output a strict CSV list of ONLY the distinct foreground INTERACTIVE objects a player could pick up, use, or examine (crates, barrels, buoys, ropes, boxes, chests, tools, bottles, lanterns, keys, levers, signs).\nRules:\n- One short tag per object, comma-separated.\n- Include a distinguishing colour/material adjective (e.g. 'wooden crate', 'red buoy', 'coiled rope').\n- List each separate object even if identical (two crates -> two lines).\n- DO NOT include background or scenery: sky, clouds, sun, water, ocean, sea, waves, sand, beach, ground, horizon, distant land, mountains, hills, islands.\n- DO NOT include large fixed structures: dock, pier, jetty, planks, walls, floor, ceiling, buildings, railings, stairs.\n- DO NOT include people, characters, animals, birds, insects, or any body parts.\n- DO NOT include vegetation (palm trees, plants, bushes, grass).\nExample output:\nwooden crate\nred and white buoy\ncoiled rope",
+      "max_tokens": 1024,
+      "keep_model_loaded": true,
+      "seed": 1,
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2462 QwenVL \u2014 Suggest Interactive Items"
+    }
+  },
+  "9": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "8",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Suggested Items (raw CSV)"
+    }
+  },
+  "10": {
+    "class_type": "StringReplace",
+    "inputs": {
+      "string": [
+        "9",
+        0
+      ],
+      "find": ",",
+      "replace": "\n"
+    },
+    "_meta": {
+      "title": "CSV \u2192 Lines"
+    }
+  },
+  "11": {
+    "class_type": "StringConcatenate",
+    "inputs": {
+      "string_a": [
+        "10",
+        0
+      ],
+      "string_b": "",
+      "delimiter": "\\n"
+    },
+    "_meta": {
+      "title": "\u2463 Interactive Items (paste here to add/override)"
+    }
+  },
+  "12": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "11",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Final Interactive Item List \u2192 SAM3"
+    }
+  },
+  "13": {
+    "class_type": "BD_SAM3MultiPrompt",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "prompts": [
+        "12",
+        0
+      ],
+      "negative_prompts": "",
+      "combine_mode": "union",
+      "vote_threshold": 1,
+      "vote_pos_min": 0.5,
+      "vote_neg_min": 0.5,
+      "color_filter": "off",
+      "color_strength": 0.7,
+      "color_threshold": 0.3,
+      "color_mode": "fixed_hsv",
+      "adaptive_tolerance": 25,
+      "adaptive_sample_threshold": 0.5,
+      "adaptive_min_samples": 50,
+      "enforce_silhouette": false,
+      "include_dilate_radius": 64,
+      "masked_image_bg": "white",
+      "invert_negatives_in_per_prompt": true,
+      "confidence_threshold": 0.3,
+      "device": "Auto",
+      "mask_blur": 0,
+      "mask_offset": 6,
+      "unload_model": false,
+      "invert_combined": false,
+      "mask_threshold": 0,
+      "silhouette_composite_enable": false
+    },
+    "_meta": {
+      "title": "\u2464 SAM3 Segment Interactive Items"
+    }
+  },
+  "14": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "13",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "SAM3 Masked Image"
+    }
+  },
+  "15": {
+    "class_type": "MaskPreview",
+    "inputs": {
+      "mask": [
+        "13",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "SAM3 Combined Mask"
+    }
+  },
+  "16": {
+    "class_type": "BD_PartsRefine",
+    "inputs": {
+      "masks": [
+        "13",
+        2
+      ],
+      "labels": [
+        "12",
+        0
+      ],
+      "iou_threshold": 0.7,
+      "merge_strategy": "union",
+      "max_parts": 15,
+      "min_pixels": 64,
+      "image": [
+        "3",
+        0
+      ],
+      "output_debug_viz": true
+    },
+    "_meta": {
+      "title": "\u2464 Parts Refine"
+    }
+  },
+  "17": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "16",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "Refine Debug Overlay"
+    }
+  },
+  "18": {
+    "class_type": "BD_FillMaskHoles",
+    "inputs": {
+      "mask": [
+        "16",
+        0
+      ],
+      "threshold": 0.5,
+      "closing_radius": 12,
+      "smooth_edges": 2
+    },
+    "_meta": {
+      "title": "Fill Mask Holes"
+    }
+  },
+  "19": {
+    "class_type": "MaskPreview",
+    "inputs": {
+      "mask": [
+        "18",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Filled Mask Preview"
+    }
+  },
+  "20": {
+    "class_type": "BD_PartsBuilder",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "selection_mode": "all",
+      "padding_pixels": 5,
+      "output_size": "native",
+      "square_pad": "none",
+      "background": "black",
+      "min_pixels": 64,
+      "masks": [
+        "18",
+        0
+      ],
+      "mask_labels": [
+        "16",
+        1
+      ],
+      "depth_image": [
+        "6",
+        0
+      ],
+      "selection_list": "",
+      "output_size_custom": 1024,
+      "background_hex": "#888888"
+    },
+    "_meta": {
+      "title": "\u2465 Parts Builder"
+    }
+  },
+  "21": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "20",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Parts Batch Preview"
+    }
+  },
+  "22": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "20",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Part Labels"
+    }
+  },
+  "23": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2511_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Qwen Edit Model"
+    }
+  },
+  "24": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "23",
+        0
+      ],
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoRA - Lightning 4-Step"
+    }
+  },
+  "25": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "24",
+        0
+      ],
+      "lora_name": "QwenImageEditInpaint_v1.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoRA - Inpaint v1"
+    }
+  },
+  "26": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIP Loader"
+    }
+  },
+  "27": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "_meta": {
+      "title": "VAE Loader"
+    }
+  },
+  "28": {
+    "class_type": "BD_PartsBatchEdit",
+    "inputs": {
+      "parts": [
+        "20",
+        3
+      ],
+      "model": [
+        "25",
+        0
+      ],
+      "clip": [
+        "26",
+        0
+      ],
+      "vae": [
+        "27",
+        0
+      ],
+      "prompt_template": "Inpaint the missing areas Recreating the complete {tag} in the same  style, sharp clean edges, fill any occluded or missing regions, no holes or gaps inside the {tag}, preserve original colors return on pure white #FFFFFF background ",
+      "inpaint_mode": "flatten_redraw",
+      "latent_upscale_method": "nearest-exact",
+      "prefill_mode": "nearest_part_pixel",
+      "target_pixels": "1024x1024",
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "alpha_after_edit": "auto_from_white_bg",
+      "source_image": [
+        "3",
+        0
+      ],
+      "latent_upscale_factor": 1.25,
+      "model_sampling_shift": 3,
+      "cfg_norm_strength": 1,
+      "tonemap_reinhard_multiplier": 2,
+      "context_extend_factor": 1,
+      "flatten_pad_factor": 1.25,
+      "mask_expand_pixels": 4,
+      "mask_blend_pixels": 1,
+      "target_pixels_custom": 1048576,
+      "negative_prompt": "",
+      "skip_tags": "",
+      "min_pixels": 64,
+      "white_threshold": 0.85,
+      "auto_crop_to_content": true,
+      "mask_dilate_pixels": 2
+    },
+    "_meta": {
+      "title": "\u2466 Parts Batch Edit (Qwen Inpaint)"
+    }
+  },
+  "29": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "28",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "Edited Parts Preview"
+    }
+  },
+  "37": {
+    "class_type": "BD_SaveContext",
+    "inputs": {
+      "context_id": "parts-export",
+      "template": "%character%/%region%/%slug%",
+      "character": "",
+      "name": "parts",
+      "version": "01",
+      "project": "",
+      "base_dir": "",
+      "subfolder": "",
+      "tag": "",
+      "custom_vars": "",
+      "auto_increment": false,
+      "increment_padding": 3,
+      "strict": false
+    },
+    "_meta": {
+      "title": "\u2467 Save Context"
+    }
+  },
+  "30": {
+    "class_type": "BD_PartsExport",
+    "inputs": {
+      "parts": [
+        "28",
+        0
+      ],
+      "filename": "parts",
+      "name_prefix": "",
+      "auto_increment": true,
+      "context_id": [
+        "37",
+        0
+      ],
+      "save_pngs": true,
+      "save_depth": true,
+      "save_masks": true,
+      "save_masked_pngs": true,
+      "save_composite": true,
+      "composite_size": 6144,
+      "save_psd": true,
+      "base_image": [
+        "34",
+        1
+      ],
+      "category_table": "",
+      "category_table_path": ""
+    },
+    "_meta": {
+      "title": "\u2468 Parts Export"
+    }
+  },
+  "31": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "30",
+        3
+      ]
+    },
+    "_meta": {
+      "title": "Composite Preview"
+    }
+  },
+  "32": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "30",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Output Directory"
+    }
+  },
+  "34": {
+    "class_type": "BD_PartsUnderpaint",
+    "inputs": {
+      "parts": [
+        "28",
+        0
+      ],
+      "model": [
+        "39",
+        0
+      ],
+      "clip": [
+        "40",
+        0
+      ],
+      "vae": [
+        "41",
+        0
+      ],
+      "source_image": [
+        "3",
+        0
+      ],
+      "mode": "all_parts_combined",
+      "prompt_template": "Remove the {tag} from this image. Fill the region with whatever would naturally be visible behind the {tag} in this scene \u2014 background scenery, ground, water, sky, foliage, or wall. Preserve all surrounding pixels exactly.",
+      "prefill_mode": "color_spread",
+      "latent_upscale_method": "nearest-exact",
+      "target_pixels": "1024x1024",
+      "seed": 0,
+      "steps": 25,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model_type": "kontext_dev",
+      "remove_order": "",
+      "all_parts_prompt": "Redraw this image with all of the following objects removed: {tags}. Fill each removed area with whatever would naturally be visible behind it \u2014 background scenery, ground, water, sky, foliage, or wall. Reveal the complete underlying background as it would naturally appear with all listed objects absent.",
+      "context_extend_factor": 2.0,
+      "skip_tags": "sky,water,ground,distant_hills,white_clouds,clouds,horizon,background,sea,ocean,beach,sand,hills,mountains",
+      "mask_dilate_pixels": 32,
+      "mask_blend_pixels": 4,
+      "latent_upscale_factor": 1.0,
+      "model_sampling_shift": 0.0,
+      "cfg_norm_strength": 0.0,
+      "tonemap_reinhard_multiplier": 2.0,
+      "target_pixels_custom": 1048576,
+      "negative_prompt": "",
+      "composite_mode": "full_crop",
+      "full_image_pass": true
+    },
+    "_meta": {
+      "title": "\u2468 Underpaint \u2014 Remove Interactive Items (Kontext)"
+    }
+  },
+  "35": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "34",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "\u246a Base Image (bare surface)"
+    }
+  },
+  "36": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "34",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "\u246b Underpaint Steps (per-part frames)"
+    }
+  },
+  "39": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux1-kontext-dev.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Kontext Model Loader"
+    }
+  },
+  "40": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "clip_name2": "clip_l.safetensors",
+      "type": "flux",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Kontext CLIP Loader"
+    }
+  },
+  "41": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "_meta": {
+      "title": "Kontext VAE Loader"
+    }
+  }
+}
