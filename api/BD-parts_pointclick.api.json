@@ -1,11 +1,11 @@
 {
   "1": {
-    "class_type": "LoadImage",
+    "class_type": "BD_LoadImageWithName",
     "inputs": {
       "image": "character.png"
     },
     "_meta": {
-      "title": "\u2460 Load Image"
+      "title": "\u2460 Load Scene (+ name)"
     }
   },
   "3": {
@@ -419,7 +419,7 @@
         "27",
         0
       ],
-      "prompt_template": "Inpaint the missing areas Recreating the complete {tag} in the same  style, sharp clean edges, fill any occluded or missing regions, no holes or gaps inside the {tag}, preserve original colors return on pure white #FFFFFF background ",
+      "prompt_template": "Inpaint the missing areas recreating the complete {tag} in the same bright smooth cel-shaded 2D cartoon storybook, hand-painted, smooth clean rounded edges, soft anti-aliased outlines, fill any occluded or missing regions, no holes or gaps inside the {tag}, preserve original colors, return on pure white #FFFFFF background. Smooth vector cartoon \u2014 NOT pixel art, NOT jagged, NOT low-resolution.",
       "inpaint_mode": "flatten_redraw",
       "latent_upscale_method": "nearest-exact",
       "prefill_mode": "nearest_part_pixel",
@@ -435,7 +435,7 @@
         "3",
         0
       ],
-      "latent_upscale_factor": 1.25,
+      "latent_upscale_factor": 1.0,
       "model_sampling_shift": 3,
       "cfg_norm_strength": 1,
       "tonemap_reinhard_multiplier": 2,
@@ -495,7 +495,10 @@
         "28",
         0
       ],
-      "filename": "parts",
+      "filename": [
+        "1",
+        2
+      ],
       "name_prefix": "",
       "auto_increment": true,
       "context_id": [
@@ -509,6 +512,7 @@
       "save_composite": true,
       "composite_size": 6144,
       "save_psd": true,
+      "save_psb": true,
       "base_image": [
         "34",
         1

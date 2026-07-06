@@ -65,9 +65,14 @@ def _resolve_legacy_folder(filename: str, name_prefix: str, auto_increment: bool
 def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
                       include_masks: bool = False,
                       base_image: "torch.Tensor | None" = None,
-                      background_image: "torch.Tensor | None" = None) -> int:
-    """Write all parts as a single layered PSD. Returns layer count.
+                      background_image: "torch.Tensor | None" = None,
+                      psb: bool = False) -> int:
+    """Write all parts as a single layered PSD (or PSB). Returns layer count.
     Uses RAW compression — Photoshop fails to open pytoshop's zip variant.
+
+    psb: when True, write the Photoshop Big-document format (version 2) instead
+    of PSD (version 1). PSB supports canvases up to 300,000 px and >2 GB; use it
+    for very large composites or when the engine expects .psb.
 
     output_size: if > 0, the canvas (and per-layer xyxy/dims) is scaled so the
     longest frame_size edge equals output_size. Layer pixel dims are scaled
@@ -204,8 +209,11 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
         canvas_h = max((int(info.get("xyxy", [0, 0, 0, 0])[3])
                         for info in tag2pinfo.values()), default=64)
 
-    psd = nested_layers_to_psd(layers, color_mode=3, size=(canvas_w, canvas_h),
-                               compression=enums.Compression.raw)
+    psd = nested_layers_to_psd(
+        layers, color_mode=3, size=(canvas_w, canvas_h),
+        compression=enums.Compression.raw,
+        version=enums.Version.version_2 if psb else enums.Version.version_1,
+    )
     with open(out_path, "wb") as f:
         psd.write(f)
     return len(layers)
@@ -281,6 +289,11 @@ class BD_PartsExport(io.ComfyNode):
                                  tooltip="Also write {filename}.psd — single layered file with one "
                                          "layer per tag at its xyxy position. Layer order: back-to-front "
                                          "by depth_median. RAW compression (Photoshop-compatible)."),
+                io.Boolean.Input("save_psb", default=False, optional=True,
+                                 tooltip="Also write {filename}.psb — the Photoshop Big-document format "
+                                         "(same layers as the PSD, version 2). Use when the target engine "
+                                         "expects .psb, or for canvases beyond PSD's 30,000 px / 2 GB "
+                                         "limits. Independent of save_psd — enable either or both."),
                 io.Image.Input(
                     "base_image", optional=True,
                     tooltip="Optional base IMAGE (e.g. nude mannequin) painted UNDER all parts. "
@@ -342,7 +355,7 @@ class BD_PartsExport(io.ComfyNode):
                 save_pngs=True, save_depth=True, save_masks=True,
                 save_masked_pngs=True,
                 save_composite=True, composite_size=0,
-                save_psd=True, base_image=None, background_image=None,
+                save_psd=True, save_psb=False, base_image=None, background_image=None,
                 category_table=None, category_table_path="") -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
 
@@ -384,6 +397,7 @@ class BD_PartsExport(io.ComfyNode):
         png_path: str | None = None
         comp_path: str | None = None
         psd_path: str | None = None
+        psb_path: str | None = None
 
         def _tag_custom_vars(tag: str, tag_safe: str) -> str:
             """Build node_custom_vars string for a given tag using cat_map lookup."""
@@ -597,6 +611,29 @@ class BD_PartsExport(io.ComfyNode):
                 summary_lines.append(f"  layered PSD: {os.path.basename(psd_path)}  ({n_layers} layers, raw)")
             except Exception as e:
                 summary_lines.append(f"  PSD save FAILED: {e}")
+
+        # Layered PSB (Photoshop Big-document — same layers, version 2)
+        if save_psb:
+            if use_context:
+                psb_path, _ = resolve_context_path(
+                    effective_ctx_id, "", "psb",
+                    node_filename=filename, node_name_prefix=name_prefix,
+                    node_custom_vars="slug=\nregion=",
+                )
+                os.makedirs(os.path.dirname(psb_path), exist_ok=True)
+            else:
+                psb_path = os.path.join(folder, f"{base}.psb")
+            try:
+                n_layers = _save_layered_psd(
+                    parts, psb_path, output_size=int(composite_size),
+                    include_masks=bool(save_masks),
+                    base_image=base_image,
+                    background_image=background_image,
+                    psb=True,
+                )
+                summary_lines.append(f"  layered PSB: {os.path.basename(psb_path)}  ({n_layers} layers, raw)")
+            except Exception as e:
+                summary_lines.append(f"  PSB save FAILED: {e}")
 
         # out_dir: prefer the path that actually got written. The path vars are
         # None when their parent block didn't execute (e.g. empty parts dict),
