@@ -294,6 +294,17 @@ class BD_PartsExport(io.ComfyNode):
                                          "(same layers as the PSD, version 2). Use when the target engine "
                                          "expects .psb, or for canvases beyond PSD's 30,000 px / 2 GB "
                                          "limits. Independent of save_psd — enable either or both."),
+                io.Boolean.Input("save_base", default=True, optional=True,
+                                 tooltip="Write {filename}_base.png — the wired base_image (e.g. the "
+                                         "underpaint bare background) as a standalone RGB PNG at its native "
+                                         "resolution. This is the clean scene background (layer 0); the "
+                                         "composite has sprites baked on, so this is saved separately."),
+                io.Boolean.Input("save_manifest", default=True, optional=True,
+                                 tooltip="Write {filename}_manifest.json — one authoritative file describing "
+                                         "the export: scene, base png, frame [w,h], and a parts[] list with "
+                                         "{tag, sprite, mask, depth, bbox_px [x,y,w,h], depth_median, "
+                                         "depth_order}. depth_order 0 = furthest back (matches PSD stack). "
+                                         "Lets an importer read one file instead of globbing + deriving."),
                 io.Image.Input(
                     "base_image", optional=True,
                     tooltip="Optional base IMAGE (e.g. nude mannequin) painted UNDER all parts. "
@@ -355,7 +366,8 @@ class BD_PartsExport(io.ComfyNode):
                 save_pngs=True, save_depth=True, save_masks=True,
                 save_masked_pngs=True,
                 save_composite=True, composite_size=0,
-                save_psd=True, save_psb=False, base_image=None, background_image=None,
+                save_psd=True, save_psb=False, save_base=True, save_manifest=True,
+                base_image=None, background_image=None,
                 category_table=None, category_table_path="") -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
 
@@ -390,6 +402,8 @@ class BD_PartsExport(io.ComfyNode):
         tag2pinfo = parts["tag2pinfo"]
         summary_lines: list[str] = []
         written = 0
+        # Per-tag file record for the manifest: tag -> {sprite,depth,mask,masked (basenames)}
+        manifest_files: dict = {}
 
         # Path variables — initialized to None so the out_dir calculation at the
         # bottom doesn't UnboundLocalError when their parent block doesn't run
@@ -430,6 +444,7 @@ class BD_PartsExport(io.ComfyNode):
                     png_path = os.path.join(folder, f"{tag_safe}.png")
                 Image.fromarray(arr.astype(np.uint8), mode=mode).save(png_path, optimize=True)
                 written += 1
+                manifest_files.setdefault(tag, {})["sprite"] = os.path.basename(png_path)
 
                 if save_depth and info.get("depth") is not None:
                     depth_arr = np.asarray(info["depth"])
@@ -448,6 +463,7 @@ class BD_PartsExport(io.ComfyNode):
                     else:
                         depth_path = os.path.join(folder, f"{tag_safe}_depth.png")
                     Image.fromarray(depth_arr, mode="L").save(depth_path, optimize=True)
+                    manifest_files.setdefault(tag, {})["depth"] = os.path.basename(depth_path)
 
                 if save_masks:
                     # Prefer the ORIGINAL SAM3 mask stashed by PartsBatchEdit
@@ -471,6 +487,7 @@ class BD_PartsExport(io.ComfyNode):
                         else:
                             mask_path = os.path.join(folder, f"{tag_safe}_mask.png")
                         Image.fromarray(mask_arr, mode="L").save(mask_path, optimize=True)
+                        manifest_files.setdefault(tag, {})["mask"] = os.path.basename(mask_path)
 
                 if save_masked_pngs:
                     # Bake original mask as alpha into the rebuilt RGB — ready to
@@ -634,6 +651,75 @@ class BD_PartsExport(io.ComfyNode):
                 summary_lines.append(f"  layered PSB: {os.path.basename(psb_path)}  ({n_layers} layers, raw)")
             except Exception as e:
                 summary_lines.append(f"  PSB save FAILED: {e}")
+
+        # Standalone bare-background PNG (the underpaint base — the clean revealed
+        # scene, no sprites). This is what a downstream engine uses as the layer-0
+        # background; the composite has the sprites baked on, so save the base too.
+        base_png_name = None
+        if save_base and base_image is not None:
+            bt = base_image if base_image.dim() == 4 else base_image.unsqueeze(0)
+            base_np = (bt[0].cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
+            if base_np.shape[-1] == 4:
+                base_np = base_np[..., :3]
+            if use_context:
+                base_path, _ = resolve_context_path(
+                    effective_ctx_id, "_base", "png",
+                    node_filename=filename, node_name_prefix=name_prefix,
+                    node_custom_vars="slug=\nregion=",
+                )
+                os.makedirs(os.path.dirname(base_path), exist_ok=True)
+            else:
+                base_path = os.path.join(folder, f"{base}_base.png")
+            Image.fromarray(base_np, mode="RGB").save(base_path, optimize=True)
+            base_png_name = os.path.basename(base_path)
+            summary_lines.append(f"  base image: {base_png_name}  ({base_np.shape[1]}x{base_np.shape[0]})")
+
+        # Authoritative JSON manifest — one file the importer can read instead of
+        # globbing + deriving bbox/order from mask/depth PNGs.
+        if save_manifest and tag2pinfo:
+            import json as _json
+            fh, fw = _frame_size(parts)
+            fh, fw = int(fh or 0), int(fw or 0)
+            # depth_order: back-to-front, same ordering the PSD uses (sorted by
+            # -depth_median → index 0 = furthest back = bottom sprite layer above base).
+            ordered = sorted(
+                [(t, i) for t, i in tag2pinfo.items() if isinstance(i, dict) and i.get("xyxy") is not None],
+                key=lambda kv: -float(kv[1].get("depth_median", 0.5)),
+            )
+            parts_manifest = []
+            for z, (tag, info) in enumerate(ordered):
+                x1, y1, x2, y2 = [int(v) for v in info["xyxy"]]
+                files = manifest_files.get(tag, {})
+                parts_manifest.append({
+                    "tag": tag,
+                    "sprite": files.get("sprite"),
+                    "mask": files.get("mask"),
+                    "depth": files.get("depth"),
+                    "bbox_px": [x1, y1, x2 - x1, y2 - y1],   # [x, y, w, h] in frame px
+                    "depth_median": round(float(info.get("depth_median", 0.5)), 4),
+                    "depth_order": z,   # 0 = furthest back (bottom, just above base)
+                })
+            manifest = {
+                "scene": (base if not use_context else (filename or "scene")),
+                "base": base_png_name,
+                "frame": [fw, fh],          # [width, height] of base / bbox coordinate space
+                "composite": os.path.basename(comp_path) if comp_path else None,
+                "psd": os.path.basename(psd_path) if psd_path else None,
+                "psb": os.path.basename(psb_path) if psb_path else None,
+                "parts": parts_manifest,
+            }
+            if use_context:
+                manifest_path, _ = resolve_context_path(
+                    effective_ctx_id, "_manifest", "json",
+                    node_filename=filename, node_name_prefix=name_prefix,
+                    node_custom_vars="slug=\nregion=",
+                )
+                os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+            else:
+                manifest_path = os.path.join(folder, f"{base}_manifest.json")
+            with open(manifest_path, "w") as _mf:
+                _json.dump(manifest, _mf, indent=2)
+            summary_lines.append(f"  manifest: {os.path.basename(manifest_path)}  ({len(parts_manifest)} parts)")
 
         # out_dir: prefer the path that actually got written. The path vars are
         # None when their parent block didn't execute (e.g. empty parts dict),

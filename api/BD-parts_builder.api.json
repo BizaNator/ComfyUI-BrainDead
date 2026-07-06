@@ -510,6 +510,8 @@
       "composite_size": 6144,
       "save_psd": true,
       "save_psb": false,
+      "save_base": true,
+      "save_manifest": true,
       "base_image": [
         "34",
         1
