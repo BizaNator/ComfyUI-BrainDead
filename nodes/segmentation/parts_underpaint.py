@@ -156,6 +156,7 @@ def _run_underpaint_pass(
     mask_blend_pixels: int,
     model_type: str = "qwen_edit",
     composite_mode: str = "mask_region",
+    full_image_pass: bool = False,
 ) -> np.ndarray:
     """
     Inpaint/edit the masked region in current_img_np and return the updated image.
@@ -168,26 +169,33 @@ def _run_underpaint_pass(
                        composite back. No prefill, no latent upscale, no tonemap
                        (Kontext already handles scene coherence).
 
-    composite_mode controls how the edited crop is merged back:
+    full_image_pass: when True, the model is fed the WHOLE image instead of a
+                     per-part crop. Instruction edit models (Kontext, Qwen Edit)
+                     are designed to see the entire scene — cropping to a part's
+                     bbox strips the global context and makes them hallucinate
+                     fill (e.g. a floating beach) that doesn't match the scene.
+                     With this on, context_extend_factor is irrelevant.
+
+    composite_mode controls how the edited image is merged back:
       mask_region — paste only the (dilated, feathered) masked region. Pixels
-                    outside the mask are the original, untouched. Correct for
-                    inpaint models (Qwen/flux_fill) whose noise_mask already kept
-                    the surround identical. Can misalign for full-image edit
-                    models that regenerate the whole crop.
-      full_crop   — paste the model's ENTIRE edited crop, feathered only at the
-                    crop's outer border. Correct for edit models (Kontext) that
-                    produce a coherent full-crop edit: removes objects cleanly
-                    (no leftover pixels outside the mask) and avoids the
-                    masked-patch misalignment/ghosting.
+                    outside the mask are the original, untouched. With
+                    full_image_pass on, this is the clean-removal path: the model
+                    saw the whole scene (so the reveal is coherent) but only the
+                    object region is replaced, so nothing else drifts.
+      full_crop   — paste the model's ENTIRE output, feathered only at the
+                    outer border. Takes the model's full edit wholesale.
     """
     src_h, src_w = current_img_np.shape[:2]
 
-    # Extended context crop
-    if context_extend_factor > 1.0:
+    if full_image_pass:
+        # Edit models want the whole scene — skip cropping entirely so the model
+        # keeps global context and doesn't hallucinate fill (context_extend moot).
+        ex1, ey1, ex2, ey2 = 0, 0, src_w, src_h
+    elif context_extend_factor > 1.0:
         ext_xyxy, _ = _extend_bbox(xyxy, float(context_extend_factor), src_h, src_w)
+        ex1, ey1, ex2, ey2 = ext_xyxy
     else:
-        ext_xyxy = list(xyxy)
-    ex1, ey1, ex2, ey2 = ext_xyxy
+        ex1, ey1, ex2, ey2 = xyxy
 
     crop_h = ey2 - ey1
     crop_w = ex2 - ex1
@@ -516,7 +524,26 @@ class BD_PartsUnderpaint(io.ComfyNode):
                         "cleanly with no leftover pixels outside the mask, and avoids the "
                         "masked-patch misalignment/ghosting (doubling) you get when compositing a "
                         "regenerated patch back onto the un-regenerated original.\n"
-                        "Rule of thumb: kontext_dev → full_crop, qwen_edit/flux_fill → mask_region."
+                        "Rule of thumb: kontext_dev → mask_region (with full_image_pass on), "
+                        "qwen_edit/flux_fill → mask_region."
+                    ),
+                ),
+                io.Boolean.Input(
+                    "full_image_pass",
+                    default=False,
+                    optional=True,
+                    tooltip=(
+                        "Feed the WHOLE image to the model each pass instead of a per-part crop.\n"
+                        "Instruction edit models (kontext_dev, qwen_edit) are designed to see the "
+                        "entire scene. Cropping to a part's bbox strips global context and makes them "
+                        "hallucinate fill that doesn't match the scene (e.g. a floating beach in the "
+                        "middle). Turn this ON for edit models.\n"
+                        "When ON, context_extend_factor is ignored. Combine with composite_mode="
+                        "mask_region for clean object removal with zero drift outside the mask.\n"
+                        "Leave OFF only for a true masked inpaint model (flux_fill) where a focused "
+                        "crop is cheaper and correct.\n"
+                        "Note: per_part_sequential + full_image_pass runs a full-image generation per "
+                        "part (slower). all_parts_combined does it in a single pass."
                     ),
                 ),
                 io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
@@ -572,6 +599,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
                 target_pixels_custom=1048576,
                 negative_prompt="",
                 composite_mode="mask_region",
+                full_image_pass=False,
                 seed=0, steps=4, cfg=1.0,
                 sampler_name="euler", scheduler="simple", denoise=1.0,
                 ) -> io.NodeOutput:
@@ -649,6 +677,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
             mask_blend_pixels=int(mask_blend_pixels),
             model_type=model_type,
             composite_mode=composite_mode,
+            full_image_pass=bool(full_image_pass),
         )
 
         run_start = _time.time()

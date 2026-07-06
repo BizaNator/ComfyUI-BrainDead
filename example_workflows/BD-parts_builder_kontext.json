@@ -1539,7 +1539,8 @@
         2.0,
         1048576,
         "",
-        "full_crop"
+        "mask_region",
+        true
       ],
       "title": "⑩ BD Parts Underpaint — Kontext (reveal beneath)"
     },
