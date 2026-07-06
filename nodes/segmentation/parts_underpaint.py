@@ -157,8 +157,15 @@ def _run_underpaint_pass(
     model_type: str = "qwen_edit",
 ) -> np.ndarray:
     """
-    Inpaint the masked region in current_img_np and return the updated image.
-    Only pixels inside the mask are changed; surrounding context is preserved.
+    Inpaint/edit the masked region in current_img_np and return the updated image.
+
+    Qwen / flux_fill:  prefill the masked region → encode → noise_mask KSampler
+                       (only denoises within the mask). Latent upscale optional.
+    kontext_dev:       give Kontext the original unmodified crop (object still
+                       visible) → full-crop KSampler with no noise_mask (Kontext
+                       edits the whole crop based on the text instruction) →
+                       composite back using the mask. No prefill, no latent upscale,
+                       no tonemap (Kontext already handles scene coherence).
     """
     src_h, src_w = current_img_np.shape[:2]
 
@@ -177,85 +184,96 @@ def _run_underpaint_pass(
     crop_rgb = current_img_np[ey1:ey2, ex1:ex2].copy()
     crop_mask = full_mask[ey1:ey2, ex1:ex2].copy()
 
-    # Pre-fill the masked region so Qwen sees plausible surrounding color
-    prefilled = _prefill_region(crop_rgb, crop_mask, prefill_mode)
-
-    # Reference tensor for Qwen
-    ref_t = torch.from_numpy(prefilled.astype(np.float32) / 255.0).unsqueeze(0)
-
-    # Encode — branch on model type
-    if model_type == "kontext_dev":
-        pos_cond, ref_latent, (h_lat, w_lat) = _encode_kontext_cond(
-            clip, vae, prompt, ref_t, target_pixels=tp,
-        )
-    elif model_type in ("flux_fill", "flux_text_only"):
-        pos_cond, ref_latent, (h_lat, w_lat) = _encode_text_only_with_ref(
-            clip, vae, prompt, ref_t, target_pixels=tp,
-        )
-    else:  # qwen_edit (default)
-        pos_cond, ref_latent, (h_lat, w_lat) = _encode_qwen_edit_plus(
-            clip, vae, prompt, ref_t, target_pixels=tp,
-        )
-
-    # Build noise mask at latent spatial dims (the KSampler inpaint region)
-    lat_h, lat_w = _latent_spatial_dims(ref_latent)
-
+    # Dilated mask — used for compositing by all paths
     inpaint_mask = crop_mask.copy()
     if mask_dilate_pixels > 0:
         inpaint_mask = _dilate_alpha(inpaint_mask, int(mask_dilate_pixels))
 
-    noise_mask_np = np.asarray(
-        Image.fromarray(inpaint_mask, mode="L").resize((lat_w, lat_h), Image.NEAREST)
-    ).astype(np.float32) / 255.0
-    noise_mask_t = torch.from_numpy(noise_mask_np).unsqueeze(0)
+    # ── Kontext path ────────────────────────────────────────────────────────
+    if model_type == "kontext_dev":
+        # Kontext is a full-image edit model, not an inpainter.
+        # Feed it the ORIGINAL crop so it can see the object and the surrounding
+        # context; the text prompt instructs removal. It regenerates the entire
+        # crop, then we composite only the masked region back.
+        ref_t = torch.from_numpy(crop_rgb.astype(np.float32) / 255.0).unsqueeze(0)
+        pos_cond, ref_latent, _ = _encode_kontext_cond(
+            clip, vae, prompt, ref_t, target_pixels=tp,
+        )
+        # No noise_mask — let Kontext handle the full generation.
+        start_latent = {"samples": ref_latent.to(dtype=torch.float32)}
 
-    # Optional latent upscale (high-res-fix trick — more detail per crop)
-    if latent_upscale_factor > 1.0:
-        new_lat_h = int(round(lat_h * latent_upscale_factor))
-        new_lat_w = int(round(lat_w * latent_upscale_factor))
-        upscaled = _upscale_latent_spatial(ref_latent, new_lat_h, new_lat_w, latent_upscale_method)
-        noise_mask_t = torch.nn.functional.interpolate(
-            noise_mask_t.unsqueeze(0).float(),
-            size=(new_lat_h, new_lat_w), mode="nearest",
-        ).squeeze(0)
+        (out_latent,) = common_ksampler(
+            model, int(seed), int(steps), float(cfg),
+            sampler_name, scheduler,
+            pos_cond, neg_cond, start_latent, denoise=float(denoise),
+        )
+        rgb_out = _decode_to_rgb(vae, out_latent)
+
+    # ── Qwen / Flux Fill path ───────────────────────────────────────────────
     else:
-        upscaled = ref_latent
+        # Pre-fill the masked region so the model sees plausible surrounding color
+        prefilled = _prefill_region(crop_rgb, crop_mask, prefill_mode)
+        ref_t = torch.from_numpy(prefilled.astype(np.float32) / 255.0).unsqueeze(0)
 
-    start_latent = {
-        "samples": upscaled.to(dtype=torch.float32),
-        "noise_mask": noise_mask_t,
-    }
-    # Qwen needs the upscaled reference injected into conditioning so it can
-    # attend to full-resolution source. Kontext sets image_cond_latents during
-    # encoding; flux_fill uses only the noise_mask.
-    if model_type == "qwen_edit":
-        pos_cond = node_helpers.conditioning_set_values(
-            pos_cond, {"reference_latents": [upscaled]}, append=True,
+        if model_type in ("flux_fill", "flux_text_only"):
+            pos_cond, ref_latent, (h_lat, w_lat) = _encode_text_only_with_ref(
+                clip, vae, prompt, ref_t, target_pixels=tp,
+            )
+        else:  # qwen_edit
+            pos_cond, ref_latent, (h_lat, w_lat) = _encode_qwen_edit_plus(
+                clip, vae, prompt, ref_t, target_pixels=tp,
+            )
+
+        lat_h, lat_w = _latent_spatial_dims(ref_latent)
+
+        noise_mask_np = np.asarray(
+            Image.fromarray(inpaint_mask, mode="L").resize((lat_w, lat_h), Image.NEAREST)
+        ).astype(np.float32) / 255.0
+        noise_mask_t = torch.from_numpy(noise_mask_np).unsqueeze(0)
+
+        # Optional latent upscale (high-res-fix — Qwen Lightning LoRA recipe)
+        if latent_upscale_factor > 1.0:
+            new_lat_h = int(round(lat_h * latent_upscale_factor))
+            new_lat_w = int(round(lat_w * latent_upscale_factor))
+            upscaled = _upscale_latent_spatial(ref_latent, new_lat_h, new_lat_w, latent_upscale_method)
+            noise_mask_t = torch.nn.functional.interpolate(
+                noise_mask_t.unsqueeze(0).float(),
+                size=(new_lat_h, new_lat_w), mode="nearest",
+            ).squeeze(0)
+        else:
+            upscaled = ref_latent
+
+        start_latent = {
+            "samples": upscaled.to(dtype=torch.float32),
+            "noise_mask": noise_mask_t,
+        }
+        # Qwen needs the upscaled reference injected into conditioning so it can
+        # attend to full-resolution source tokens.
+        if model_type == "qwen_edit":
+            pos_cond = node_helpers.conditioning_set_values(
+                pos_cond, {"reference_latents": [upscaled]}, append=True,
+            )
+
+        (out_latent,) = common_ksampler(
+            model, int(seed), int(steps), float(cfg),
+            sampler_name, scheduler,
+            pos_cond, neg_cond, start_latent, denoise=float(denoise),
         )
 
-    # KSampler — only regenerates the masked region
-    (out_latent,) = common_ksampler(
-        model, int(seed), int(steps), float(cfg),
-        sampler_name, scheduler,
-        pos_cond, neg_cond, start_latent, denoise=float(denoise),
-    )
+        if tonemap_reinhard_multiplier > 0.0:
+            out_latent = out_latent.copy()
+            out_latent["samples"] = _tonemap_reinhard_latent(
+                out_latent["samples"], float(tonemap_reinhard_multiplier),
+            )
+        rgb_out = _decode_to_rgb(vae, out_latent)
 
-    # Tonemap + decode
-    if tonemap_reinhard_multiplier > 0.0:
-        out_latent = out_latent.copy()
-        out_latent["samples"] = _tonemap_reinhard_latent(
-            out_latent["samples"], float(tonemap_reinhard_multiplier),
-        )
-    rgb_out = _decode_to_rgb(vae, out_latent)
-
-    # Resize decoded result back to crop dims
+    # ── Composite result back into the accumulation image ───────────────────
+    # Resize decoded crop to match the source-image crop dimensions
     rgb_out_resized = _resize_rgb_to(rgb_out, crop_h, crop_w)
     rgb_np = (rgb_out_resized[0].cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
 
-    # Blend result back into current image.
-    # Use the dilated inpaint_mask for compositing so the blend transition zone
-    # falls inside the already-regenerated region — original object edges and
-    # halos never bleed through at the boundary.
+    # Use the dilated mask as the blend zone so original object edges / halos
+    # never bleed through at the boundary.
     compose_mask = inpaint_mask if mask_dilate_pixels > 0 else crop_mask
     mask_f = compose_mask.astype(np.float32) / 255.0
     if mask_blend_pixels > 0:
@@ -529,24 +547,31 @@ class BD_PartsUnderpaint(io.ComfyNode):
             src_np = src_np[..., :3]
         src_h, src_w = src_np.shape[:2]
 
-        # ── Apply model patches (same recipe as BD_PartsBatchEdit) ───────────
+        # ── Apply model patches (Qwen/AuraFlow Lightning recipe ONLY) ─────────
+        # ModelSamplingAuraFlow and CFGNorm are specific to the Qwen Edit stack.
+        # Applying them to Kontext or Flux models corrupts the sampling and
+        # produces grey/noisy output — DO NOT apply for non-qwen model types.
         patches = []
-        if model_sampling_shift > 0.0:
-            try:
-                from comfy_extras.nodes_model_advanced import ModelSamplingAuraFlow
-                model = ModelSamplingAuraFlow().patch_aura(model, float(model_sampling_shift))[0]
-                patches.append(f"shift={model_sampling_shift}")
-            except Exception as e:
-                print(f"[BD PartsUnderpaint] WARNING: ModelSamplingAuraFlow failed: {e}", flush=True)
-        if cfg_norm_strength > 0.0:
-            try:
-                from comfy_extras.nodes_cfg import CFGNorm
-                model = CFGNorm.execute(model, float(cfg_norm_strength)).args[0]
-                patches.append(f"cfg_norm={cfg_norm_strength}")
-            except Exception as e:
-                print(f"[BD PartsUnderpaint] WARNING: CFGNorm failed: {e}", flush=True)
+        if model_type == "qwen_edit":
+            if model_sampling_shift > 0.0:
+                try:
+                    from comfy_extras.nodes_model_advanced import ModelSamplingAuraFlow
+                    model = ModelSamplingAuraFlow().patch_aura(model, float(model_sampling_shift))[0]
+                    patches.append(f"shift={model_sampling_shift}")
+                except Exception as e:
+                    print(f"[BD PartsUnderpaint] WARNING: ModelSamplingAuraFlow failed: {e}", flush=True)
+            if cfg_norm_strength > 0.0:
+                try:
+                    from comfy_extras.nodes_cfg import CFGNorm
+                    model = CFGNorm.execute(model, float(cfg_norm_strength)).args[0]
+                    patches.append(f"cfg_norm={cfg_norm_strength}")
+                except Exception as e:
+                    print(f"[BD PartsUnderpaint] WARNING: CFGNorm failed: {e}", flush=True)
         if patches:
             print(f"[BD PartsUnderpaint] Model patches: {' '.join(patches)}", flush=True)
+        elif model_type != "qwen_edit":
+            print(f"[BD PartsUnderpaint] model_type={model_type}: skipping AuraFlow/CFGNorm patches",
+                  flush=True)
 
         # ── Resolve target pixel budget ───────────────────────────────────────
         if target_pixels == "custom":

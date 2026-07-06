@@ -22,7 +22,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "# BrainDead - Parts Builder (Kontext Underpaint variant)\n\nFull character part decomposition pipeline matching the COB_PartBuilder workflow.\n\n## Flow\n1. **Load Image** → scale to max 1536px\n2. **Lotus2 Depth** → depth map cached for parts *(Cache node: force_refresh=ON by default — flip to OFF after first run to reuse cached depth)*\n3. **QwenVL Tags** → auto-list clothing items + body parts as SAM3 prompts\n4. **BD_SAM3MultiPrompt** → segments each tag into a per-part mask\n5. **BD_PartsRefine** → cleans up mask overlap (IoU merge)\n6. **BD_FillMaskHoles** → fills holes in refined masks\n7. **BD_PartsBuilder** → crops each part to its own RGBA image (PARTS_BUNDLE)\n8. **BD_SaveContext** → set `character` name + template path (e.g. `%character%/%region%/%slug%`)\n9. **BD_PartsBatchEdit** → Qwen Image Edit reconstructs each occluded part\n10. **BD_PartsExport** → writes per-part RGBA PNGs + depth + masks + composite + PSD\n    - `category_table` widget: maps SAM3 tags → slug:region for template path naming (%slug%, %region% vars)\n    - `category_table_path`: point to an external .txt file for team-wide centralized mapping\n    - Qwen free-form tags (e.g. “yellow leather belt”) matched via ~ fuzzy lines in the table\n\n## Models Required\n**BD Parts Batch Edit (sprite redraw) — always Qwen:**\n- `qwen_image_edit_2511_bf16.safetensors` (UNET)\n- `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` (LoRA)\n- `QwenImageEditInpaint_v1.safetensors` (LoRA)\n- `qwen_2.5_vl_7b_fp8_scaled.safetensors` (CLIP)\n- `qwen_image_vae.safetensors` (VAE)\n\n**BD Parts Underpaint:** Uses **Flux Kontext Dev** for background reveal.\n- `flux1-kontext-dev.safetensors` (already wired)\n- `t5xxl_fp8_e4m3fn_scaled.safetensors` + `clip_l.safetensors` (DualCLIPLoader)\n- `ae.safetensors` (Flux VAE)\nBatch Edit (sprites) still uses Qwen.\n\n**Always required:**\n- `Qwen3-VL-8B-Instruct` (QwenVL captioner)\n- `Lotus2` depth model (auto-downloads FLUX.1-dev)\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
+        "# BrainDead - Parts Builder (Kontext Underpaint variant)\n\nFull character part decomposition pipeline matching the COB_PartBuilder workflow.\n\n## Flow\n1. **Load Image** → scale to max 1536px\n2. **Lotus2 Depth** → depth map cached for parts *(Cache node: force_refresh=ON by default — flip to OFF after first run to reuse cached depth)*\n3. **QwenVL Tags** → auto-list clothing items + body parts as SAM3 prompts\n4. **BD_SAM3MultiPrompt** → segments each tag into a per-part mask\n5. **BD_PartsRefine** → cleans up mask overlap (IoU merge)\n6. **BD_FillMaskHoles** → fills holes in refined masks\n7. **BD_PartsBuilder** → crops each part to its own RGBA image (PARTS_BUNDLE)\n8. **BD_SaveContext** → set `character` name + template path (e.g. `%character%/%region%/%slug%`)\n9. **BD_PartsBatchEdit** → Qwen Image Edit reconstructs each occluded part\n10. **BD_PartsUnderpaint (Kontext)** → Flux Kontext edits the full crop per part — reveals the natural background\n11. **BD_PartsExport** → writes per-part RGBA PNGs + depth + masks + composite + PSD\n\n## How Kontext Underpaint Works\nKontext is a **full-image edit model**, not an inpainter.\nFor each part it: (1) crops the scene to the extended context region, (2) sends the **original unmodified crop** + text instruction to Kontext, (3) Kontext regenerates the full crop with the object removed, (4) the result is composited back using the part mask.\n\n**per_part_sequential** (default): each part's removal feeds the next — \"remove bridge\", then \"remove box\" (no bridge in scene), then \"remove rope\" (neither present), etc. Fully iterative.\n\n**all_parts_combined**: union all masks, single Kontext pass with full tag list expanded via `{tags}`.\n\n## Kontext Settings\n- **steps**: 20-30 (25 default — Kontext has no Lightning LoRA)\n- **cfg**: 1.0 (Kontext is guidance-distilled)\n- **model_sampling_shift** / **cfg_norm_strength**: set to 0 — these are Qwen/AuraFlow-only patches and have no effect on Kontext\n- **latent_upscale_factor**: ignored for Kontext (no high-res-fix needed)\n\n## Models Required\n**BD Parts Batch Edit (sprite redraw) — always Qwen:**\n- `qwen_image_edit_2511_bf16.safetensors` (UNET)\n- `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` (LoRA)\n- `QwenImageEditInpaint_v1.safetensors` (LoRA)\n- `qwen_2.5_vl_7b_fp8_scaled.safetensors` (CLIP)\n- `qwen_image_vae.safetensors` (VAE)\n\n**BD Parts Underpaint (Kontext):**\n- `flux1-kontext-dev.safetensors` (already wired)\n- `t5xxl_fp8_e4m3fn_scaled.safetensors` + `clip_l.safetensors` (DualCLIPLoader)\n- `ae.safetensors` (Flux VAE)\n\n**Always required:**\n- `Qwen3-VL-8B-Instruct` (QwenVL captioner)\n- `Lotus2` depth model (auto-downloads FLUX.1-dev)\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
       ],
       "title": "ℹ️ About — 🧠 BrainDead Parts Builder (Kontext variant)"
     },
@@ -1521,7 +1521,7 @@
         "1024x1024",
         0,
         "randomize",
-        4,
+        25,
         1.0,
         "euler",
         "simple",
@@ -1534,8 +1534,8 @@
         32,
         4,
         1.0,
-        3.0,
-        0.85,
+        0.0,
+        0.0,
         2.0,
         1048576,
         ""
