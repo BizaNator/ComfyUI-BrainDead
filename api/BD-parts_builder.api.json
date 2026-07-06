@@ -590,7 +590,8 @@
       "cfg_norm_strength": 0.85,
       "tonemap_reinhard_multiplier": 2.0,
       "target_pixels_custom": 1048576,
-      "negative_prompt": ""
+      "negative_prompt": "",
+      "composite_mode": "mask_region"
     },
     "_meta": {
       "title": "\u2469 BD Parts Underpaint (reveal beneath)"

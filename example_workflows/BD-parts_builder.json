@@ -1541,7 +1541,8 @@
         0.85,
         2.0,
         1048576,
-        ""
+        "",
+        "mask_region"
       ],
       "title": "⑩ BD Parts Underpaint (reveal beneath)"
     },

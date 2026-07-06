@@ -590,7 +590,8 @@
       "cfg_norm_strength": 0.0,
       "tonemap_reinhard_multiplier": 2.0,
       "target_pixels_custom": 1048576,
-      "negative_prompt": ""
+      "negative_prompt": "",
+      "composite_mode": "full_crop"
     },
     "_meta": {
       "title": "\u2469 BD Parts Underpaint \u2014 Kontext (reveal beneath)"

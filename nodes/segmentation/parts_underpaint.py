@@ -155,6 +155,7 @@ def _run_underpaint_pass(
     mask_dilate_pixels: int,
     mask_blend_pixels: int,
     model_type: str = "qwen_edit",
+    composite_mode: str = "mask_region",
 ) -> np.ndarray:
     """
     Inpaint/edit the masked region in current_img_np and return the updated image.
@@ -164,8 +165,20 @@ def _run_underpaint_pass(
     kontext_dev:       give Kontext the original unmodified crop (object still
                        visible) → full-crop KSampler with no noise_mask (Kontext
                        edits the whole crop based on the text instruction) →
-                       composite back using the mask. No prefill, no latent upscale,
-                       no tonemap (Kontext already handles scene coherence).
+                       composite back. No prefill, no latent upscale, no tonemap
+                       (Kontext already handles scene coherence).
+
+    composite_mode controls how the edited crop is merged back:
+      mask_region — paste only the (dilated, feathered) masked region. Pixels
+                    outside the mask are the original, untouched. Correct for
+                    inpaint models (Qwen/flux_fill) whose noise_mask already kept
+                    the surround identical. Can misalign for full-image edit
+                    models that regenerate the whole crop.
+      full_crop   — paste the model's ENTIRE edited crop, feathered only at the
+                    crop's outer border. Correct for edit models (Kontext) that
+                    produce a coherent full-crop edit: removes objects cleanly
+                    (no leftover pixels outside the mask) and avoids the
+                    masked-patch misalignment/ghosting.
     """
     src_h, src_w = current_img_np.shape[:2]
 
@@ -272,15 +285,30 @@ def _run_underpaint_pass(
     rgb_out_resized = _resize_rgb_to(rgb_out, crop_h, crop_w)
     rgb_np = (rgb_out_resized[0].cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
 
-    # Use the dilated mask as the blend zone so original object edges / halos
-    # never bleed through at the boundary.
-    compose_mask = inpaint_mask if mask_dilate_pixels > 0 else crop_mask
-    mask_f = compose_mask.astype(np.float32) / 255.0
-    if mask_blend_pixels > 0:
-        import cv2
-        ksize = 2 * int(mask_blend_pixels) + 1
-        mask_f = cv2.GaussianBlur(mask_f, (ksize, ksize), mask_blend_pixels * 0.5)
-    mask_f = mask_f[..., None]  # (crop_h, crop_w, 1)
+    if composite_mode == "full_crop":
+        # Take the model's ENTIRE edited crop — it produced a coherent full-crop
+        # edit, so masked-patch pasting (which misaligns/ghosts) is skipped.
+        # Feather ONLY at the crop's outer border so it blends into the
+        # surrounding untouched source without a hard rectangle seam.
+        mask_f = np.ones((crop_h, crop_w), dtype=np.float32)
+        b = int(mask_blend_pixels)
+        if b > 0 and crop_h > 2 * b and crop_w > 2 * b:
+            ramp = np.linspace(0.0, 1.0, b, dtype=np.float32)
+            mask_f[:b, :] *= ramp[:, None]
+            mask_f[crop_h - b:, :] *= ramp[::-1][:, None]
+            mask_f[:, :b] *= ramp[None, :]
+            mask_f[:, crop_w - b:] *= ramp[None, ::-1]
+        mask_f = mask_f[..., None]
+    else:  # mask_region (default)
+        # Use the dilated mask as the blend zone so original object edges / halos
+        # never bleed through at the boundary.
+        compose_mask = inpaint_mask if mask_dilate_pixels > 0 else crop_mask
+        mask_f = compose_mask.astype(np.float32) / 255.0
+        if mask_blend_pixels > 0:
+            import cv2
+            ksize = 2 * int(mask_blend_pixels) + 1
+            mask_f = cv2.GaussianBlur(mask_f, (ksize, ksize), mask_blend_pixels * 0.5)
+        mask_f = mask_f[..., None]  # (crop_h, crop_w, 1)
 
     blended = (crop_rgb.astype(np.float32) * (1.0 - mask_f)
                + rgb_np.astype(np.float32) * mask_f).clip(0, 255).astype(np.uint8)
@@ -472,6 +500,25 @@ class BD_PartsUnderpaint(io.ComfyNode):
                     "negative_prompt", multiline=True, default="", optional=True,
                     tooltip="Negative prompt (no effect at cfg=1.0).",
                 ),
+                io.Combo.Input(
+                    "composite_mode",
+                    options=["mask_region", "full_crop"],
+                    default="mask_region",
+                    optional=True,
+                    tooltip=(
+                        "How the edited crop is merged back into the scene:\n"
+                        "  mask_region (DEFAULT) — paste only the masked region back onto the "
+                        "original; pixels outside the mask stay untouched. Correct for inpaint "
+                        "models (qwen_edit / flux_fill) whose noise_mask already kept the surround "
+                        "identical.\n"
+                        "  full_crop — paste the model's ENTIRE edited crop (feathered only at the "
+                        "crop border). Use for full-image edit models (kontext_dev): removes objects "
+                        "cleanly with no leftover pixels outside the mask, and avoids the "
+                        "masked-patch misalignment/ghosting (doubling) you get when compositing a "
+                        "regenerated patch back onto the un-regenerated original.\n"
+                        "Rule of thumb: kontext_dev → full_crop, qwen_edit/flux_fill → mask_region."
+                    ),
+                ),
                 io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
                 io.Int.Input("steps", default=4, min=1, max=100,
                              tooltip="4 for Lightning LoRA, 8-20 for non-Lightning."),
@@ -524,6 +571,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
                 target_pixels="1024x1024",
                 target_pixels_custom=1048576,
                 negative_prompt="",
+                composite_mode="mask_region",
                 seed=0, steps=4, cfg=1.0,
                 sampler_name="euler", scheduler="simple", denoise=1.0,
                 ) -> io.NodeOutput:
@@ -600,6 +648,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
             mask_dilate_pixels=int(mask_dilate_pixels),
             mask_blend_pixels=int(mask_blend_pixels),
             model_type=model_type,
+            composite_mode=composite_mode,
         )
 
         run_start = _time.time()
