@@ -375,12 +375,18 @@ def _encode_text_only_with_ref(clip, vae, prompt: str, image_rgb: torch.Tensor,
 
 
 def _encode_kontext_cond(clip, vae, prompt: str, image_rgb: torch.Tensor,
-                          target_pixels: int = 1024 * 1024):
-    """Flux-Kontext conditioning: plain CLIPTextEncode + image_cond_latents.
+                          target_pixels: int = 1024 * 1024,
+                          guidance: float = 2.5):
+    """Flux-Kontext conditioning: plain CLIPTextEncode + reference_latents.
 
-    Unlike _encode_qwen_edit_plus, no VLM image tokens are injected.
-    The source image is VAE-encoded and set as image_cond_latents so
-    flux1-kontext-dev can attend to it as edit context.
+    This mirrors ComfyUI's official Kontext flow (CLIPTextEncode → FluxGuidance
+    → ReferenceLatent). The Flux model (and Flux2, which inherits it) reads the
+    edit reference from the ``reference_latents`` conditioning key — it does NOT
+    read ``image_cond_latents`` (that key is silently ignored by the Flux path,
+    which is why setting it produced pure prompt/noise distortion).
+
+    Also sets ``guidance`` (FluxGuidance) — Kontext is guidance-distilled and
+    needs a guidance value baked into the conditioning; default 2.5.
 
     Returns (positive_conditioning, ref_latent, (h_lat_pixels, w_lat_pixels)).
     """
@@ -399,8 +405,13 @@ def _encode_kontext_cond(clip, vae, prompt: str, image_rgb: torch.Tensor,
 
     tokens = clip.tokenize(prompt)
     conditioning = clip.encode_from_tokens_scheduled(tokens)
+    # ReferenceLatent — the Kontext edit reference (append so multiple refs chain)
     conditioning = node_helpers.conditioning_set_values(
-        conditioning, {"image_cond_latents": ref_latent}, append=False,
+        conditioning, {"reference_latents": [ref_latent]}, append=True,
+    )
+    # FluxGuidance
+    conditioning = node_helpers.conditioning_set_values(
+        conditioning, {"guidance": float(guidance)}, append=False,
     )
     return conditioning, ref_latent, (h_lat, w_lat)
 
