@@ -81,7 +81,7 @@ def _load_mia_model(device: str = "auto"):
 
 def _run_mia_inference(mesh, model, output_path: str, *,
                         no_fingers: bool, use_normal: bool,
-                        reset_to_rest: bool) -> str:
+                        reset_to_rest: bool, apply_predicted: bool) -> str:
     """Wrap the vendored run_mia_inference call."""
     _ensure_vendored_lib_on_path()
     from autorig.mia_inference import run_mia_inference  # type: ignore
@@ -92,6 +92,7 @@ def _run_mia_inference(mesh, model, output_path: str, *,
         no_fingers=no_fingers,
         use_normal=use_normal,
         reset_to_rest=reset_to_rest,
+        apply_predicted=apply_predicted,
     )
 
 
@@ -159,7 +160,22 @@ class BD_AutoRigMIA(io.ComfyNode):
                     default=True,
                     tooltip="Transform output mesh into T-pose rest "
                             "position. Required for downstream PoseFixer "
-                            "to retarget cleanly.",
+                            "to retarget cleanly. NOTE: on its own this is "
+                            "currently a legacy no-op — it only takes "
+                            "effect together with apply_predicted.",
+                    optional=True,
+                ),
+                io.Boolean.Input(
+                    "apply_predicted",
+                    default=False,
+                    tooltip="OPT-IN (default keeps legacy behavior): apply "
+                            "MIA's predicted joint positions to the skeleton "
+                            "instead of exporting the fixed T-pose template "
+                            "armature verbatim. When reset_to_rest is ALSO "
+                            "on, the skeleton is additionally FK-posed by "
+                            "MIA's predicted pose transforms so it lands in "
+                            "the input mesh's own pose (the A-pose route "
+                            "for non-T-posed inputs).",
                     optional=True,
                 ),
                 io.Boolean.Input(
@@ -186,6 +202,7 @@ class BD_AutoRigMIA(io.ComfyNode):
         no_fingers: bool = True,
         use_normal: bool = False,
         reset_to_rest: bool = True,
+        apply_predicted: bool = False,
         remap_to_uefn: bool = True,
     ) -> io.NodeOutput:
         out_dir = Path(folder_paths.get_output_directory())
@@ -203,6 +220,7 @@ class BD_AutoRigMIA(io.ComfyNode):
             no_fingers=no_fingers,
             use_normal=use_normal,
             reset_to_rest=reset_to_rest,
+            apply_predicted=apply_predicted,
         )
         print(f"[BD_AutoRigMIA] Inference complete in "
                f"{time.time() - t0:.2f}s → {result}")

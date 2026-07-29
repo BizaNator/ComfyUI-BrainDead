@@ -227,6 +227,7 @@ def run_mia_inference(
     no_fingers: bool = True,
     use_normal: bool = False,
     reset_to_rest: bool = True,
+    apply_predicted: bool = False,
 ) -> str:
     """
     Run Make-It-Animatable inference on a mesh.
@@ -238,6 +239,16 @@ def run_mia_inference(
         no_fingers: If True, merge finger weights to hand (for models without separate fingers).
         use_normal: If True, use normals for better weights when limbs are close.
         reset_to_rest: If True, transform output to T-pose rest position.
+            NOTE: legacy flag — on its own it changes nothing in the export
+            (historical no-op). It only takes effect together with
+            apply_predicted (see below).
+        apply_predicted: OPT-IN. If True, the Blender export applies MIA's
+            predicted joint positions to the template armature (instead of
+            exporting the fixed T-pose template skeleton verbatim), and —
+            when reset_to_rest is also True — additionally FK-poses that
+            skeleton by MIA's predicted per-bone pose transforms so the
+            exported skeleton lands in the input mesh's own pose. Requires
+            the predicted pose to be serialized (handled below).
 
     Returns:
         Path to output FBX file.
@@ -250,7 +261,8 @@ def run_mia_inference(
     N = models["N"]
 
     print(f"[MIA] Starting inference...")
-    print(f"[MIA] Options: no_fingers={no_fingers}, use_normal={use_normal}, reset_to_rest={reset_to_rest}")
+    print(f"[MIA] Options: no_fingers={no_fingers}, use_normal={use_normal}, "
+          f"reset_to_rest={reset_to_rest}, apply_predicted={apply_predicted}")
 
     # Prepare input
     print(f"[MIA] Preparing input...")
@@ -308,14 +320,17 @@ def run_mia_inference(
         "joints": joints_np[..., :3],
         "joints_tail": joints_np[..., 3:] if joints_np.shape[-1] > 3 else None,
         "bw": bw.squeeze(0).numpy(),
-        "pose": data.pose.squeeze(0).numpy() if reset_to_rest and data.pose is not None else None,
+        "pose": data.pose.squeeze(0).numpy()
+                if (reset_to_rest or apply_predicted) and data.pose is not None
+                else None,
         "bones_idx_dict": BONES_IDX_DICT,
         "pose_ignore_list": [],
     }
 
     # Export to FBX using MIA's Blender integration
     print(f"[MIA] Exporting to FBX...")
-    _export_mia_fbx(output_data, output_path, no_fingers, reset_to_rest)
+    _export_mia_fbx(output_data, output_path, no_fingers, reset_to_rest,
+                    apply_predicted)
 
     print(f"[MIA] Inference complete: {output_path}")
     return output_path
@@ -326,6 +341,7 @@ def _export_mia_fbx(
     output_path: str,
     remove_fingers: bool,
     reset_to_rest: bool,
+    apply_predicted: bool = False,
 ) -> None:
     """
     Export MIA results to FBX using Blender.
@@ -388,6 +404,14 @@ def _export_mia_fbx(
     if data.get("joints_tail") is not None:
         data["joints_tail"].astype(np.float32).tofile(temp_joints_tail)
 
+    # Predicted rest→current per-bone pose transforms (only present when
+    # reset_to_rest or apply_predicted was requested — see run_mia_inference).
+    # Format mirrors braindead_blender/autorig_runner.py: raw float32 +
+    # pose_path/pose_shape entries in the export JSON.
+    temp_pose = os.path.join(temp_dir, "pose.bin")
+    if data.get("pose") is not None:
+        data["pose"].astype(np.float32).tofile(temp_pose)
+
     # Save metadata as JSON
     bones_idx_dict = dict(data["bones_idx_dict"])
     json_data = {
@@ -401,6 +425,9 @@ def _export_mia_fbx(
     if data.get("joints_tail") is not None:
         json_data["joints_tail_path"] = temp_joints_tail
         json_data["joints_tail_shape"] = list(data["joints_tail"].shape)
+    if data.get("pose") is not None:
+        json_data["pose_path"] = temp_pose
+        json_data["pose_shape"] = list(data["pose"].shape)
 
     with open(temp_json, 'w') as f:
         json.dump(json_data, f)
@@ -434,6 +461,8 @@ def _export_mia_fbx(
             cmd.append("--remove_fingers")
         if reset_to_rest:
             cmd.append("--reset_to_rest")
+        if apply_predicted:
+            cmd.append("--apply_predicted")
 
         # Run Blender
         print(f"[MIA] Running Blender: {' '.join(cmd[:4])}...")
