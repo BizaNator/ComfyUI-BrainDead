@@ -24,7 +24,7 @@
     "class_type": "StringConcatenate",
     "inputs": {
       "string_a": [
-        "14",
+        "35",
         0
       ],
       "string_b": "toon_shader",
@@ -70,7 +70,7 @@
     "class_type": "SaveImage",
     "inputs": {
       "images": [
-        "2668",
+        "2918__2824",
         0
       ],
       "filename_prefix": [
@@ -98,7 +98,7 @@
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "2768",
+        "1792__1906",
         0
       ]
     },
@@ -138,7 +138,7 @@
     "class_type": "LayerUtility: GetMainColorsV2",
     "inputs": {
       "image": [
-        "2767",
+        "1792__1906",
         0
       ],
       "k_means_algorithm": "lloyd"
@@ -196,7 +196,7 @@
     "class_type": "InvertMask",
     "inputs": {
       "mask": [
-        "2747",
+        "1611",
         0
       ]
     },
@@ -247,12 +247,12 @@
       "gc_collect": true,
       "unload_all_models": false,
       "any_input": [
-        "2669",
-        0
+        "2918__2824",
+        3
       ],
       "image_pass": [
-        "2669",
-        0
+        "2918__2824",
+        3
       ]
     },
     "_meta": {
@@ -264,8 +264,8 @@
     "inputs": {
       "switch": false,
       "on_false": [
-        "2774",
-        0
+        "4122__4055",
+        1
       ],
       "on_true": [
         "2925",
@@ -283,16 +283,10 @@
         "34",
         0
       ],
-      "width": [
-        "3011",
-        0
-      ],
-      "height": [
-        "3012",
-        0
-      ],
-      "scale_by": 1,
-      "upscale_method": "nearest-exact",
+      "width": 1536,
+      "height": 1536,
+      "scale_by": 1536,
+      "upscale_method": 1536,
       "resize_mode": "pad_edge",
       "crop_position": "#FFFFFF",
       "divisible_by": "center",
@@ -581,8 +575,8 @@
     "class_type": "SplitImageWithAlpha",
     "inputs": {
       "image": [
-        "2669",
-        0
+        "2918__2824",
+        3
       ]
     },
     "_meta": {
@@ -659,7 +653,7 @@
         0
       ],
       "image": [
-        "2766",
+        "1792__1906",
         0
       ]
     },
@@ -696,7 +690,7 @@
     "class_type": "MaskToImage",
     "inputs": {
       "mask": [
-        "2747",
+        "1611",
         0
       ]
     },
@@ -740,8 +734,8 @@
     "class_type": "InvertMask",
     "inputs": {
       "mask": [
-        "2743",
-        0
+        "4586",
+        1
       ]
     },
     "_meta": {
@@ -756,7 +750,7 @@
         0
       ],
       "image": [
-        "2765",
+        "4207",
         0
       ]
     },
@@ -781,7 +775,7 @@
         0
       ],
       "image": [
-        "2763",
+        "28__152",
         0
       ]
     },
@@ -802,7 +796,7 @@
     "class_type": "SaveImage",
     "inputs": {
       "images": [
-        "2670",
+        "2746",
         0
       ],
       "filename_prefix": [
@@ -818,8 +812,8 @@
     "class_type": "MaskToImage",
     "inputs": {
       "mask": [
-        "2743",
-        0
+        "4586",
+        1
       ]
     },
     "_meta": {
@@ -830,7 +824,7 @@
     "class_type": "SaveImage",
     "inputs": {
       "images": [
-        "2682",
+        "2749",
         0
       ],
       "filename_prefix": [
@@ -914,8 +908,8 @@
       "transform_method": "lanczos",
       "anti_aliasing": 0,
       "layer_mask": [
-        "4122__4058",
-        0
+        "4122__4055",
+        1
       ]
     },
     "_meta": {
@@ -1014,7 +1008,7 @@
     "class_type": "SplitImageWithAlpha",
     "inputs": {
       "image": [
-        "2668",
+        "2918__2824",
         0
       ]
     },
@@ -1141,8 +1135,8 @@
       "jpg_quality": 95,
       "skip_if_exists": false,
       "input_1": [
-        "2674",
-        0
+        "2918__2824",
+        2
       ],
       "input_2": [
         "3348",
@@ -1153,7 +1147,7 @@
         0
       ],
       "input_4": [
-        "2668",
+        "2918__2824",
         0
       ],
       "input_5": [
@@ -1161,12 +1155,12 @@
         1
       ],
       "input_6": [
-        "2775",
-        0
+        "4122__4068",
+        1
       ],
       "input_7": [
-        "2669",
-        0
+        "2918__2824",
+        3
       ],
       "input_8": [
         "2673",
@@ -1656,11 +1650,11 @@
     "class_type": "LayerUtility: ColorImage",
     "inputs": {
       "width": [
-        "2691__2482",
+        "2691__2469",
         0
       ],
       "height": [
-        "2691__2483",
+        "2691__2470",
         0
       ],
       "color": [
@@ -1676,11 +1670,11 @@
     "class_type": "LayerUtility: ColorImage",
     "inputs": {
       "width": [
-        "2691__2474",
+        "2691__2469",
         0
       ],
       "height": [
-        "2691__2473",
+        "2691__2470",
         0
       ],
       "color": [
@@ -1696,11 +1690,11 @@
     "class_type": "LayerUtility: ColorImage",
     "inputs": {
       "width": [
-        "2691__2472",
+        "2691__2469",
         0
       ],
       "height": [
-        "2691__2471",
+        "2691__2470",
         0
       ],
       "color": [
@@ -1716,11 +1710,11 @@
     "class_type": "LayerUtility: ColorImage",
     "inputs": {
       "width": [
-        "2691__2482",
+        "2691__2469",
         0
       ],
       "height": [
-        "2691__2483",
+        "2691__2470",
         0
       ],
       "color": [
@@ -1781,11 +1775,11 @@
       ],
       "columns": 5,
       "cell_width": [
-        "2691__2482",
+        "2691__2469",
         0
       ],
       "cell_height": [
-        "2691__2483",
+        "2691__2470",
         0
       ],
       "padding": 0
@@ -1849,11 +1843,11 @@
     "class_type": "LayerUtility: ColorImage",
     "inputs": {
       "width": [
-        "2691__2474",
+        "2691__2469",
         0
       ],
       "height": [
-        "2691__2473",
+        "2691__2470",
         0
       ],
       "color": [
@@ -2107,15 +2101,15 @@
     "class_type": "LayerMask: ShadowHighlightMaskV2",
     "inputs": {
       "image": [
-        "4122",
-        6
+        "4122__4089__4103",
+        0
       ],
       "shadow_level_offset": 0,
       "shadow_range": 0.17,
       "highlight_level_offset": 0,
       "highlight_range": 0.25,
       "mask": [
-        "2770",
+        "1611",
         0
       ]
     },
@@ -2127,8 +2121,8 @@
     "class_type": "ImageCompare",
     "inputs": {
       "image_a": [
-        "4122",
-        6
+        "4122__4089__4103",
+        0
       ],
       "image_b": [
         "1792__1906",
@@ -2167,8 +2161,8 @@
     "class_type": "LayerColor: AutoAdjustV2",
     "inputs": {
       "image": [
-        "4122",
-        6
+        "4122__4089__4103",
+        0
       ],
       "strength": 75,
       "brightness": 0,
@@ -2255,8 +2249,8 @@
     "class_type": "ImageCompare",
     "inputs": {
       "image_a": [
-        "4122",
-        6
+        "4122__4089__4103",
+        0
       ],
       "image_b": [
         "1792__1830",
@@ -2335,7 +2329,7 @@
       ],
       "prompt": "",
       "image1": [
-        "28__164",
+        "28__2929",
         0
       ]
     },
@@ -2355,7 +2349,7 @@
         0
       ],
       "image1": [
-        "28__164",
+        "28__2929",
         0
       ]
     },
@@ -2403,7 +2397,7 @@
         0
       ],
       "seed": [
-        "327",
+        "36",
         0
       ],
       "steps": 4,
@@ -2432,7 +2426,7 @@
     "class_type": "VAEEncode",
     "inputs": {
       "pixels": [
-        "28__164",
+        "28__2929",
         0
       ],
       "vae": [
@@ -2459,7 +2453,7 @@
     "class_type": "PrimitiveInt",
     "inputs": {
       "value": [
-        "325",
+        "1487",
         0
       ]
     },
@@ -2471,7 +2465,7 @@
     "class_type": "ImageScaleToMaxDimension",
     "inputs": {
       "image": [
-        "37",
+        "37__172",
         0
       ],
       "upscale_method": "area",
@@ -2571,7 +2565,7 @@
     "class_type": "ImageResizeKJv2",
     "inputs": {
       "image": [
-        "4443",
+        "28__152",
         0
       ],
       "width": 2048,
@@ -2582,8 +2576,8 @@
       "crop_position": "center",
       "divisible_by": 2,
       "mask": [
-        "4442",
-        0
+        "4122__4057",
+        2
       ],
       "device": "gpu"
     },
@@ -2998,7 +2992,7 @@
         0
       ],
       "seed": [
-        "327",
+        "36",
         0
       ],
       "steps": 4,
@@ -3043,7 +3037,7 @@
     "class_type": "VAEEncode",
     "inputs": {
       "pixels": [
-        "4206__2951",
+        "4206__4205",
         0
       ],
       "vae": [
@@ -3059,8 +3053,8 @@
     "class_type": "BD_MaskFlatten",
     "inputs": {
       "image": [
-        "4122",
-        2
+        "4122__4055",
+        0
       ],
       "background_color": "black",
       "background_color_hex": "#808080",
@@ -3078,7 +3072,7 @@
     "class_type": "BD_MaskFlatten",
     "inputs": {
       "image": [
-        "324",
+        "1792__1906",
         0
       ],
       "background_color": "black",
@@ -3111,7 +3105,7 @@
       ],
       "prompt": "",
       "image1": [
-        "4206__2951",
+        "4206__4205",
         0
       ],
       "image2": [
@@ -3135,7 +3129,7 @@
         0
       ],
       "image1": [
-        "4206__2951",
+        "4206__4205",
         0
       ],
       "image2": [
@@ -3151,7 +3145,7 @@
     "class_type": "MaskPreview",
     "inputs": {
       "mask": [
-        "4122__4100",
+        "4122__3854",
         0
       ]
     },
@@ -3223,7 +3217,7 @@
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "4122__4074",
+        "2925",
         0
       ]
     },
@@ -3247,7 +3241,7 @@
     "class_type": "MaskPreview",
     "inputs": {
       "mask": [
-        "4122__4101",
+        "4122__3853",
         0
       ]
     },
@@ -3355,7 +3349,7 @@
     "class_type": "LayerMask: MaskEdgeUltraDetail V3",
     "inputs": {
       "image": [
-        "4122__4092",
+        "2925",
         0
       ],
       "mask": [
@@ -3401,7 +3395,7 @@
     "class_type": "LayerMask: MaskEdgeUltraDetail V3",
     "inputs": {
       "image": [
-        "4122__4092",
+        "2925",
         0
       ],
       "mask": [
@@ -3447,23 +3441,23 @@
     "class_type": "BD_MaskResolver",
     "inputs": {
       "silhouette": [
-        "4122__4083",
-        0
+        "4122__4068",
+        1
       ],
       "skin_mask": [
-        "4122__4101",
+        "4122__3853",
         0
       ],
       "clothes_mask": [
-        "4122__4100",
+        "4122__3854",
         0
       ],
       "original_image": [
-        "4122__4094",
+        "4122__4068",
         0
       ],
       "accessories_mask": [
-        "4122__4099",
+        "4122__3855",
         0
       ],
       "silhouette_threshold": 0.4,
@@ -3493,7 +3487,7 @@
     "class_type": "LayerColor: AutoAdjustV2",
     "inputs": {
       "image": [
-        "4122__4094",
+        "4122__4068",
         0
       ],
       "strength": 100,
@@ -3505,7 +3499,7 @@
       "blue": 0,
       "mode": "lum + sat",
       "mask": [
-        "4122__4044",
+        "4122__4057",
         0
       ]
     },
@@ -3541,7 +3535,7 @@
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "4122__4081",
+        "2925",
         0
       ]
     },
@@ -3565,8 +3559,8 @@
     "class_type": "MaskPreview",
     "inputs": {
       "mask": [
-        "4122__4083",
-        0
+        "4122__4068",
+        1
       ]
     },
     "_meta": {
@@ -3577,7 +3571,7 @@
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "4122__4094",
+        "4122__4068",
         0
       ]
     },
@@ -3589,7 +3583,7 @@
     "class_type": "MaskPreview",
     "inputs": {
       "mask": [
-        "4122__4066",
+        "4122__3851",
         0
       ]
     },
@@ -3601,8 +3595,8 @@
     "class_type": "MaskToImage",
     "inputs": {
       "mask": [
-        "4122__4061",
-        0
+        "4122__4053",
+        1
       ]
     },
     "_meta": {
@@ -3613,8 +3607,8 @@
     "class_type": "MaskToImage",
     "inputs": {
       "mask": [
-        "4122__4058",
-        0
+        "4122__4055",
+        1
       ]
     },
     "_meta": {
@@ -3649,7 +3643,7 @@
     "class_type": "MaskPreview",
     "inputs": {
       "mask": [
-        "4122__4099",
+        "4122__3855",
         0
       ]
     },
@@ -3673,7 +3667,7 @@
     "class_type": "BD_SAM3MultiPrompt",
     "inputs": {
       "image": [
-        "4122__4076",
+        "2925",
         0
       ],
       "prompts": "shirt\nt\u2011shirt\ntank top\nsweater\nhoodie\njacket\ncoat\nblouse\nvest\n\njeans\nshorts\nskirt\ndress\nleggings\n\nFootwear (explicitly clothing, not skin)\nshoes\nboots\nsneakers\nsandals\nheels\n\nOther clothing\nsocks\nstockings\ntights\nunderwear\nbra\nswimsuit\nbikini\nrobe\ncloak",
@@ -3687,15 +3681,15 @@
       "color_threshold": 0.2,
       "color_mode": "adaptive_lab",
       "color_reference_mask": [
-        "4122__4101",
+        "4122__3853",
         0
       ],
       "adaptive_tolerance": 25,
       "adaptive_sample_threshold": 0.5,
       "adaptive_min_samples": 50,
       "silhouette_mask": [
-        "4122__4077",
-        0
+        "4122__4068",
+        1
       ],
       "enforce_silhouette": true,
       "include_dilate_radius": 64,
@@ -3716,7 +3710,7 @@
     "class_type": "BD_SAM3MultiPrompt",
     "inputs": {
       "image": [
-        "4122__4079",
+        "2925",
         0
       ],
       "prompts": "Wearable accessories\nhat\ncap\nhelmet\nglasses\nsunglasses\nscarf\ntie\nnecklace\nearrings\nbracelet\nwatch\ngloves\nbelt\nface mask\n\nBags & carried items\nbackpack\nhandbag\npurse\nbriefcase\nluggage\nduffel bag\ntote bag\nshopping bag\n\nHead / hair accessories\nheadphones\nearbuds\nhairband\nhair clip\nbow\n\nSmall objects / handheld items\nphone\ncamera\numbrella\nbook\ntablet\nlaptop\nmicrophone\nremote\nkey\nwallet\n\nSports / outdoor accessories\nskateboard\nskis\nsnowboard\ntennis racket\nbaseball bat\ngolf club\nfishing rod\n\nmetal\nearing\nnecklace\nbraclet\nchain\ngun\nbutton\nclasp\nzipper\nknife\nsilver\ngold",
@@ -3730,15 +3724,15 @@
       "color_threshold": 0.2,
       "color_mode": "adaptive_lab",
       "color_reference_mask": [
-        "4122__4101",
+        "4122__3853",
         0
       ],
       "adaptive_tolerance": 25,
       "adaptive_sample_threshold": 0.5,
       "adaptive_min_samples": 50,
       "silhouette_mask": [
-        "4122__4071",
-        0
+        "4122__4068",
+        1
       ],
       "enforce_silhouette": true,
       "include_dilate_radius": 64,
@@ -3759,14 +3753,14 @@
     "class_type": "LayerColor: AutoBrightness",
     "inputs": {
       "image": [
-        "4122__4094",
+        "4122__4068",
         0
       ],
       "strength": 75,
       "saturation": 8,
       "mask": [
-        "4122__4058",
-        0
+        "4122__4055",
+        1
       ]
     },
     "_meta": {
@@ -3789,7 +3783,7 @@
       "blue": 0,
       "mode": "mono",
       "mask": [
-        "4122__4044",
+        "4122__4057",
         0
       ]
     },
@@ -3813,7 +3807,7 @@
     "class_type": "BD_SAM3MultiPrompt",
     "inputs": {
       "image": [
-        "4122__4074",
+        "2925",
         0
       ],
       "prompts": "skin\nbare skin\nexposed skin\nnaked skin\narm skin\nleg skin\nthigh skin\nshoulder skin\nback skin\nstomach skin\nmidriff\nchest skin\nneck skin\nface skin\nhand skin\nfoot skin\nforearm skin",
@@ -3830,8 +3824,8 @@
       "adaptive_sample_threshold": 0.5,
       "adaptive_min_samples": 50,
       "silhouette_mask": [
-        "4122__4072",
-        0
+        "4122__4068",
+        1
       ],
       "enforce_silhouette": true,
       "include_dilate_radius": 64,
@@ -3852,11 +3846,11 @@
     "class_type": "LayerMask: MaskEdgeUltraDetail V3",
     "inputs": {
       "image": [
-        "4122__4093",
+        "2925",
         0
       ],
       "mask": [
-        "4122__4066",
+        "4122__3851",
         0
       ],
       "method": "GuidedFilter",
@@ -3882,7 +3876,7 @@
     "class_type": "BD_SAM3MultiPrompt",
     "inputs": {
       "image": [
-        "4122__4081",
+        "2925",
         0
       ],
       "prompts": "person\nhuman\nman\nwoman\ngirl\nboy",
@@ -3899,7 +3893,7 @@
       "adaptive_sample_threshold": 0.5,
       "adaptive_min_samples": 50,
       "silhouette_mask": [
-        "4122__4084",
+        "4122__4585",
         0
       ],
       "enforce_silhouette": true,
@@ -3921,8 +3915,8 @@
     "class_type": "InvertMask",
     "inputs": {
       "mask": [
-        "4122__4085",
-        0
+        "2925",
+        1
       ]
     },
     "_meta": {
@@ -4090,7 +4084,7 @@
     "class_type": "VAEEncode",
     "inputs": {
       "pixels": [
-        "4582__4553",
+        "4582__4565",
         0
       ],
       "vae": [
@@ -4111,7 +4105,7 @@
       ],
       "prompt": "",
       "image1": [
-        "4582__4553",
+        "4582__4565",
         0
       ],
       "image2": [
@@ -4173,7 +4167,7 @@
         0
       ],
       "image1": [
-        "4582__4553",
+        "4582__4565",
         0
       ],
       "image2": [
@@ -4308,7 +4302,7 @@
         0
       ],
       "image1": [
-        "37__713",
+        "37__189",
         0
       ]
     },
@@ -4325,7 +4319,7 @@
       ],
       "prompt": "",
       "image1": [
-        "37__713",
+        "37__189",
         0
       ]
     },
@@ -4337,7 +4331,7 @@
     "class_type": "VAEEncode",
     "inputs": {
       "pixels": [
-        "37__713",
+        "37__189",
         0
       ],
       "vae": [
@@ -4378,7 +4372,7 @@
     "class_type": "ImageSharpen",
     "inputs": {
       "image": [
-        "2764",
+        "4207",
         0
       ],
       "sharpen_radius": 4,
@@ -4397,7 +4391,7 @@
         0
       ],
       "seed": [
-        "327",
+        "36",
         0
       ],
       "steps": 4,
@@ -4444,7 +4438,7 @@
       ],
       "upscale_method": "area",
       "largest_size": [
-        "325",
+        "1487",
         0
       ]
     },
@@ -4503,7 +4497,7 @@
     "class_type": "Canny",
     "inputs": {
       "image": [
-        "2764",
+        "4207",
         0
       ],
       "low_threshold": 0.36,
@@ -4557,8 +4551,8 @@
     "class_type": "SplitImageWithAlpha",
     "inputs": {
       "image": [
-        "2674",
-        0
+        "2918__2824",
+        2
       ]
     },
     "_meta": {
@@ -4581,8 +4575,8 @@
     "class_type": "JoinImageWithAlpha",
     "inputs": {
       "image": [
-        "2674",
-        0
+        "2918__2824",
+        2
       ],
       "alpha": [
         "3340__3045",
@@ -4597,8 +4591,8 @@
     "class_type": "BD_MaskFlatten",
     "inputs": {
       "image": [
-        "2674",
-        0
+        "2918__2824",
+        2
       ],
       "background_color": "green",
       "background_color_hex": "#808080",
@@ -5127,8 +5121,8 @@
     "inputs": {
       "switch": false,
       "on_false": [
-        "4122__4090",
-        0
+        "4122__4068",
+        1
       ],
       "on_true": [
         "4122__4089__4117",
@@ -5143,8 +5137,8 @@
     "class_type": "InvertMask",
     "inputs": {
       "mask": [
-        "4122__4090",
-        0
+        "4122__4068",
+        1
       ]
     },
     "_meta": {

@@ -46,6 +46,51 @@ def main():
     object_info = rw.api_get(f"{args.server}/object_info")
     api = rw.workflow_to_api(workflow, object_info)
 
+    # export-time asserts (the server ACCEPTS broken graphs silently — this is the
+    # only place to catch them):
+    #   A) every link ref resolves to an emitted node
+    #   B) every emitted node is reachable from a declared input node (LoadImage etc.)
+    emitted = set(api.keys())
+    dangling = []
+    for nid, node in api.items():
+        for inp, val in node.get("inputs", {}).items():
+            if isinstance(val, list) and len(val) == 2 and isinstance(val[0], str):
+                if val[0] not in emitted:
+                    dangling.append((nid, inp, val[0]))
+    if dangling:
+        print(f"ASSERT FAIL: {len(dangling)} dangling link refs:")
+        for d in dangling[:20]:
+            print("   ", d)
+        sys.exit(2)
+
+    def _walk(roots):
+        # FORWARD walk from input roots: link origin -> its targets
+        fwd = {}
+        for nid, node in api.items():
+            for inp, val in node.get("inputs", {}).items():
+                if isinstance(val, list) and len(val) == 2 and isinstance(val[0], str) and val[0] in emitted:
+                    fwd.setdefault(val[0], []).append(nid)
+        seen, stack = set(), list(roots)
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(fwd.get(cur, []))
+        return seen
+    roots = [nid for nid, node in api.items()
+             if not any(isinstance(v, list) and len(v) == 2 and isinstance(v[0], str)
+                        for v in node.get("inputs", {}).values())]
+    if roots:
+        reachable = _walk(roots)
+        stranded = emitted - reachable
+        if stranded:
+            print(f"ASSERT WARN: {len(stranded)} orphaned nodes (inbound-linked but unreachable from any source root):")
+            for s in sorted(stranded, key=str)[:15]:
+                print("   ", s, api[s].get("class_type"))
+    else:
+        print("ASSERT WARN: no source-root nodes in export")
+
     # API exports live in api/ (NOT example_workflows/ — ComfyUI scans that for UI templates and
     # would try to load the API-format json as a graph → empty-canvas error in the browser).
     if args.out:
