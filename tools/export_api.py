@@ -28,10 +28,21 @@ def main():
     ap.add_argument("template", help="UI-graph template JSON (example_workflows/BD-*.json)")
     ap.add_argument("--server", default="http://127.0.0.1:8188")
     ap.add_argument("--out", default=None, help="Output path (default: <template>.api.json)")
+    ap.add_argument("--expand-subgraphs", action="store_true",
+                    help="Recursively inline subgraph instances (UUID-typed nodes) before conversion. "
+                         "Without this flag, instances are skipped as 'not found in object_info'.")
+    ap.add_argument("--max-depth", type=int, default=4, help="Max subgraph nesting depth to expand")
     args = ap.parse_args()
 
     rw = load_runner()
     workflow = json.load(open(args.template))
+    if args.expand_subgraphs:
+        tools_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, tools_dir)
+        from subgraph_expand import expand_graph
+        before = len(workflow.get("nodes", []))
+        workflow = expand_graph(workflow, max_depth=args.max_depth)
+        print(f"subgraph expansion: {before} -> {len(workflow['nodes'])} nodes")
     object_info = rw.api_get(f"{args.server}/object_info")
     api = rw.workflow_to_api(workflow, object_info)
 
