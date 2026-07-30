@@ -127,12 +127,44 @@ except Exception as e:
     sys.exit(1)
 
 # ── predicted-skeleton helpers (opt-in --apply_predicted path) ─────────────
-# All math runs in MIA's normalized Y-up frame (the frame of mesh.glb,
-# joints.bin and pose.bin). Conversion to Blender's Z-up mirrors the glTF
-# importer: (x, y, z) -> (x, -z, y).
+# MIA predicts joints in a NORMALIZED, MESH-CENTERED frame (recentered to the
+# sample bbox, uniformly scaled, Y-up) — NOT in the template armature's world
+# frame. Applying them raw lands the skeleton ~h/2 below and at the wrong
+# scale vs where the template skeleton (and everything downstream) expects it.
+# Fix: similarity-fit (Kabsch: rotation + uniform scale + translation) the
+# predicted REST joints onto the template's rest world joint positions — same
+# topology, same rest pose, so the fit only removes frame differences and
+# preserves the character's predicted proportions. Pose rotations are
+# conjugated into the world frame by the fit's rotation.
 
-def _mia_to_blender(p):
-    return Vector((float(p[0]), float(-p[2]), float(p[1])))
+def _frame_fit(src, dst, src_up_axis=1, dst_up_axis=2):
+    """Map MIA-normalized joints onto template-world joints.
+
+    Rotation: Kabsch (unit scale) over all bones — robust to proportion
+    differences and absorbs both the Y-up->Z-up axis swap and MIA's
+    per-mesh hips-alignment rotation.
+    Scale: height-span ratio along the up axes — a plain least-squares
+    (Kabsch-with-scale) fit would trade predicted proportions against the
+    template (arm-length differences would drag the global scale and
+    displace the legs); the REST skeleton is always a canonical T-pose, so
+    the vertical span is the one proportion-stable measurement.
+    Translation: least-squares given R and s.
+    Returns (s, R, t, max_residual)."""
+    cs = src.mean(axis=0)
+    cd = dst.mean(axis=0)
+    X = src - cs
+    Y = dst - cd
+    U, _, Vt = np.linalg.svd(X.T @ Y)
+    d = float(np.sign(np.linalg.det(Vt.T @ U.T)))
+    D = np.diag([1.0, 1.0, d])
+    R = Vt.T @ D @ U.T
+    Xr = (R @ X.T).T
+    src_span = Xr[:, dst_up_axis].max() - Xr[:, dst_up_axis].min()
+    dst_span = Y[:, dst_up_axis].max() - Y[:, dst_up_axis].min()
+    s = float(dst_span / max(src_span, 1e-12))
+    t = cd - s * (R @ cs)
+    resid = np.linalg.norm(dst - (s * (R @ src.T).T + t), axis=1).max()
+    return s, R, t, float(resid)
 
 
 def _ortho6d_to_matrix_np(o6):
@@ -159,8 +191,9 @@ def _fk_predicted_pose(rest_joints, parents, Rloc, order):
     (relative_to_source=False). Rotation axes are global (rest-world);
     rotation origin is each joint's posed position. parents: list with -1
     for roots. order: joint indices in parents-before-children order.
+    All inputs/outputs in the SAME world frame as rest_joints.
     Returns (G, posed): per-bone 4x4 global transforms and posed joint
-    positions, both in the MIA frame."""
+    positions."""
     K = rest_joints.shape[0]
     G = [None] * K
     posed = [None] * K
@@ -196,13 +229,21 @@ def _apply_predicted_skeleton(armature_obj, joints, joints_tail,
                               bones_idx_dict, pose6d):
     """Move the template armature onto MIA's predicted skeleton.
 
-    joints: (K, 3) predicted REST joint positions (MIA frame).
-    joints_tail: (K, 3) predicted tail positions or None.
+    joints: (K, 3) predicted REST joint positions in MIA's NORMALIZED,
+        MESH-CENTERED frame (recentered, uniformly scaled, Y-up).
+    joints_tail: (K, 3) predicted tail positions (same frame) or None.
     pose6d: (K, 6) ortho6d local rest->current rotations, or None. When
         given, the skeleton is FK-posed into the input mesh's own pose.
+
+    Frame handling: _frame_fit (Kabsch rotation + height-anchored scale +
+    LS translation) maps the predicted rest joints into the template
+    armature's world frame — the frame the legacy export and all downstream
+    tooling already work in — while preserving the character's predicted
+    proportions (no argmin scale tug-of-war between limbs and template).
     Bone rolls/hierarchy are preserved from the template.
     """
-    inv = armature_obj.matrix_world.inverted()
+    mw = armature_obj.matrix_world
+    inv = mw.inverted()
     K = len(bones_idx_dict)
     idx_of = dict(bones_idx_dict)
 
@@ -247,12 +288,31 @@ def _apply_predicted_skeleton(armature_obj, joints, joints_tail,
         order = [i for i in order if i < joints.shape[0]]
     KJ = joints.shape[0]
 
+    # Template rest world heads (captured BEFORE moving anything) — the fit
+    # target that puts the predicted skeleton in the familiar world frame.
+    tmpl_w = {i: np.array(mw @ bone_of[i].head, dtype=np.float64)
+              for i in order}
+
+    src = np.array([joints[i] for i in order], dtype=np.float64)
+    dst = np.array([tmpl_w[i] for i in order], dtype=np.float64)
+    s, R, t, fit_resid = _frame_fit(src, dst)
+    print(f"[MIA Export] apply_predicted frame fit: scale={s:.4f} "
+          f"trans=[{t[0]:.3f},{t[1]:.3f},{t[2]:.3f}] max_resid={fit_resid:.4f}")
+
+    def _to_world(pts):
+        return (s * (R @ np.asarray(pts, dtype=np.float64).T)).T + t
+
+    joints_w = _to_world(joints)
+    tails_w = _to_world(joints_tail) if joints_tail is not None else None
+
     G = posed = None
     if pose6d is not None:
         Rloc = _ortho6d_to_matrix_np(pose6d)
+        # conjugate the per-bone rotations into the world frame
+        Rloc = np.array([R @ r @ R.T for r in Rloc])
         parents = [parent_of.get(i, -1) if i < KJ else -1 for i in range(KJ)]
         order_full = sorted(range(KJ), key=_depth)
-        G_all, posed_all = _fk_predicted_pose(joints, parents, Rloc, order_full)
+        G_all, posed_all = _fk_predicted_pose(joints_w, parents, Rloc, order_full)
         G = {i: G_all[i] for i in order}
         posed = {i: posed_all[i] for i in order}
 
@@ -266,22 +326,22 @@ def _apply_predicted_skeleton(armature_obj, joints, joints_tail,
     moved = 0
     for i in order:
         eb = bone_of[i]
-        head_w = posed[i] if posed is not None else joints[i]
-        if joints_tail is not None:
+        head_w = posed[i] if posed is not None else joints_w[i]
+        if tails_w is not None:
             if posed is not None:
-                tail_w = (G[i][:3, :3] @ (joints_tail[i] - joints[i])) + posed[i]
+                tail_w = (G[i][:3, :3] @ (tails_w[i] - joints_w[i])) + posed[i]
             else:
-                tail_w = joints_tail[i]
+                tail_w = tails_w[i]
         elif child_of.get(i) is not None:
             c = child_of[i]
-            tail_w = posed[c] if posed is not None else joints[c]
+            tail_w = posed[c] if posed is not None else joints_w[c]
         else:
             # leaf: keep template direction/length relative to its old head
             tail_w = None
-        h_b = inv @ _mia_to_blender(head_w)
+        h_b = inv @ Vector(head_w)
         eb.head = h_b
         if tail_w is not None:
-            t_b = inv @ _mia_to_blender(tail_w)
+            t_b = inv @ Vector(tail_w)
             if (t_b - h_b).length < 1e-6:
                 t_b = h_b + Vector((0, 0, 1e-4))
             eb.tail = t_b

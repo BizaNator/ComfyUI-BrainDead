@@ -1,8 +1,10 @@
 # DEPLOY — opt-in MIA predicted-skeleton export (deploy-pending, owner-gated)
 
-Commit: see `git log -1` (message: `feat(autorig): opt-in apply_predicted …`).
-**DO NOT deploy until the owner greenlights.** The live pack runs on BRAINZ at
-`/opt/comfyui` — nothing here has been pushed there.
+Commits: `c93a324` (initial opt-in feature) + follow-up frame-fit fix
+(`fix(autorig): frame-fit apply_predicted joints into template world`).
+The initial feature is deployed on BRAINZ; the frame-fit fix fixes smoke-2
+(predicted joints landed ~h/2 low in MIA's normalized mesh-centered frame).
+**DO NOT deploy anything further until the owner greenlights.**
 
 ## What changed (3 files)
 
@@ -20,6 +22,15 @@ Commit: see `git log -1` (message: `feat(autorig): opt-in apply_predicted …`).
     the skeleton by the predicted ortho6d per-bone rotations (numpy mirror of
     `mia/utils.py::pose_local_to_global`) so the exported skeleton lands in
     the INPUT MESH'S OWN POSE (A-pose route — no downstream T→A march).
+  - FRAME FIX (follow-up): predicted joints arrive in MIA's NORMALIZED,
+    MESH-CENTERED frame (recentered, ~2-unit scale, Y-up). `_frame_fit`
+    (Kabsch rotation + height-span-anchored scale + least-squares
+    translation) maps them into the template armature's world frame before
+    application — Kabsch rotation absorbs the axis swap and MIA's per-mesh
+    hips-alignment rotation; height-anchored scale preserves predicted
+    proportions (a plain argmin Kabsch scale drags limbs toward template
+    proportions); pose rotations are conjugated by the fit rotation. Fit
+    diagnostics (scale/translation/max residual) are printed per run.
   - UNCHANGED default: no flag → fixed T-pose template armature verbatim,
     `--reset_to_rest` alone stays the historical no-op (verified: pre/post
     probes of unflagged export are identical to 0.0).
@@ -39,14 +50,22 @@ whole hand collapsed onto `thumb_03`).
 ## Test evidence (harness: `B:\Brains\Characters\_autorig_runs\_mia_export_harness\`)
 
 Synthetic `data.json`/`bw.bin`/`joints.bin`/`joints_tail.bin`/`pose.bin` per
-the runner format, run through Blender 4.3 with the legacy and new scripts:
+the runner format, run through Blender 4.3 with the legacy and new scripts.
+joints are fabricated in a TRUE MIA-normalized frame (recentered, 1.099x
+normalized scale, Y-up) with 1.25x-lengthened arms — the exact frame that
+smoked out the offset bug:
 - legacy file vs new file, no flags: bone heads identical (max diff 0.0).
-- `--apply_predicted` (+0.1 X offset joints): all 65 heads moved exactly
-  (max err 1e-6).
-- `--apply_predicted --reset_to_rest` (45° about-Y on `mixamorig:LeftArm`):
-  true subtree matches the analytic 45°-about-pivot prediction (max err 1e-6);
-  all other bones unmoved (max err 2e-6).
-- `python -m py_compile` clean on all three touched files.
+- `--apply_predicted`: frame fit recovered scale 0.9098 (true inverse of the
+  1.099 normalization) and the ~h/2 re-grounding translation; legs land
+  1.6 mm from template positions, skeleton height exact (ratio 1.0009),
+  LeftArm head z 1.442 vs 1.441 template, and the predicted 1.25x arm
+  proportions survive EXACTLY (all four arm segments ratio 1.250, leg
+  segment 1.000).
+- `--apply_predicted --reset_to_rest` (45deg about MIA-Y on
+  `mixamorig:LeftArm`): rotation conjugates into world Z (axis Z component
+  1.000), descendants rigid to 0.00000, pivot unmoved, non-descendants
+  byte-identical to the unposed run.
+- `python -m py_compile` clean on all touched files.
 
 ## Deploy steps (BRAINZ, when approved)
 
@@ -61,7 +80,11 @@ the runner format, run through Blender 4.3 with the legacy and new scripts:
    output must match current behavior (fixed T-pose template skeleton).
 4. A-pose route test: same workflow with `apply_predicted=true` +
    `reset_to_rest=true` on an A-posed GLB → exported skeleton should land in
-   the mesh's own pose (check hand joints sit inside the hand geometry).
+   the mesh's own pose AND in the template-world frame — check the
+   `frame fit` log line (scale should be near the character's inverse
+   normalization, translation should re-ground by ~half the skeleton
+   height) and that hand joints sit inside the hand geometry at the right
+   height (arm joints ~shoulder height in world units, NOT ~0.5).
 
 ## Risks / notes
 
