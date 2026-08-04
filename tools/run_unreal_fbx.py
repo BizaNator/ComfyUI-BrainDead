@@ -24,6 +24,9 @@ STUDIO_API = "/mnt/tank/Studio/Brains/Workflows/COB_3d_TrellisUnrealFBX_v01_API.
 REPO_API = os.path.join(HERE, "..", "api", "BD-trellis2_unreal_fbx.api.json")
 DEFAULT_API = STUDIO_API if os.path.exists(STUDIO_API) else REPO_API
 CHAR_BASE = "/mnt/tank/Studio/Brains/Characters"
+# CPU-offloaded texture baking routinely exceeds the old 30-minute poll limit.
+# Keep a bounded, explicit default rather than silently treating a live job as failed.
+DEFAULT_TIMEOUT_SECONDS = 7200
 
 
 def _get(url):
@@ -63,7 +66,7 @@ def find_nodes(api, class_type):
     return [nid for nid, n in api.items() if n.get("class_type") == class_type]
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--image", required=True, help="Character image (head or body)")
     ap.add_argument("--name", required=True, help="Character name → <name>.fbx")
@@ -80,8 +83,17 @@ def main():
                     help="Body part → Characters/<name>/models/<part>/unreal/ (e.g. body, head, arm_left)")
     ap.add_argument("--char-base", default=CHAR_BASE,
                     help="Studio Characters root. Set empty to skip the character-folder copy.")
-    ap.add_argument("--timeout", type=int, default=1800)
-    args = ap.parse_args()
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="Maximum seconds to wait for ComfyUI completion (default: 7200)",
+    )
+    return ap
+
+
+def main():
+    args = build_parser().parse_args()
 
     api = json.load(open(args.api))
 
