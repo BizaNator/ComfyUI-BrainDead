@@ -122,11 +122,38 @@ def main():
     pid = _post(f"{args.server}/prompt", {"client_id": client_id, "prompt": api}).get("prompt_id")
     if not pid:
         print(json.dumps({"status": "error", "error": "no prompt_id (submit rejected)"})); sys.exit(1)
+    # Poll loop: hard deadline + progress detection.  (SBAI-6095)
+    # The plain `deadline = now + timeout` version charged QUEUE WAIT against the
+    # execution budget: batch several --3d jobs and the later ones burn the whole
+    # window sitting in the queue, then get abandoned seconds before ComfyUI
+    # finishes them successfully. Reproduced 2026-08-05 on prompt d5c1042b
+    # (queued 06:55, executed 07:18-07:25, wrapper gave up at the flat 1800s mark
+    # while the server returned SUCCESS and a valid 10.8MB FBX).
+    # We now extend the deadline whenever the job is demonstrably still alive in
+    # the pending/running queue.  Hard cap: 3x the requested timeout, so a
+    # genuinely hung job still terminates.
     deadline = time.time() + args.timeout
-    while time.time() < deadline:
+    hard_cap = time.time() + args.timeout * 3
+    last_queue_check = 0.0
+    while time.time() < deadline and time.time() < hard_cap:
         hist = _get(f"{args.server}/history/{pid}")
         if pid in hist:
             break
+
+        # Every 60s, check /queue to see if our prompt is still active.
+        now = time.time()
+        if now - last_queue_check >= 60:
+            last_queue_check = now
+            try:
+                queue = _get(f"{args.server}/queue")
+                running = any(pid in entry for entry in queue.get("queue_running", []))
+                pending = any(pid in entry for entry in queue.get("queue_pending", []))
+                if running or pending:
+                    # Job is still alive on the server — give it more time.
+                    deadline = now + args.timeout
+            except Exception:
+                pass  # queue check is best-effort; don't fail the poll
+
         time.sleep(3.0)
     else:
         print(json.dumps({"status": "error", "error": "timeout", "prompt_id": pid})); sys.exit(1)
