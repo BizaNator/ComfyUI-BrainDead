@@ -121,6 +121,14 @@ def main():
         for nid in find_nodes(api, "BD_DetailNormalFromAlbedo"):
             api[nid]["inputs"]["detail_strength"] = args.detail_strength
 
+    # 3b. optional VRAM-mode override (TRELLIS_VRAM_MODE=cpu_offload|disk_offload|keep_loaded)
+    #     — lets constrained-card runs drop from keep_loaded (~12GB) without editing the workflow JSON
+    vram_mode = os.environ.get("TRELLIS_VRAM_MODE")
+    if vram_mode:
+        for n in api.values():
+            if "vram_mode" in n.get("inputs", {}):
+                n["inputs"]["vram_mode"] = vram_mode
+
     # 4. submit + poll
     client_id = uuid.uuid4().hex
     pid = _post(f"{args.server}/prompt", {"client_id": client_id, "prompt": api}).get("prompt_id")
