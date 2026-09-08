@@ -20,7 +20,8 @@ SOURCE = Path(os.environ.get('BDB_NATIVE_TEST_FBX',
 BLEND = Path(os.environ.get('BDB_NATIVE_TEST_BLEND',
     '/mnt/tank/Studio/Brains/Characters/_base_models/codex_male_v02/COB_Male_Base_v02.blend'))
 BLENDER = os.environ.get('BDB_NATIVE_TEST_BLENDER') or shutil.which('blender')
-SCRIPT, REFERENCE, CONTRACT = conversion.defaults('NATIVE_DEVICE')
+BACKEND = os.environ.get('BDB_NATIVE_TEST_CONVERTER', '')
+SCRIPT, REFERENCE, CONTRACT = conversion.defaults('NATIVE_DEVICE', BACKEND)
 HAS_STUDIO = bool(BLENDER and all(p.is_file() for p in (SOURCE, BLEND, SCRIPT, REFERENCE, CONTRACT)))
 
 
@@ -41,7 +42,7 @@ class NativeInputTests(unittest.TestCase):
 
     def test_unknown_target_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Unknown target'):
-            conversion.defaults('NATIVE_PLAYER')
+            conversion.defaults('UNKNOWN_TARGET')
 
 
 @unittest.skipUnless(HAS_STUDIO, 'Requires studio reference bundle, reviewed v02 and CPU Blender 5.1.2')
@@ -49,7 +50,8 @@ class NativeBlenderIntegrationTests(unittest.TestCase):
     def test_real_fbx_keeps_fingers_and_morphs(self):
         before = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
         with tempfile.TemporaryDirectory(prefix='bdb_native_test_') as folder:
-            result = conversion.convert(SOURCE, folder, filename='NativeProbe', blender_executable=BLENDER)
+            result = conversion.convert(SOURCE, folder, filename='NativeProbe', blender_executable=BLENDER,
+                                        converter_script=BACKEND)
             fbx = Path(result['fbx_path'])
             self.assertTrue(fbx.is_file())
             self.assertTrue(Path(result['blend_path']).is_file())
@@ -82,8 +84,28 @@ class NativeBlenderIntegrationTests(unittest.TestCase):
                 check=True, env=dict(os.environ, CUDA_VISIBLE_DEVICES=''),
                 stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
             with self.assertRaisesRegex(RuntimeError, 'Source needs actual finger weights.*index_03_l'):
-                conversion.convert(fixture, root, filename='MustFail', blender_executable=BLENDER)
+                conversion.convert(fixture, root, filename='MustFail', blender_executable=BLENDER,
+                                   converter_script=BACKEND)
             self.assertFalse(list(root.glob('MustFail_*/bundle/exports/*.fbx')))
+
+    @unittest.skipUnless(BACKEND, 'Set BDB_NATIVE_TEST_CONVERTER to BrainDead Blender 1.3.0')
+    def test_player_profile_uses_shared_resolver_and_exports(self):
+        script, reference, contract = conversion.defaults('NATIVE_PLAYER', BACKEND)
+        self.assertEqual(script, Path(BACKEND))
+        self.assertTrue(reference.is_file() and contract.is_file())
+        before = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory(prefix='bdb_player_test_') as folder:
+            result = conversion.convert(SOURCE, folder, filename='PlayerProbe',
+                target_profile='NATIVE_PLAYER', converter_script=BACKEND, blender_executable=BLENDER)
+            report = json.loads(Path(result['report_path']).read_text())
+            self.assertEqual(report['profile'], 'NATIVE_PLAYER')
+            self.assertFalse(report['engine_playback_verified'])
+            audits = json.loads((Path(result['fbx_path']).parent.parent / 'export_audits.json').read_text())
+            full = audits[Path(result['fbx_path']).name]
+            self.assertTrue(full['structural_pass'], full['errors'])
+            self.assertEqual(full['target_bones'], 279)  # root object makes 280 FBX hierarchy entries
+            self.assertEqual(len(full['morphs']), 8)
+        self.assertEqual(hashlib.sha256(SOURCE.read_bytes()).hexdigest(), before)
 
 
 if __name__ == '__main__':

@@ -17,10 +17,10 @@ class BD_TargetFortniteSkeleton(io.ComfyNode):
         return io.Schema(
             node_id='BD_TargetFortniteSkeleton', display_name='BD Native Fortnite Skeleton',
             category='🧠BrainDead/AutoRig',
-            description='Repose a rigged FBX or blend to the measured Character Device reference on CPU. Keeps existing weights and morphs; exports and audits a new copy.',
+            description='Repose a rigged FBX or blend to the measured Character Device or full Player reference on CPU. Keeps existing weights and morphs; exports and audits a new copy.',
             inputs=[
                 io.String.Input('source_asset', tooltip='Rigged FBX or .blend with canonical bone names.'),
-                io.Combo.Input('target_profile', options=['NATIVE_DEVICE', 'FAB_UEFN'], default='NATIVE_DEVICE'),
+                io.Combo.Input('target_profile', options=['NATIVE_DEVICE', 'NATIVE_PLAYER', 'FAB_UEFN'], default='NATIVE_DEVICE'),
                 io.String.Input('filename', default='NativeCharacter'),
                 io.Boolean.Input('require_fingers', default=True, tooltip='Full characters must weight all 30 finger bones. Disable for standalone non-hand parts.'),
                 io.String.Input('source_rig', default='root', optional=True),
