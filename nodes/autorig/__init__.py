@@ -15,12 +15,14 @@ Nodes:
   • BD_AnimRetarget    — retarget HunyuanMotion SMPL-H animation → UEFN character
 
 Pipeline:
-    Mesh → BD_AutoRigMIA  →  BD_AutoRigUEFN  →  UEFN FBX (ready for import)
+    Mesh → BD_AutoRigMIA → BD_AutoRigUEFN (Fab) → BD_TargetFortniteSkeleton (native Device)
 
     BD_AutoRigMIA produces a Mixamo-rigged FBX.
     BD_AutoRigUEFN transfers weights from the bundled SKM_UEFN_Mannequin
     reference via Blender's Data Transfer modifier, producing a character
-    bound to the genuine UEFN/Fortnite armature.
+    bound to the downloaded Fab mannequin. Its rest pose differs from the
+    native Character Device. BD_TargetFortniteSkeleton performs the measured
+    native completion and audits the export; existing finger weights must pass.
 
     BD_MixamoToUEFN is a lightweight alternative that only renames bones
     (no weight transfer) — use when you have an existing Mixamo FBX and
@@ -66,6 +68,12 @@ from .anim_retarget import (
     ANIM_RETARGET_NODES,
     ANIM_RETARGET_DISPLAY_NAMES,
 )
+from .native_skeleton import (
+    BD_TargetFortniteSkeleton,
+    NATIVE_SKEL_V3_NODES,
+    NATIVE_SKEL_NODES,
+    NATIVE_SKEL_DISPLAY_NAMES,
+)
 
 
 AUTORIG_V3_NODES = [
@@ -75,6 +83,7 @@ AUTORIG_V3_NODES = [
     *UEFN_SKEL_V3_NODES,
     *RIG_PREVIEW_V3_NODES,
     *ANIM_RETARGET_V3_NODES,
+    *NATIVE_SKEL_V3_NODES,
 ]
 
 AUTORIG_NODES = {
@@ -84,6 +93,7 @@ AUTORIG_NODES = {
     **UEFN_SKEL_NODES,
     **RIG_PREVIEW_NODES,
     **ANIM_RETARGET_NODES,
+    **NATIVE_SKEL_NODES,
 }
 
 AUTORIG_DISPLAY_NAMES = {
@@ -93,6 +103,7 @@ AUTORIG_DISPLAY_NAMES = {
     **UEFN_SKEL_DISPLAY_NAMES,
     **RIG_PREVIEW_DISPLAY_NAMES,
     **ANIM_RETARGET_DISPLAY_NAMES,
+    **NATIVE_SKEL_DISPLAY_NAMES,
 }
 
 __all__ = [
@@ -102,6 +113,7 @@ __all__ = [
     "BD_AutoRigUEFN",
     "BD_RigPreview",
     "BD_AnimRetarget",
+    "BD_TargetFortniteSkeleton",
     "AUTORIG_V3_NODES",
     "AUTORIG_NODES",
     "AUTORIG_DISPLAY_NAMES",

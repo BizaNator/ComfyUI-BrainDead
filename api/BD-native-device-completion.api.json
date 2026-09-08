@@ -1,0 +1,16 @@
+{
+  "1": {
+    "class_type": "BD_TargetFortniteSkeleton",
+    "inputs": {
+      "source_asset": "/mnt/tank/Studio/Brains/Characters/_base_models/codex_male_v02/exports/SK_COB_Male_Base_v02.fbx",
+      "target_profile": "NATIVE_DEVICE",
+      "filename": "NativeDeviceCharacter",
+      "require_fingers": true,
+      "source_rig": "root",
+      "reference_fbx": "",
+      "reference_contract": "",
+      "converter_script": "",
+      "blender_executable": ""
+    }
+  }
+}

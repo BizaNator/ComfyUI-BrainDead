@@ -19,8 +19,9 @@ What this node does (headless Blender):
   7. Bind the character mesh to the UEFN armature.
   8. Export the result as FBX.
 
-The output FBX contains the full UEFN/Fortnite skeleton with genuine skin
-weights interpolated from the mannequin reference, ready for import into UEFN.
+The output FBX uses the downloaded Fab mannequin reference. The native
+Character Device has a different rest pose. Use BD_TargetFortniteSkeleton
+after this node for native completion and inspect its skin-weight audit.
 
 Accepts both Mixamo-named (Hips/LeftShoulder) and already-UEFN-renamed
 (pelvis/clavicle_l) input FBX; the headless script auto-detects bone names.
@@ -56,14 +57,15 @@ class BD_AutoRigUEFN(io.ComfyNode, BlenderNodeMixin):
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="BD_AutoRigUEFN",
-            display_name="BD AutoRig → UEFN Skeleton",
+            display_name="BD AutoRig → Fab UEFN Skeleton",
             category="🧠BrainDead/AutoRig",
             description=(
-                "Step 2: Convert a Mixamo-rigged FBX (from BD AutoRig MIA) to a full "
-                "UEFN/Fortnite skeleton. Uses the bundled SKM_UEFN_Mannequin as a "
+                "Legacy Fab stage: convert a Mixamo-rigged FBX (from BD AutoRig MIA) to the "
+                "downloaded Fab skeleton. Uses the bundled SKM_UEFN_Mannequin as a "
                 "weight-transfer donor — scales and aligns the character, bakes the mesh "
                 "to REST pose, transfers UEFN skin weights via Data Transfer modifier, and "
-                "binds it to the UEFN armature. Output is importable directly into UEFN."
+                "binds it to that armature. Add BD Native Fortnite Skeleton for measured "
+                "Character Device completion; inspect actual finger weights."
             ),
             inputs=[
                 io.String.Input(
@@ -218,4 +220,4 @@ class BD_AutoRigUEFN(io.ComfyNode, BlenderNodeMixin):
 
 UEFN_SKEL_V3_NODES       = [BD_AutoRigUEFN]
 UEFN_SKEL_NODES           = {"BD_AutoRigUEFN": BD_AutoRigUEFN}
-UEFN_SKEL_DISPLAY_NAMES   = {"BD_AutoRigUEFN": "BD AutoRig → UEFN Skeleton"}
+UEFN_SKEL_DISPLAY_NAMES   = {"BD_AutoRigUEFN": "BD AutoRig → Fab UEFN Skeleton"}
