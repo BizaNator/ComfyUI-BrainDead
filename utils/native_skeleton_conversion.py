@@ -1,5 +1,6 @@
 """CPU native completion through the studio's shared BrainDead Blender CLI."""
 import json
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -8,12 +9,21 @@ import subprocess
 import tempfile
 
 
-def defaults(profile):
+def defaults(profile, converter_script=''):
     brains = Path(r'B:\Brains') if os.name == 'nt' else Path('/mnt/tank/Studio/Brains')
-    script = brains / 'Tools/BrainDeadBlender/scripts/utils/convert_skeleton_target.py'
+    script = Path(converter_script) if converter_script else brains / 'Tools/BrainDeadBlender/scripts/utils/convert_skeleton_target.py'
+    resolver = script.resolve().parent.parent.parent / 'braindead_blender/reference_paths.py'
+    if resolver.is_file():
+        spec = importlib.util.spec_from_file_location('bdb_reference_paths', resolver)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        reference, contract = module.reference_paths(profile)
+        return script, reference, contract
     folder = brains / 'Characters/_uefn_reference/native_contracts/codex_device_v01'
     if profile == 'NATIVE_DEVICE':
         return script, folder / 'CP_Device_Mannequin_named.fbx', folder / 'CP_Device_Mannequin_named.provenance.json'
+    if profile == 'NATIVE_PLAYER':
+        raise ValueError('NATIVE_PLAYER requires BrainDead Blender 1.3.0 or newer; update converter_script')
     if profile == 'FAB_UEFN':
         return script, brains / 'Skills/char-designer/skm_uefn_mannequin.FBX', None
     raise ValueError('Unknown target profile: ' + profile)
@@ -27,7 +37,15 @@ def convert(source_asset, output_root, *, target_profile='NATIVE_DEVICE', filena
     source = Path(source_asset).expanduser().resolve()
     if not source.is_file() or source.suffix.lower() not in ('.blend', '.fbx'):
         raise ValueError('Choose an existing rigged .blend or .fbx')
-    default_script, default_reference, default_contract = defaults(target_profile)
+    if reference_fbx and (reference_contract or target_profile == 'FAB_UEFN'):
+        if target_profile not in ('NATIVE_DEVICE', 'NATIVE_PLAYER', 'FAB_UEFN'):
+            raise ValueError('Unknown target profile: ' + target_profile)
+        default_script = Path(converter_script) if converter_script else (
+            (Path(r'B:\Brains') if os.name == 'nt' else Path('/mnt/tank/Studio/Brains')) /
+            'Tools/BrainDeadBlender/scripts/utils/convert_skeleton_target.py')
+        default_reference, default_contract = Path(reference_fbx), None
+    else:
+        default_script, default_reference, default_contract = defaults(target_profile, converter_script)
     script = Path(converter_script or default_script)
     reference = Path(reference_fbx or default_reference)
     contract = Path(reference_contract or default_contract) if reference_contract or default_contract else None

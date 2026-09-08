@@ -12,4 +12,21 @@ Existing `BD_AutoRigUEFN` keeps its node ID and behavior, and is labeled **Fab U
 
 Offline validation executed the real node class through the installed ComfyUI V3 API and real CPU Blender, producing a named native FBX with eight morphs and all thirty finger weights. A deliberately removed finger-weight group fails without exporting. This does not establish live workflow loading or Device/NPC playback. The running ComfyUI service was not restarted or reloaded; comfy-lead owns safe activation.
 
-Run `python3 -m unittest discover -s tests -v` for validation. The two Blender integration tests run when the studio reference bundle and reviewed v02 are available; otherwise they skip explicitly. `BDB_NATIVE_TEST_FBX`, `BDB_NATIVE_TEST_BLEND` and `BDB_NATIVE_TEST_BLENDER` can select equivalent test inputs. The package does not bundle the separate BrainDead Blender converter or proprietary reference assets; configure those paths before using the node outside the studio deployment.
+Run `python3 -m unittest discover -s tests -v` for validation. The Blender integration tests run when the studio reference bundle and reviewed v02 are available; otherwise they skip explicitly. `BDB_NATIVE_TEST_FBX`, `BDB_NATIVE_TEST_BLEND`, `BDB_NATIVE_TEST_BLENDER` and `BDB_NATIVE_TEST_CONVERTER` can select equivalent test inputs. The package does not bundle the separate BrainDead Blender converter or proprietary reference assets; configure those paths before using the node outside the studio deployment.
+
+## Full native Player profile
+
+Choose `NATIVE_PLAYER` for the captured 280 physical Player hierarchy entries.
+The Device choice retains the 88-entry body core, and Fab remains a legacy option.
+This requires the BrainDead Blender backend with Player reference/bind export
+support (BrainDeadBlender PR 1, v1.3.0) and the owner's measured Player FBX plus
+provenance. Override `converter_script` and reference paths when using another
+checkout. This node remains a CPU character/morph conversion; it does not bake
+animation sequences or prove extra-track behavior in a live UEFN session.
+
+The v1.3 backend shares its pure `reference_paths.py` resolver with this wrapper.
+It reads the consolidated `skeleton_reference_v1.json` authoring-derivative links
+and checks FBX/provenance hashes. Set `BDB_SKELETON_REFERENCE` for an external
+manifest. No reference bone transforms are copied into this node. A missing
+backend resolver blocks the Player profile with an actionable update message.
+Explicit `reference_fbx` and `reference_contract` still support independent installations.
