@@ -186,6 +186,56 @@ def _fill_lip_plane(lm, H: int, W: int,
     return out
 
 
+def _fill_lip_trapezoid(lm, H: int, W: int,
+                        lip_band_px: int = 12,
+                        expand_x_px: int = 0,
+                        expand_y_px: int = 0,
+                        taper: float = 0.7) -> np.ndarray:
+    """
+    Isosceles trapezoid over the mouth axis — same axis/size math as
+    _fill_lip_plane, but the philtrum-side edge and chin-side edge get
+    independent widths instead of a rectangle's equal pair. Gives a
+    constant, deterministic polygonal "cover plate" over the lips (for a
+    stylised 3D-ish bevel look) instead of Qwen/image-edit's run-to-run
+    inconsistency, and fills exactly like any other zone (flat/surround/
+    inpaint, including surround_style=solid).
+
+    taper: philtrum-edge width ÷ chin-edge width. 1.0 = rectangle (same
+    shape as lip_mode=plane). <1.0 = narrower toward the philtrum, wider
+    toward the chin (classic trapezoid). >1.0 = the reverse.
+    """
+    out = np.zeros((H, W), dtype=np.uint8)
+    lc = np.array([lm[61].x * W,  lm[61].y * H], dtype=np.float32)   # left corner
+    rc = np.array([lm[291].x * W, lm[291].y * H], dtype=np.float32)   # right corner
+    tc = np.array([lm[0].x * W,   lm[0].y * H],  dtype=np.float32)    # philtrum dip
+    bc = np.array([lm[17].x * W,  lm[17].y * H], dtype=np.float32)    # lower lip centre
+
+    dx, dy = rc - lc
+    angle_rad = float(np.arctan2(dy, dx))
+    cx = float((lc[0] + rc[0]) / 2.0)
+    cy = float((tc[1] + bc[1]) / 2.0)
+
+    width_chin     = float(np.sqrt(dx ** 2 + dy ** 2)) + expand_x_px * 2.0
+    width_philtrum = width_chin * max(0.05, float(taper))
+    height  = float(max(lip_band_px * 2, abs(float(tc[1]) - float(bc[1])))) + expand_y_px * 2.0
+    half_h  = height / 2.0
+
+    # Local space: x = along mouth axis, y = perpendicular (−half_h = philtrum side,
+    # +half_h = chin side), then rotated to the mouth axis and translated to centre —
+    # same convention _fill_lip_plane's cv2.boxPoints would use at taper=1.0.
+    local = np.array([
+        [-width_philtrum / 2.0, -half_h],
+        [ width_philtrum / 2.0, -half_h],
+        [ width_chin / 2.0,      half_h],
+        [-width_chin / 2.0,      half_h],
+    ], dtype=np.float32)
+    cos_a, sin_a = float(np.cos(angle_rad)), float(np.sin(angle_rad))
+    rot = np.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=np.float32)
+    quad = (local @ rot.T) + np.array([cx, cy], dtype=np.float32)
+    cv2.fillConvexPoly(out, quad.astype(np.int32), 255)
+    return out
+
+
 def _union(*masks: np.ndarray) -> np.ndarray:
     out = masks[0].copy()
     for m in masks[1:]:
@@ -242,7 +292,8 @@ def _process_frame(
     brow_band: int = 12,                        # native-px half-height of arch band
     eye_inset: int = 3,                         # native-px erosion inside eyelid (iris mode)
     lip_band: int = 6,                          # native-px minimum half-height of lip band
-    lip_mode: str = "organic",                  # "organic" | "plane"
+    lip_mode: str = "organic",                  # "organic" | "plane" | "contour" | "trapezoid"
+    lip_trapezoid_taper: float = 0.7,
 ) -> tuple[dict[str, np.ndarray], str]:
     H, W = frame_rgb.shape[:2]
     blank = _blank(H, W)
@@ -295,6 +346,17 @@ def _process_frame(
                                 expand_y_px=zone_expand['lips'][1])
     if lip_mode == "plane":
         lips = lip_plane
+    elif lip_mode == "trapezoid":
+        lips = _fill_lip_trapezoid(lm, H, W,
+                                   lip_band_px=lip_band,
+                                   expand_x_px=zone_expand['lips'][0],
+                                   expand_y_px=zone_expand['lips'][1],
+                                   taper=lip_trapezoid_taper)
+    elif lip_mode == "hull":
+        # convex hull of the outer lip contour — a smooth plate that hugs the real
+        # lip width/height with no cupid's-bow notch, plus lips expand
+        lips = _fill_convex(_pts(_OUTER_LIP_IDX, lm, H, W), H, W,
+                            expand_x=zone_expand['lips'][0], expand_y=zone_expand['lips'][1])
     elif lip_mode == "contour":
         # exact outer lip polygon — no forced band, no expansion
         lips = _fill_lip_shape(_pts(_OUTER_LIP_IDX, lm, H, W), H, W,
@@ -321,19 +383,97 @@ def _process_frame(
 
 # ── Fill helpers ──────────────────────────────────────────────────────────────
 
-def _surround_fill(frame_u8: np.ndarray, mask_u8: np.ndarray, radius: int) -> np.ndarray:
+# Key light for the pseudo-3D bevel: mostly from above (image y is DOWN, so -y = up),
+# slight right bias. Direction FROM the surface TOWARD the light, unit length.
+_BEVEL_LIGHT = np.array([0.30, -0.60, 0.74], dtype=np.float32)
+_BEVEL_LIGHT /= np.linalg.norm(_BEVEL_LIGHT)
+
+
+def _bevel_shade(mask_u8: np.ndarray, base_color: np.ndarray,
+                  bevel_width: float, strength: float) -> np.ndarray:
+    """Fake pseudo-3D chamfer shading for a flat solid fill.
+
+    Height field = distance-to-edge in PIXEL units, clipped at bevel_width — i.e. a
+    45° chamfer that rises 1px per px for bevel_width px, then a flat plateau. The
+    gradient of that is a real tilt (not the ~flat normal a 0–1-normalised field
+    gives), so the chamfer band actually catches the light.
+
+    Lighting is pinned so a FLAT normal maps to exactly 1.0: the plateau keeps the
+    natural base colour untouched, only the chamfer band deviates — brighter where it
+    faces _BEVEL_LIGHT (top edge), darker where it faces away (bottom edge). That is
+    what makes it read as a raised plate instead of a uniformly darkened polygon.
+    Returns a full-frame float32 [0,255] (H, W, 3); caller masks it down.
+    """
+    H, W = mask_u8.shape
+    dist = cv2.distanceTransform((mask_u8 >= 128).astype(np.uint8), cv2.DIST_L2, 5)
+    bw = max(1.0, float(bevel_width))
+    height = np.clip(dist, 0.0, bw).astype(np.float32)
+    gy, gx = np.gradient(height)
+    norm = np.sqrt(gx * gx + gy * gy + 1.0)
+    shade = (-gx * _BEVEL_LIGHT[0] - gy * _BEVEL_LIGHT[1] + _BEVEL_LIGHT[2]) / norm
+    delta = shade - float(_BEVEL_LIGHT[2])          # 0 on the plateau
+    # Highlights get a bit more gain than shadows so the lit edge stays legible
+    # against the (larger-magnitude) shadowed edge.
+    gain = np.where(delta > 0, 1.5, 0.8).astype(np.float32)
+    lighting = (1.0 + float(strength) * delta * gain)[..., None]
+    return (np.broadcast_to(base_color, (H, W, 3)) * lighting).clip(0.0, 255.0)
+
+
+def _lift_shadow_mult(mask_u8: np.ndarray, bevel_width: float, amount: float) -> np.ndarray:
+    """Contact shadow under a lifted plate: darkens the skin just OUTSIDE the mask,
+    offset downward (away from _BEVEL_LIGHT) and feathered. The plate covers its own
+    shadow, so the mask interior is untouched. Returns an (H, W) float32 multiplier
+    in [1-amount, 1] to apply to the composited frame."""
+    H, W = mask_u8.shape
+    bw = max(1.0, float(bevel_width))
+    dy = int(round(bw * 0.75))
+    dx = int(round(bw * 0.25))
+    M = np.float32([[1, 0, dx], [0, 1, dy]])
+    shifted = cv2.warpAffine(mask_u8, M, (W, H), flags=cv2.INTER_NEAREST, borderValue=0)
+    k = max(3, int(bw * 2) | 1)
+    soft = cv2.GaussianBlur(shifted.astype(np.float32) / 255.0, (k, k), 0)
+    soft[mask_u8 >= 128] = 0.0
+    return (1.0 - float(amount) * soft).clip(0.0, 1.0).astype(np.float32)
+
+
+def _surround_fill(frame_u8: np.ndarray, mask_u8: np.ndarray, radius: int,
+                    style: str = "diffuse", bevel: bool = False,
+                    bevel_width: float = 8.0, bevel_strength: float = 0.5) -> np.ndarray:
     """Fill the masked socket with the SURROUNDING skin colours — samples the skin AROUND the
     socket (not the teeth/eyes inside it) and propagates it inward, so NO original content remains.
 
-    Uses Navier-Stokes inpainting (cv2.INPAINT_NS) — it grows the boundary colours into the socket
-    for a clean, local skin-tone fill — then a light Gaussian smooth so it reads as a soft gradient.
-    (The old version just blurred the existing content, and an averaging diffusion produced a muddy
-    grey blob; NS samples the LOCAL surrounding colour instead.) Returns float32 [0,1] (H, W, 3).
+    style="diffuse" (default, unchanged): Navier-Stokes inpainting (cv2.INPAINT_NS) grows the
+    boundary colours into the socket for a clean, local skin-tone fill — then a light Gaussian
+    smooth so it reads as a soft gradient. (The old version just blurred the existing content, and
+    an averaging diffusion produced a muddy grey blob; NS samples the LOCAL surrounding colour
+    instead.)
+
+    style="solid": no inpaint, no internal blur. Samples the ring of skin immediately
+    surrounding the socket and fills the ENTIRE interior with that one flat average colour.
+    All edge softness comes from the caller's feather compositing, not from blurring here —
+    use this when "diffuse" reads as a translucent/mixed blend instead of a clean fill.
+    bevel=True adds a fake pseudo-3D bevel shading pass (see _bevel_shade) on top of the
+    flat colour instead of a perfectly uniform fill.
+
+    Returns float32 [0,1] (H, W, 3).
     """
     inside = mask_u8 >= 128
     if not inside.any():
         return frame_u8.astype(np.float32) / 255.0
     r = max(5, int(radius))
+
+    if style == "solid":
+        ring = (cv2.dilate(mask_u8, _ellipse_k_xy(r, r)) >= 128) & (~inside)
+        sample = frame_u8[ring] if ring.any() else frame_u8[~inside]
+        avg_color = sample.reshape(-1, 3).astype(np.float32).mean(axis=0)
+        out = frame_u8.astype(np.float32).copy()
+        if bevel:
+            shaded = _bevel_shade(mask_u8, avg_color, bevel_width, bevel_strength)
+            out[inside] = shaded[inside]
+        else:
+            out[inside] = avg_color
+        return (out / 255.0).clip(0.0, 1.0)
+
     filled = cv2.inpaint(frame_u8, (inside.astype(np.uint8)) * 255, r, cv2.INPAINT_NS)
     ksize = max(3, int(radius) | 1)
     smooth = cv2.GaussianBlur(filled, (ksize, ksize), 0).astype(np.float32)
@@ -568,7 +708,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 # ── Lip plane mode ────────────────────────────────────────────
                 io.Combo.Input(
-                    "lip_mode", options=["organic", "contour", "plane"], default="organic",
+                    "lip_mode", options=["organic", "contour", "plane", "trapezoid", "hull"], default="organic",
                     optional=True,
                     tooltip="Controls the shape used for lip socket fill:\n"
                             "organic (default): MediaPipe outer lip contour with lip_band "
@@ -578,9 +718,69 @@ class BD_FaceSocketInfill(io.ComfyNode):
                             "forced minimum height. Tight crop that follows the MediaPipe "
                             "landmark boundary precisely.\n"
                             "plane: Rotated rectangle aligned to the 61→291 mouth axis — "
-                            "a flat geometric polygon for stylised pre-draw before Qwen.\n\n"
+                            "a flat geometric polygon for stylised pre-draw before Qwen.\n"
+                            "trapezoid: same axis as plane, but a 4-point isosceles trapezoid "
+                            "(see lip_trapezoid_taper) instead of a rectangle — a constant, "
+                            "deterministic polygonal cover plate. Pair with fill_mode=surround "
+                            "+ surround_style=solid for a flat-color 3D-ish lip cover with no "
+                            "run-to-run inconsistency (unlike an image-edit pass).\n"
+                            "hull: convex hull of the outer lip contour + lips expand — a smooth "
+                            "plate that hugs the real lip shape with no cupid's-bow notch. Use "
+                            "with solid_bevel for a lifted plane that contours the lips instead "
+                            "of a box.\n\n"
                             "The lip_plane output always emits the rotated rectangle "
                             "regardless of this setting."),
+
+                # ── Surround fill style (added last — keeps existing widget order) ────
+                io.Combo.Input(
+                    "surround_style", options=["diffuse", "solid"], default="diffuse",
+                    optional=True,
+                    tooltip="fill_mode=surround only. diffuse (default, unchanged): NS inpaint "
+                            "+ internal Gaussian smoothing — a soft gradient fill.\n"
+                            "solid: fills each zone with ONE flat colour averaged from its "
+                            "immediate surrounding skin ring, no internal blur. All edge "
+                            "softness then comes from feather/eyes_feather/etc. above instead "
+                            "of blurring the fill itself. Use this if 'diffuse' looks "
+                            "mixed/translucent rather than a clean fill."),
+
+                # ── Lip trapezoid taper (added last — keeps existing widget order) ────
+                io.Float.Input(
+                    "lip_trapezoid_taper", default=0.7, min=0.05, max=2.0, step=0.05,
+                    optional=True,
+                    tooltip="lip_mode=trapezoid only. Ratio of the philtrum-side edge width to "
+                            "the chin-side edge width. 1.0 = rectangle (same shape as "
+                            "lip_mode=plane). <1.0 = narrower toward the philtrum, wider toward "
+                            "the chin (classic trapezoid). >1.0 = the reverse."),
+
+                # ── Pseudo-3D bevel for solid surround fill (added last) ──────────
+                io.Boolean.Input(
+                    "solid_bevel", default=False, optional=True,
+                    tooltip="fill_mode=surround + surround_style=solid only. Adds a fake "
+                            "pseudo-3D bevel shading pass on top of the flat average colour "
+                            "(distance-from-edge height field → fake normal → Lambert shade) "
+                            "instead of a perfectly flat fill — reads as a raised/embossed "
+                            "plate. Good with lip_mode=trapezoid for a '3D box' look."),
+                io.Int.Input(
+                    "solid_bevel_width", default=8, min=1, max=60, step=1, optional=True,
+                    tooltip="Bevel ramp width in pixels at 1536px (auto-scales with resolution). "
+                            "Distance inward from the edge before the shading plateaus flat."),
+                io.Float.Input(
+                    "solid_bevel_strength", default=0.5, min=0.0, max=1.0, step=0.05,
+                    optional=True,
+                    tooltip="0 = no shading (flat colour, same as solid_bevel=False). "
+                            "1 = full contrast between the lit and shadowed sides of the bevel."),
+                io.String.Input(
+                    "solid_bevel_zones", default="lips", optional=True,
+                    tooltip="Comma-separated zones that get the bevel + lift shadow: any of "
+                            "lips, eyes, brows, nose. Zones NOT listed get a plain flat solid "
+                            "fill (flattened into the face). Default 'lips' = raised mouth "
+                            "plate, eyes/brows infilled flat."),
+                io.Float.Input(
+                    "solid_lift_shadow", default=0.3, min=0.0, max=1.0, step=0.05,
+                    optional=True,
+                    tooltip="solid_bevel only. Soft contact shadow on the skin just below/beside "
+                            "the plate (offset away from the light, feathered by bevel width) so "
+                            "it reads as lifted OFF the face, not painted on it. 0 = none."),
             ],
             outputs=[
                 io.Image.Output("socket_image",
@@ -646,6 +846,13 @@ class BD_FaceSocketInfill(io.ComfyNode):
         fill_g: int = 255,
         fill_b: int = 255,
         lip_mode: str = "organic",
+        surround_style: str = "diffuse",
+        lip_trapezoid_taper: float = 0.7,
+        solid_bevel: bool = False,
+        solid_bevel_width: int = 8,
+        solid_bevel_strength: float = 0.5,
+        solid_bevel_zones: str = "lips",
+        solid_lift_shadow: float = 0.3,
     ) -> io.NodeOutput:
 
         _blank1     = torch.zeros((1, 1, 1),    dtype=torch.float32)
@@ -719,6 +926,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
         }
 
         flat_rgb = np.array([fill_r / 255.0, fill_g / 255.0, fill_b / 255.0], dtype=np.float32)
+        bevel_zones = {z.strip().lower() for z in (solid_bevel_zones or "").split(",") if z.strip()}
 
         batches: dict[str, list[torch.Tensor]] = {k: [] for k in _MASK_KEYS + ['socket_soft']}
         socket_images: list[torch.Tensor] = []
@@ -779,6 +987,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
                     masks, status = _process_frame(
                         detect_rgb_u8, landmarker, zone_expand,
                         eye_mode, brow_band_px, eye_inset_px, lip_band_px, lip_mode,
+                        lip_trapezoid_taper,
                     )
                 statuses.append(status)
 
@@ -819,6 +1028,7 @@ class BD_FaceSocketInfill(io.ComfyNode):
                 ]
 
                 combined_soft = np.zeros((H, W), dtype=np.float32)
+                lift_mult = np.ones((H, W), dtype=np.float32)
 
                 # Source for surround / inpaint color sampling.
                 # fill_from_guide=True samples from image0 (clean detect guide)
@@ -838,15 +1048,54 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 elif fill_mode == "surround":
                     zone_union = np.zeros((H, W), dtype=np.uint8)
-                    for enabled, zone, zone_mask in zone_info:
-                        if not enabled or not zone_mask.any():
-                            continue
-                        np.maximum(zone_union, zone_mask, out=zone_union)
-                        zone_soft = _feather_mask(zone_mask, zone_feather[zone])
-                        np.maximum(combined_soft, zone_soft, out=combined_soft)
-                    max_ex = max(ex for ex, ey in zone_expand.values())
-                    # diffuse surrounding skin INTO the socket union (not a blur of the content)
-                    fill_np = _surround_fill(fill_src_u8, zone_union, max(9, max_ex))
+                    if surround_style == "solid":
+                        # Per-zone solid average fill — each zone samples its OWN local
+                        # surrounding ring, so eyes/brows/lips/nose don't blend into one
+                        # cross-zone average. Processed sequentially like inpaint mode.
+                        result_u8 = fill_src_u8.copy()
+                        bevel_px = max(1.0, round(solid_bevel_width * scale))
+                        for enabled, zone, zone_mask in zone_info:
+                            if not enabled or not zone_mask.any():
+                                continue
+                            np.maximum(zone_union, zone_mask, out=zone_union)
+                            zone_soft = _feather_mask(zone_mask, zone_feather[zone])
+                            np.maximum(combined_soft, zone_soft, out=combined_soft)
+                            ex, ey = zone_expand[zone]
+                            # Positive feather ramps OUTWARD past the raw mask edge, but a
+                            # hard solid fill reverts to the original image exactly at that
+                            # edge — so the alpha ramp had nothing to blend against and the
+                            # feather was invisible. Extend the painted region outward by the
+                            # feather amount so the ramp has real fill colour under it.
+                            dilate_by = max(0, zone_feather[zone])
+                            zone_mask_fill = (
+                                cv2.dilate(zone_mask, _ellipse_k_xy(dilate_by, dilate_by))
+                                if dilate_by > 0 else zone_mask
+                            )
+                            # Bevel/lift only on the zones asked for (default: lips) — eyes and
+                            # brows are meant to be flattened INTO the face, not raised off it.
+                            bevel_this = solid_bevel and zone in bevel_zones
+                            zone_filled = _surround_fill(
+                                result_u8, zone_mask_fill, max(9, max(ex, ey)), style="solid",
+                                bevel=bevel_this,
+                                bevel_width=bevel_px,
+                                bevel_strength=solid_bevel_strength,
+                            )
+                            zone_filled_u8 = (zone_filled * 255.0).clip(0, 255).astype(np.uint8)
+                            inside_zone = zone_mask_fill >= 128
+                            result_u8[inside_zone] = zone_filled_u8[inside_zone]
+                            if bevel_this and solid_lift_shadow > 0.0:
+                                lift_mult *= _lift_shadow_mult(zone_mask_fill, bevel_px, solid_lift_shadow)
+                        fill_np = result_u8.astype(np.float32) / 255.0
+                    else:
+                        for enabled, zone, zone_mask in zone_info:
+                            if not enabled or not zone_mask.any():
+                                continue
+                            np.maximum(zone_union, zone_mask, out=zone_union)
+                            zone_soft = _feather_mask(zone_mask, zone_feather[zone])
+                            np.maximum(combined_soft, zone_soft, out=combined_soft)
+                        max_ex = max(ex for ex, ey in zone_expand.values())
+                        # diffuse surrounding skin INTO the socket union (not a blur of the content)
+                        fill_np = _surround_fill(fill_src_u8, zone_union, max(9, max_ex), style="diffuse")
 
                 else:  # flat
                     fill_np = np.full((H, W, 3), flat_rgb, dtype=np.float32)
@@ -860,6 +1109,10 @@ class BD_FaceSocketInfill(io.ComfyNode):
 
                 alpha_2d = combined_soft[:, :, np.newaxis]
                 blended  = (fill_frame_f * (1.0 - alpha_2d) + fill_np * alpha_2d).clip(0.0, 1.0)
+                # Contact shadow lives OUTSIDE the mask, so it's applied to the composited
+                # frame directly rather than through the alpha (which also drives the mask
+                # outputs and would otherwise punch a hole where the shadow is).
+                blended = (blended * lift_mult[:, :, np.newaxis]).clip(0.0, 1.0)
                 socket_images.append(torch.from_numpy(blended))
 
                 alpha_ch = (1.0 - combined_soft)[:, :, np.newaxis]

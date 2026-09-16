@@ -38,6 +38,10 @@ from .alpha_save import (
     save_alpha_alongside,
     alpha_to_rgba_tensor,
 )
+from .workflow_sidecar import (
+    WORKFLOW_SIDECAR_INPUTS,
+    write_workflow_sidecar,
+)
 
 
 
@@ -123,7 +127,9 @@ class BD_SaveBatch(io.ComfyNode):
                         "Added last so it does not shift existing workflows' widget order."
                     ),
                 ),
+                *WORKFLOW_SIDECAR_INPUTS,
             ],
+            hidden=[io.Hidden.extra_pnginfo, io.Hidden.prompt],
             outputs=[
                 io.Int.Output(display_name="saved_count",
                               tooltip="Number of files successfully written."),
@@ -189,7 +195,8 @@ class BD_SaveBatch(io.ComfyNode):
                 alpha_mask: torch.Tensor | None = None,
                 invert_alpha: bool = False,
                 alpha_slots: str = "",
-                embed_alpha: bool = True) -> io.NodeOutput:
+                embed_alpha: bool = True,
+                save_workflow_sidecar: bool = True) -> io.NodeOutput:
 
         # Coerce input to (B, H, W, C)
         if images.ndim == 3:
@@ -274,6 +281,11 @@ class BD_SaveBatch(io.ComfyNode):
                 final_path, data_type = BD_SaveFile._detect_type_and_save(main_frame, filepath)
                 saved_paths.append(final_path)
                 rel_final = os.path.relpath(final_path).replace("\\", "/")
+                sidecar_note = ""
+                if save_workflow_sidecar:
+                    sidecar_path = write_workflow_sidecar(final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt)
+                    if sidecar_path:
+                        sidecar_note = " +workflow"
                 alpha_note = ""
 
                 # Build preview_alpha frame: white + alpha as RGBA (1, H, W, 4)
@@ -292,7 +304,7 @@ class BD_SaveBatch(io.ComfyNode):
                         saved_paths.append(alpha_path)
 
                 status_lines.append(
-                    f"  frame={i} suffix='{suffix}' {data_type} → {rel_final}{alpha_note}"
+                    f"  frame={i} suffix='{suffix}' {data_type} → {rel_final}{alpha_note}{sidecar_note}"
                 )
             except Exception as e:
                 errors += 1

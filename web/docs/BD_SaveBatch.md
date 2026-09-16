@@ -24,6 +24,7 @@ Compared to `BD_BulkSave` (one labels-per-slot, N slots wired): `BD_SaveBatch` i
 | `save_alpha_separately` | BOOL | When ON and the saved image has an alpha channel, also writes the alpha as a standalone greyscale PNG alongside each main file (same suffix + `_alpha`). No effect on images without alpha. |
 | `alpha_mask` | MASK (optional) | If wired, bakes this mask into the saved file's alpha channel (white=opaque, black=transparent) before writing. **Does not modify the upstream tensor** — the alpha is applied only in the file written to disk. Accepts batched masks — each frame gets its own slice. |
 | `invert_alpha` | BOOL | Invert the alpha_mask before baking: transparent areas become opaque and vice versa. No effect when alpha_mask is not wired. |
+| `save_workflow_sidecar` | BOOL | Default **True**. Writes a `<image>.json` next to each saved file containing the workflow + prompt graph. The image itself is never touched (BD save nodes embed no PNG metadata at all). Set False for no metadata. Also on `BD_SaveFile` and `BD_BulkSave`. |
 
 ## Outputs
 
@@ -134,6 +135,19 @@ skin segmentation mask  ─────────────────→ B
 Produces per-tone:
 - `{char}_head_v1_sr_light.png` — RGBA PNG, mask as alpha (transparent BG)
 - `{char}_head_v1_sr_light_alpha.png` — greyscale copy of just the alpha
+
+## Workflow Sidecar (`save_workflow_sidecar`)
+
+The three BD save nodes (`BD_SaveFile`, `BD_BulkSave`, `BD_SaveBatch`) write plain PNGs with **no embedded metadata** — unlike ComfyUI's stock `SaveImage` / `PreviewImage`, which embed the full workflow + prompt JSON into every PNG's text chunks by default (the server is not run with `--disable-metadata`). That keeps delivered images clean but leaves no record of how they were made.
+
+With `save_workflow_sidecar=True` (the default) each saved image gets a companion file:
+
+```
+{char}_head_v1_sr_light.png    ← pixels only, no metadata
+{char}_head_v1_sr_light.json   ← {"workflow": <graph>, "prompt": <api prompt>}
+```
+
+Drag the `.json` into ComfyUI to reload the exact graph. Nothing is written if the run has no workflow/prompt available (e.g. some headless submissions). Shared implementation: `nodes/cache/workflow_sidecar.py`.
 
 ## Notes
 

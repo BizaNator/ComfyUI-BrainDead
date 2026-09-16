@@ -21,6 +21,10 @@ from .alpha_save import (
     apply_alpha_to_frame,
     save_alpha_alongside,
 )
+from .workflow_sidecar import (
+    WORKFLOW_SIDECAR_INPUTS,
+    write_workflow_sidecar,
+)
 from ...utils.shared import (
     CACHE_DIR,
     OUTPUT_DIR,
@@ -140,7 +144,9 @@ class BD_SaveFile(io.ComfyNode):
                                         "These become %subfolder%, %materials%, %pass% in the template. Empty values "
                                         "resolve cleanly (// → /). Undefined vars stay as %var% literals so you spot typos."),
                 *ALPHA_SAVE_INPUTS,
+                *WORKFLOW_SIDECAR_INPUTS,
             ],
+            hidden=[io.Hidden.extra_pnginfo, io.Hidden.prompt],
             outputs=[
                 io.AnyType.Output(display_name="data"),
                 io.String.Output(display_name="file_path"),
@@ -217,7 +223,8 @@ class BD_SaveFile(io.ComfyNode):
                 context_id: str = "", suffix: str = "", custom_vars: str = "",
                 save_alpha_separately: bool = False,
                 alpha_mask: torch.Tensor | None = None,
-                invert_alpha: bool = False) -> io.NodeOutput:
+                invert_alpha: bool = False,
+                save_workflow_sidecar: bool = True) -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
 
         effective_ctx_id = context_id
@@ -255,7 +262,12 @@ class BD_SaveFile(io.ComfyNode):
                             data_to_save, frame_mask, invert_alpha,
                             final_path, effective_ctx_id, suffix, custom_vars,
                         )
-                    return io.NodeOutput(data, final_path, f"Saved {data_type} via context='{effective_ctx_id}'{auto_str} suffix='{suffix}': {os.path.basename(final_path)}{alpha_note}")
+                    sidecar_note = ""
+                    if save_workflow_sidecar:
+                        sidecar_path = write_workflow_sidecar(final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt)
+                        if sidecar_path:
+                            sidecar_note = f" + workflow→{os.path.basename(sidecar_path)}"
+                    return io.NodeOutput(data, final_path, f"Saved {data_type} via context='{effective_ctx_id}'{auto_str} suffix='{suffix}': {os.path.basename(final_path)}{alpha_note}{sidecar_note}")
                 except Exception as e:
                     return io.NodeOutput(data, "", f"Save (context) failed: {e}")
             except ValueError as ve:
@@ -295,7 +307,12 @@ class BD_SaveFile(io.ComfyNode):
                     data_to_save, frame_mask, invert_alpha,
                     final_path, effective_ctx_id, suffix, custom_vars,
                 )
-            status = f"Saved {data_type}: {os.path.basename(final_path)}{alpha_note}"
+            sidecar_note = ""
+            if save_workflow_sidecar:
+                sidecar_path = write_workflow_sidecar(final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt)
+                if sidecar_path:
+                    sidecar_note = f" + workflow→{os.path.basename(sidecar_path)}"
+            status = f"Saved {data_type}: {os.path.basename(final_path)}{alpha_note}{sidecar_note}"
             return io.NodeOutput(data, final_path, status)
         except Exception as e:
             return io.NodeOutput(data, "", f"Save failed: {e}")
@@ -338,6 +355,7 @@ class BD_BulkSave(io.ComfyNode):
         for i in range(1, 17):
             inputs.append(io.AnyType.Input(f"input_{i}", optional=True,
                                            tooltip=f"Input slot #{i}. Wire any data type. Empty slots are skipped."))
+        inputs.extend(WORKFLOW_SIDECAR_INPUTS)
         return io.Schema(
             node_id="BD_BulkSave",
             display_name="BD Bulk Save",
@@ -349,6 +367,7 @@ class BD_BulkSave(io.ComfyNode):
                 "No queueing. Replaces N parallel BD_SaveFile nodes for batch save scenarios."
             ),
             inputs=inputs,
+            hidden=[io.Hidden.extra_pnginfo, io.Hidden.prompt],
             outputs=[
                 io.Int.Output(display_name="saved_count"),
                 io.String.Output(display_name="filepaths"),
@@ -369,6 +388,7 @@ class BD_BulkSave(io.ComfyNode):
                 format="png", jpg_quality=95, skip_if_exists=False,
                 custom_vars="",
                 save_alpha_separately=False, alpha_mask=None, invert_alpha=False,
+                save_workflow_sidecar=True,
                 **inputs) -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
 
@@ -452,7 +472,12 @@ class BD_BulkSave(io.ComfyNode):
                         data_to_save, slot_mask, invert_alpha,
                         final_path, effective_ctx_id, suffix, custom_vars,
                     )
-                status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} suffix='{suffix}' {data_type} → {rel_final}{alpha_note}")
+                sidecar_note = ""
+                if save_workflow_sidecar:
+                    sidecar_path = write_workflow_sidecar(final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt)
+                    if sidecar_path:
+                        sidecar_note = f" +workflow"
+                status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} suffix='{suffix}' {data_type} → {rel_final}{alpha_note}{sidecar_note}")
             except Exception as e:
                 errors += 1
                 status_lines.append(f"  [{i + 1}/{len(wired)}] slot=input_{slot} ERROR: {e}")

@@ -9,9 +9,16 @@ MediaPipe landmark-based face socket creator: fills eye, brow, lip, and nose zon
 | `image` | IMAGE | Primary image. Detection + color sampling source. |
 | `image1` | IMAGE (optional) | Fill target. When wired, sockets are painted into this image instead of `image`. |
 | `face_data_path` | STRING (optional) | Path to a `.mpface.npz` or companion `.mpface.json`. When supplied, bypasses MediaPipe detection and uses saved landmarks directly. |
-| `fill_mode` | COMBO | `flat` (solid fill_r/g/b color), `surround` (Gaussian blur of surrounding pixels), `inpaint` (per-zone Telea; brows processed before eyes). |
+| `fill_mode` | COMBO | `flat` (solid fill_r/g/b color), `surround` (NS inpaint + `surround_style`), `inpaint` (per-zone Telea; brows processed before eyes). |
+| `surround_style` | COMBO | `fill_mode=surround` only. `diffuse` (default): NS inpaint + internal Gaussian smoothing — soft gradient. `solid`: one flat color averaged from each zone's local surround ring, no internal blur — edges are feathered, not blurred. Use `solid` if `diffuse` reads as translucent/mixed. |
+| `solid_bevel` | BOOL | `surround_style=solid` only. Adds a fake pseudo-3D bevel (distance-from-edge height field → fake normal → Lambert shade) on top of the flat color instead of a perfectly uniform fill — reads as a raised/embossed plate. Pairs well with `lip_mode=trapezoid`. |
+| `solid_bevel_width` | INT | Bevel ramp width in px at 1536px (auto-scales). Distance inward from the edge before shading plateaus flat. |
+| `solid_bevel_strength` | FLOAT | 0 = flat color (same as `solid_bevel=False`). 1 = full lit/shadow contrast. |
+| `solid_bevel_zones` | STRING | Comma-separated zones that get the bevel + lift shadow (`lips`, `eyes`, `brows`, `nose`). Unlisted zones get a plain flat fill. Default `lips`. |
+| `solid_lift_shadow` | FLOAT | Soft contact shadow on the skin just below the plate so it reads as lifted off the face. 0 = none. Default 0.3. |
 | `eye_mode` | COMBO | `iris` (eyelid hull eroded by `eye_inset`), `eyelid` (raw eyelid hull). |
-| `lip_mode` | COMBO | `organic` (outer contour + `lip_band` + `expand_lips`), `contour` (exact landmark polygon), `plane` (rotated rectangle along 61→291 mouth axis). |
+| `lip_mode` | COMBO | `organic` (outer contour + `lip_band` + `expand_lips`), `contour` (exact landmark polygon), `plane` (rotated rectangle along 61→291 mouth axis), `trapezoid` (4-point isosceles trapezoid along the same axis — see `lip_trapezoid_taper`). |
+| `lip_trapezoid_taper` | FLOAT | `lip_mode=trapezoid` only. Philtrum-edge width ÷ chin-edge width. 1.0 = rectangle. <1.0 = narrower toward the philtrum (classic trapezoid). Pair with `fill_mode=surround` + `surround_style=solid` for a constant, deterministic flat-color lip cover plate instead of an inconsistent image-edit pass. |
 | `expand_eyes` | FLOAT | Eye zone expand, 1536px-normalized. |
 | `expand_brows` | FLOAT | Brow zone expand, 1536px-normalized. |
 | `expand_lips` | FLOAT | Lip zone expand, 1536px-normalized. |
@@ -55,3 +62,5 @@ MediaPipe landmark-based face socket creator: fills eye, brow, lip, and nose zon
 - **lip_plane** is always available — use it as a pre-crop guide before running Qwen Image Edit on a lip region, regardless of which `lip_mode` you select for the actual fill.
 - **fill_mode=inpaint** processes brows before eyes so brow-fill pixels can inform the eye inpaint; use for seamless skin reconstruction rather than hard socket fills.
 - Wire `face_data_path` from `BD MP Save Face Data` to avoid re-running MediaPipe on every execution when the character image is fixed.
+- **Mannequin prep for stylised low-poly 3D heads** (brows removed, eyes flattened in, mouth lifted as a plate the image-to-3D generator will build as a plane): `fill_mode=surround`, `surround_style=solid`, `eyes`/`brows` on, `lip_mode=trapezoid` (box) or `hull` (contoured plate), `solid_bevel=True`. Leave `solid_bevel_zones=lips` so eyes/brows stay flat, and `solid_lift_shadow` at 0.3 for the contact shadow that makes the plate read as raised off the face. Raise `solid_bevel_strength` if the generator needs a stronger cue; push `lip_trapezoid_taper` toward 1.0 for less taper.
+- `surround_style=solid` paints its fill out to the raw mask **dilated by the positive feather**, so the feather ramp has real fill colour under it. (A hard fill that stopped at the raw edge left the outward ramp blending original-against-original — i.e. no visible feather.)
