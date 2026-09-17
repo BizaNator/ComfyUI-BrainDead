@@ -446,7 +446,11 @@ class BD_MediaPipeSAM3FaceSegment(io.ComfyNode):
         B, H, W, C = image.shape
 
         def _m(np_u8):
-            return torch.from_numpy(np_u8.astype(np.float32) / 255.0)
+            # (1,H,W) batch-explicit MASK: core's JoinImageWithAlpha takes
+            # batch_size = max(len(image), len(alpha)), so a 2D (H,W) mask makes
+            # H the batch size (SBAI-10643: 1536x1536 -> batch 1536 -> 648 GiB
+            # predicted allocation at 6144x6144).
+            return torch.from_numpy(np_u8.astype(np.float32) / 255.0).unsqueeze(0)
 
         def _img(np_u8_or_f):
             arr = np_u8_or_f.astype(np.float32)
