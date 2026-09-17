@@ -313,7 +313,7 @@ class BD_MouthParts(io.ComfyNode):
         B, H, W, C = image.shape
 
         def _m(np_u8):
-            return torch.from_numpy((np_u8 > 0).astype(np.float32))
+            return torch.from_numpy((np_u8 > 0).astype(np.float32)).unsqueeze(0)
 
         def _img(arr_f):
             return torch.from_numpy(arr_f.astype(np.float32)).unsqueeze(0)
