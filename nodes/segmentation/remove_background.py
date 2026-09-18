@@ -317,6 +317,18 @@ class BD_RemoveBackground(io.ComfyNode):
                     "unload_model", default=False, optional=True,
                     tooltip="Unload SAM3 from VRAM after this node finishes.",
                 ),
+                io.Float.Input(
+                    "min_coverage", default=0.02, min=0.0, max=1.0, step=0.01, optional=True,
+                    tooltip="Fail if the subject mask covers LESS than this fraction of the "
+                            "frame. Catches a mask that collapsed to nothing -- most often a "
+                            "negative_prompt that SAM3 grounded onto the subject and, with "
+                            "mask_mode=constrain, subtracted. 0 disables the check.",
+                ),
+                io.Float.Input(
+                    "max_coverage", default=1.0, min=0.0, max=1.0, step=0.01, optional=True,
+                    tooltip="Fail if the subject mask covers MORE than this fraction of the "
+                            "frame, i.e. nothing was actually removed. 1.0 disables the check.",
+                ),
             ],
             outputs=[
                 io.Image.Output(display_name="rgba",
@@ -333,6 +345,11 @@ class BD_RemoveBackground(io.ComfyNode):
                                 tooltip="RGBA die-cut sticker: subject + coloured trim outline "
                                         "(sticker_outline/sticker_color), transparent outside. "
                                         "When sticker_outline=0 this is the plain RGBA subject."),
+                io.Float.Output(display_name="coverage",
+                                tooltip="Fraction of the ORIGINAL frame covered by the subject "
+                                        "mask (alpha > 0.5), measured before crop_to_content. "
+                                        "Assert on this in drivers and receipts instead of "
+                                        "inferring mask failure from a blank downstream result."),
             ],
         )
 
@@ -363,7 +380,9 @@ class BD_RemoveBackground(io.ComfyNode):
                 output_size=0,
                 output_size_mode="none",
                 mask_threshold=0.5,
-                unload_model=False) -> io.NodeOutput:
+                unload_model=False,
+                min_coverage=0.02,
+                max_coverage=1.0) -> io.NodeOutput:
 
         H, W = image.shape[1], image.shape[2]
 
@@ -475,6 +494,32 @@ class BD_RemoveBackground(io.ComfyNode):
         # ── Edge blur ─────────────────────────────────────────────────────
         combined = _edge_blur(combined, float(edge_blur))
 
+        # ── Coverage guard ────────────────────────────────────────────────
+        # Measured on the FINAL mask but BEFORE the crop: this is subject-vs-frame.
+        # After cropping, a surviving speck fills its own crop and reads as high
+        # coverage, which is the opposite of the truth.
+        coverage = float((combined > 0.5).float().mean().item())
+        _lo, _hi = float(min_coverage), float(max_coverage)
+        if _lo > 0.0 and coverage < _lo:
+            raise RuntimeError(
+                f"[BD RemoveBackground] subject mask collapsed: {coverage:.4%} of the frame, "
+                f"below min_coverage {_lo:.2%}. The mask is effectively empty, so every "
+                f"downstream stage would run on a blank image and fail silently.\n"
+                f"  prompts:          {prompts!r}\n"
+                f"  negative_prompts: {negative_prompts!r}\n"
+                f"  mask_mode:        {mask_mode!r}  (negatives are SUBTRACTED when 'constrain')\n"
+                f"  mask_threshold:   {mask_threshold}\n"
+                f"Most likely a negative prompt matched the subject itself. Remove negative "
+                f"terms one at a time to find it. Set min_coverage=0 to bypass this check."
+            )
+        if _hi < 1.0 and coverage > _hi:
+            raise RuntimeError(
+                f"[BD RemoveBackground] subject mask covers {coverage:.4%} of the frame, "
+                f"above max_coverage {_hi:.2%} -- effectively nothing was removed. "
+                f"prompts={prompts!r} mask_threshold={mask_threshold}. "
+                f"Set max_coverage=1.0 to bypass this check."
+            )
+
         # ── Crop to content ───────────────────────────────────────────────
         # Reserve room for the sticker outline so it isn't clipped off (the
         # outline is dilated outward from the subject after the crop).
@@ -511,11 +556,11 @@ class BD_RemoveBackground(io.ComfyNode):
             f"[BD RemoveBackground] Done. Output {rgba.shape[1]}×{rgba.shape[2]} "
             f"matting={matting_mode} decontaminate={decontaminate} "
             f"edge_refine={edge_refine} shrink={edge_shrink} "
-            f"sticker={sticker_outline} crop={crop_box}",
+            f"sticker={sticker_outline} crop={crop_box} coverage={coverage:.2%}",
             flush=True,
         )
 
-        return io.NodeOutput(rgba, combined, white_bg, black_bg, crop_box, sticker)
+        return io.NodeOutput(rgba, combined, white_bg, black_bg, crop_box, sticker, coverage)
 
 
 REMOVE_BACKGROUND_V3_NODES = [BD_RemoveBackground]
