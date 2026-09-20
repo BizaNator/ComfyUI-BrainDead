@@ -178,7 +178,13 @@ class BD_SaveFile(io.ComfyNode):
         )
 
     @classmethod
-    def _detect_type_and_save(cls, data, filepath: str) -> tuple[str, str]:
+    def _detect_type_and_save(cls, data, filepath: str,
+                              probe: bool = False) -> tuple[str, str]:
+        """Resolve the final path and type, and write unless probe=True.
+
+        probe exists so callers can honour skip_if_exists WITHOUT writing first
+        (SBAI-10996). The extension logic lives here only -- do not duplicate it.
+        """
         import torch
         import numpy as np
 
@@ -188,33 +194,38 @@ class BD_SaveFile(io.ComfyNode):
             if len(shape) == 4 and shape[-1] in [3, 4]:
                 if not filepath.endswith('.png'):
                     filepath = filepath.rsplit('.', 1)[0] + '.png' if '.' in filepath else filepath + '.png'
-                ImageSerializer.save(filepath, data)
+                if not probe:
+                    ImageSerializer.save(filepath, data)
                 return filepath, "IMAGE"
             elif len(shape) in [2, 3] and shape[-1] not in [3, 4]:
                 if not filepath.endswith('.png'):
                     filepath = filepath.rsplit('.', 1)[0] + '.png' if '.' in filepath else filepath + '.png'
-                MaskSerializer.save(filepath, data)
+                if not probe:
+                    MaskSerializer.save(filepath, data)
                 return filepath, "MASK"
 
         # LATENT dict
         if isinstance(data, dict) and 'samples' in data:
             if not filepath.endswith('.latent'):
                 filepath = filepath.rsplit('.', 1)[0] + '.latent' if '.' in filepath else filepath + '.latent'
-            LatentSerializer.save(filepath, data)
+            if not probe:
+                LatentSerializer.save(filepath, data)
             return filepath, "LATENT"
 
         # AUDIO dict
         if isinstance(data, dict) and 'waveform' in data and 'sample_rate' in data:
             if not filepath.endswith('.wav'):
                 filepath = filepath.rsplit('.', 1)[0] + '.wav' if '.' in filepath else filepath + '.wav'
-            AudioSerializer.save(filepath, data)
+            if not probe:
+                AudioSerializer.save(filepath, data)
             return filepath, "AUDIO"
 
         # STRING
         if isinstance(data, str):
             if not filepath.endswith('.txt'):
                 filepath = filepath.rsplit('.', 1)[0] + '.txt' if '.' in filepath else filepath + '.txt'
-            StringSerializer.save(filepath, data)
+            if not probe:
+                StringSerializer.save(filepath, data)
             return filepath, "STRING"
 
         # TRIMESH
@@ -223,13 +234,15 @@ class BD_SaveFile(io.ComfyNode):
                 if not any(filepath.endswith(ext) for ext in ['.ply', '.obj', '.glb', '.gltf', '.stl']):
                     filepath = filepath.rsplit('.', 1)[0] + '.ply' if '.' in filepath else filepath + '.ply'
                 ext = filepath.rsplit('.', 1)[-1].lower()
-                trimesh.exchange.export.export_mesh(data, filepath, file_type=ext)
+                if not probe:
+                    trimesh.exchange.export.export_mesh(data, filepath, file_type=ext)
                 return filepath, "TRIMESH"
 
         # Fallback: pickle
         if not filepath.endswith('.pkl'):
             filepath = filepath.rsplit('.', 1)[0] + '.pkl' if '.' in filepath else filepath + '.pkl'
-        PickleSerializer.save(filepath, data)
+        if not probe:
+            PickleSerializer.save(filepath, data)
         return filepath, "GENERIC"
 
     @classmethod
@@ -276,10 +289,14 @@ class BD_SaveFile(io.ComfyNode):
                 if '/' in filepath or '\\' in filepath:
                     os.makedirs(os.path.dirname(filepath), exist_ok=True)
                 try:
-                    final_path, data_type = cls._detect_type_and_save(data_to_save, filepath)
                     auto_str = " (auto-picked)" if not context_id else ""
-                    if skip_if_exists and os.path.exists(final_path):
-                        return io.NodeOutput(data, final_path, f"EXISTS via context='{effective_ctx_id}'{auto_str}: {os.path.basename(final_path)}")
+                    # SBAI-10996: resolve the real path, check, THEN write. The old
+                    # order wrote every run and returned "EXISTS" before reaching the
+                    # sidecar or the embed.
+                    probe_path, _ = cls._detect_type_and_save(data_to_save, filepath, probe=True)
+                    if skip_if_exists and os.path.exists(probe_path):
+                        return io.NodeOutput(data, probe_path, f"EXISTS via context='{effective_ctx_id}'{auto_str}: {os.path.basename(probe_path)}")
+                    final_path, data_type = cls._detect_type_and_save(data_to_save, filepath)
                     alpha_note = ""
                     if save_alpha_separately:
                         _, alpha_note = save_alpha_alongside(
@@ -322,10 +339,12 @@ class BD_SaveFile(io.ComfyNode):
             os.makedirs(subdir, exist_ok=True)
 
         try:
-            final_path, data_type = cls._detect_type_and_save(data_to_save, filepath)
+            # SBAI-10996: resolve, check, THEN write (see above).
+            probe_path, _ = cls._detect_type_and_save(data_to_save, filepath, probe=True)
+            if skip_if_exists and os.path.exists(probe_path):
+                return io.NodeOutput(data, probe_path, f"EXISTS: {os.path.basename(probe_path)}")
 
-            if skip_if_exists and os.path.exists(final_path):
-                return io.NodeOutput(data, final_path, f"EXISTS: {os.path.basename(final_path)}")
+            final_path, data_type = cls._detect_type_and_save(data_to_save, filepath)
 
             alpha_note = ""
             if save_alpha_separately:
