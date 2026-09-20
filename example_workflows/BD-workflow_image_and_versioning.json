@@ -1,0 +1,636 @@
+{
+ "id": "bd-workflow-image-and-versioning",
+ "revision": 0,
+ "last_node_id": 12,
+ "last_link_id": 3,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "MarkdownNote",
+   "pos": [
+    40,
+    60
+   ],
+   "size": [
+    440,
+    600
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "title": "\u2139\ufe0f About \u2014 Workflow Image & Versioning",
+   "properties": {},
+   "widgets_values": [
+    "# \ud83e\udde0 BrainDead \u2014 Workflow Image & Versioning\n\nEverything in the pack that treats the **workflow itself** as data: snapshot it,\ndiff it, restore it, and render it as a shareable card with the graph embedded.\n\n## The problem these solve\nComfyUI's stock `SaveImage` embeds the full graph into every PNG. The BD save\nnodes write clean images with no metadata \u2014 good for delivery, but then nothing\nrecords how a render was made.\n\n## The provenance chain\n1. **BD_SaveContext** \u2014 registers naming + base dir for a run, and writes the run's\n   graph **once** as a native `.json` you can drag back in.\n2. **BD_SaveFile** \u2014 writes the product plus a `.json` sidecar. `embed_workflow`\n   (default **off**) also writes the graph into the PNG's text chunks.\n3. **BD_SaveWorkflowImage** \u2014 the human-readable card.\n\n## \u26a0\ufe0f The one gotcha\nA node only receives the graph if the **client sends it**. The ComfyUI UI always\ndoes. A headless caller must post it:\n\n```json\nPOST /prompt\n{\"prompt\": {...},\n \"extra_data\": {\"extra_pnginfo\": {\"workflow\": <UI graph>}}}\n```\n\nWithout it the graph is `null`, sidecars record nothing, and saved PNGs will\n**not** open in ComfyUI."
+   ],
+   "color": "#432",
+   "bgcolor": "#653"
+  },
+  {
+   "id": 2,
+   "type": "MarkdownNote",
+   "pos": [
+    40,
+    700
+   ],
+   "size": [
+    440,
+    520
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "title": "\u2139\ufe0f Version cache \u2014 how it works",
+   "properties": {},
+   "widgets_values": [
+    "## Version cache\n\nA local history of the graph, independent of git.\n\n### BD_WorkflowVersionCache\nSnapshots the graph when it changes. `workflow_id` names the history \u2014 keep it\nstable per project. `max_versions` trims oldest. `save_on_any_change` snapshots\nevery edit; turn it off and drive `trigger` yourself.\n\n### BD_WorkflowVersionList\nPrints the history. Set `compare_version_a` / `compare_version_b` for a diff of\nwhich nodes were added or removed between two snapshots.\n\n### BD_WorkflowVersionRestore\nReturns a chosen version as JSON, and with `save_to_file` writes it out so you can\nload it. **Does not** hot-swap the running graph.\n\n### BD_WorkflowVersionClear\nDeletes history. `confirm_clear` must be **true** or it no-ops \u2014 and it ships\n**false** here so loading this template cannot wipe a real history.\n\n> \u26a0\ufe0f ComfyUI skips a node whose inputs are unchanged, so a node whose job is a\n> **side effect** can silently not run. If a snapshot or file seems missing, change\n> an input to force execution."
+   ],
+   "color": "#432",
+   "bgcolor": "#653"
+  },
+  {
+   "id": 3,
+   "type": "BD_WorkflowVersionCache",
+   "pos": [
+    540,
+    80
+   ],
+   "size": [
+    380,
+    200
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "trigger",
+     "type": "*",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "status",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 0
+    },
+    {
+     "name": "workflow_id",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 1
+    },
+    {
+     "name": "version_count",
+     "type": "INT",
+     "links": null,
+     "slot_index": 2
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "BD_WorkflowVersionCache"
+   },
+   "widgets_values": [
+    "braindead_demo",
+    25,
+    true,
+    true,
+    "template demo snapshot"
+   ],
+   "color": "#223",
+   "bgcolor": "#335"
+  },
+  {
+   "id": 4,
+   "type": "BD_WorkflowVersionList",
+   "pos": [
+    540,
+    320
+   ],
+   "size": [
+    380,
+    180
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "version_list",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 0
+    },
+    {
+     "name": "diff_result",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 1
+    },
+    {
+     "name": "total_versions",
+     "type": "INT",
+     "links": null,
+     "slot_index": 2
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "BD_WorkflowVersionList"
+   },
+   "widgets_values": [
+    "braindead_demo",
+    true,
+    20,
+    0,
+    0
+   ],
+   "color": "#223",
+   "bgcolor": "#335"
+  },
+  {
+   "id": 5,
+   "type": "BD_WorkflowVersionRestore",
+   "pos": [
+    540,
+    540
+   ],
+   "size": [
+    380,
+    170
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "workflow_json",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 0
+    },
+    {
+     "name": "file_path",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 1
+    },
+    {
+     "name": "status",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 2
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "BD_WorkflowVersionRestore"
+   },
+   "widgets_values": [
+    "braindead_demo",
+    1,
+    false,
+    ""
+   ],
+   "color": "#223",
+   "bgcolor": "#335"
+  },
+  {
+   "id": 6,
+   "type": "BD_WorkflowVersionClear",
+   "pos": [
+    540,
+    750
+   ],
+   "size": [
+    380,
+    150
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "status",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "BD_WorkflowVersionClear"
+   },
+   "widgets_values": [
+    "braindead_demo",
+    5,
+    false
+   ],
+   "color": "#223",
+   "bgcolor": "#335",
+   "title": "BD Workflow Version Clear \u2014 confirm_clear OFF"
+  },
+  {
+   "id": 7,
+   "type": "BD_SaveContext",
+   "pos": [
+    1000,
+    80
+   ],
+   "size": [
+    380,
+    360
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "context_id",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 0
+    },
+    {
+     "name": "status",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 1
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "BD_SaveContext"
+   },
+   "widgets_values": [
+    "demo",
+    "%project%/%character%/%subfolder%/%character%_%name%_%suffix%",
+    "demo_character",
+    "card",
+    "01",
+    "BrainDeadDemo",
+    "",
+    "",
+    "",
+    "",
+    true,
+    3,
+    false,
+    true
+   ],
+   "color": "#232",
+   "bgcolor": "#353"
+  },
+  {
+   "id": 8,
+   "type": "BD_SaveFile",
+   "pos": [
+    1000,
+    490
+   ],
+   "size": [
+    380,
+    330
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "data",
+     "type": "*",
+     "link": 3
+    },
+    {
+     "name": "alpha_mask",
+     "type": "MASK",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "data",
+     "type": "*",
+     "links": null,
+     "slot_index": 0
+    },
+    {
+     "name": "file_path",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 1
+    },
+    {
+     "name": "status",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 2
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "BD_SaveFile"
+   },
+   "widgets_values": [
+    "card.png",
+    true,
+    "",
+    "",
+    "demo",
+    "",
+    "",
+    false,
+    false,
+    true,
+    true
+   ],
+   "color": "#232",
+   "bgcolor": "#353",
+   "title": "BD Save File \u2014 sidecar + optional embed"
+  },
+  {
+   "id": 9,
+   "type": "BD_SaveWorkflowImage",
+   "pos": [
+    1460,
+    80
+   ],
+   "size": [
+    400,
+    940
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 1
+    },
+    {
+     "name": "logo_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "logo_mask",
+     "type": "MASK",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "card",
+     "type": "IMAGE",
+     "links": [
+      2,
+      3
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "path",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 1
+    },
+    {
+     "name": "status",
+     "type": "STRING",
+     "links": null,
+     "slot_index": 2
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "BD_SaveWorkflowImage"
+   },
+   "widgets_values": [
+    "BD-workflow_image_and_versioning",
+    "Workflow Image & Versioning",
+    "snapshot | diff | restore | render",
+    "BrainDead",
+    34,
+    "BD_SaveWorkflowImage renders this card\nVersion cache: snapshot + diff + restore\nBD_SaveContext writes the run graph once\nBD_SaveFile can embed it into the PNG",
+    "v1, workflow, embed, versioning",
+    "Client must send extra_data.extra_pnginfo.workflow",
+    "BrainDeadGuild.com  \u00b7  BrainDead.TV  \u00b7  github.com/BizaNator/ComfyUI-BrainDead",
+    true,
+    0.15,
+    false,
+    "",
+    "v1",
+    "png",
+    true,
+    1180,
+    680,
+    88,
+    "#aa78ff",
+    "#16a34a",
+    "#18181e",
+    true,
+    true,
+    "",
+    60,
+    18,
+    "bottom-right"
+   ],
+   "color": "#323",
+   "bgcolor": "#535",
+   "title": "BD Save Workflow Image"
+  },
+  {
+   "id": 10,
+   "type": "LoadImage",
+   "pos": [
+    1920,
+    80
+   ],
+   "size": [
+    420,
+    360
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      1
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "MASK",
+     "type": "MASK",
+     "links": null,
+     "slot_index": 1
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoadImage"
+   },
+   "widgets_values": [
+    " Letti_Moralesbody__00002__nobg.png"
+   ],
+   "color": "#2a363b",
+   "bgcolor": "#3f5159",
+   "title": "Optional background \u2014 blended at image_blend 0.15"
+  },
+  {
+   "id": 11,
+   "type": "PreviewImage",
+   "pos": [
+    1920,
+    500
+   ],
+   "size": [
+    420,
+    440
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": null,
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PreviewImage"
+   },
+   "widgets_values": [],
+   "color": "#2a363b",
+   "bgcolor": "#3f5159",
+   "title": "The rendered card"
+  },
+  {
+   "id": 12,
+   "type": "MarkdownNote",
+   "pos": [
+    1920,
+    980
+   ],
+   "size": [
+    420,
+    240
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "title": "\u26a0\ufe0f Background blending",
+   "properties": {},
+   "widgets_values": [
+    "`draw_graph` **always** draws the workflow. A connected `image` is composited over\nit at `image_blend`:\n\n* `1.0` image only\n* `0.15` (here) graph reads clearly, image is a wash\n* `0.0` graph only \u2014 same as leaving `image` disconnected\n\nEarlier the image won outright, so wiring a LoadImage silently removed the graph\nfrom the card that was documenting it."
+   ],
+   "color": "#432",
+   "bgcolor": "#653"
+  }
+ ],
+ "links": [
+  [
+   1,
+   10,
+   0,
+   9,
+   0,
+   "IMAGE"
+  ],
+  [
+   2,
+   9,
+   0,
+   11,
+   0,
+   "IMAGE"
+  ],
+  [
+   3,
+   9,
+   0,
+   8,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [
+  {
+   "id": 1,
+   "title": "Version cache",
+   "bounding": [
+    520,
+    40,
+    420,
+    900
+   ],
+   "color": "#335",
+   "font_size": 24,
+   "flags": {}
+  },
+  {
+   "id": 2,
+   "title": "Provenance",
+   "bounding": [
+    980,
+    40,
+    420,
+    900
+   ],
+   "color": "#353",
+   "font_size": 24,
+   "flags": {}
+  },
+  {
+   "id": 3,
+   "title": "The card",
+   "bounding": [
+    1440,
+    40,
+    440,
+    1180
+   ],
+   "color": "#535",
+   "font_size": 24,
+   "flags": {}
+  },
+  {
+   "id": 4,
+   "title": "Optional input / preview",
+   "bounding": [
+    1900,
+    40,
+    460,
+    1180
+   ],
+   "color": "#3f5159",
+   "font_size": 24,
+   "flags": {}
+  }
+ ],
+ "config": {},
+ "extra": {
+  "workflow_name": "BD-workflow_image_and_versioning",
+  "version": "v1"
+ },
+ "version": 0.4
+}

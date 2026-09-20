@@ -23,7 +23,9 @@ from .alpha_save import (
 )
 from .workflow_sidecar import (
     WORKFLOW_SIDECAR_INPUTS,
+    EMBED_WORKFLOW_INPUT,
     write_workflow_sidecar,
+    embed_workflow_chunks,
 )
 from ...utils.shared import (
     CACHE_DIR,
@@ -98,6 +100,26 @@ class BD_ClearCache(io.ComfyNode):
         return io.NodeOutput(f"Deleted {deleted_count} files ({size_mb:.1f} MB)")
 
 
+
+def _maybe_embed_workflow(final_path, extra_pnginfo, prompt, enabled):
+    """Rewrite a finished PNG with workflow+prompt text chunks. Returns a note."""
+    if not enabled or not final_path:
+        return ""
+    if not final_path.lower().endswith(".png"):
+        return " (embed skipped: not a png)"
+    meta = embed_workflow_chunks(extra_pnginfo, prompt)
+    if meta is None:
+        return " (embed skipped: no workflow sent by client)"
+    try:
+        from PIL import Image as _Image
+        with _Image.open(final_path) as im:
+            im.load()
+            im.save(final_path, "PNG", pnginfo=meta)
+        return " + embedded"
+    except Exception as e:
+        return f" (embed failed: {e})"
+
+
 class BD_SaveFile(io.ComfyNode):
     """
     Save ANY data type to file in native format, output the file path.
@@ -145,6 +167,7 @@ class BD_SaveFile(io.ComfyNode):
                                         "resolve cleanly (// → /). Undefined vars stay as %var% literals so you spot typos."),
                 *ALPHA_SAVE_INPUTS,
                 *WORKFLOW_SIDECAR_INPUTS,
+                EMBED_WORKFLOW_INPUT,
             ],
             hidden=[io.Hidden.extra_pnginfo, io.Hidden.prompt],
             outputs=[
@@ -224,7 +247,8 @@ class BD_SaveFile(io.ComfyNode):
                 save_alpha_separately: bool = False,
                 alpha_mask: torch.Tensor | None = None,
                 invert_alpha: bool = False,
-                save_workflow_sidecar: bool = True) -> io.NodeOutput:
+                save_workflow_sidecar: bool = True,
+                embed_workflow: bool = False) -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
 
         effective_ctx_id = context_id
@@ -267,6 +291,8 @@ class BD_SaveFile(io.ComfyNode):
                         sidecar_path = write_workflow_sidecar(final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt)
                         if sidecar_path:
                             sidecar_note = f" + workflow→{os.path.basename(sidecar_path)}"
+                    sidecar_note += _maybe_embed_workflow(
+                        final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt, embed_workflow)
                     return io.NodeOutput(data, final_path, f"Saved {data_type} via context='{effective_ctx_id}'{auto_str} suffix='{suffix}': {os.path.basename(final_path)}{alpha_note}{sidecar_note}")
                 except Exception as e:
                     return io.NodeOutput(data, "", f"Save (context) failed: {e}")
@@ -312,6 +338,8 @@ class BD_SaveFile(io.ComfyNode):
                 sidecar_path = write_workflow_sidecar(final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt)
                 if sidecar_path:
                     sidecar_note = f" + workflow→{os.path.basename(sidecar_path)}"
+            sidecar_note += _maybe_embed_workflow(
+                final_path, cls.hidden.extra_pnginfo, cls.hidden.prompt, embed_workflow)
             status = f"Saved {data_type}: {os.path.basename(final_path)}{alpha_note}{sidecar_note}"
             return io.NodeOutput(data, final_path, status)
         except Exception as e:

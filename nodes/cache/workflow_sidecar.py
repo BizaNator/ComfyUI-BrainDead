@@ -22,6 +22,17 @@ import os
 
 from comfy_api.latest import io
 
+EMBED_WORKFLOW_INPUT = io.Boolean.Input(
+    "embed_workflow", default=False, optional=True,
+    tooltip=(
+        "Also write the workflow + prompt into the PNG's own text chunks, exactly as "
+        "ComfyUI's stock SaveImage does, so the image opens by drag-and-drop. OFF by "
+        "default: embedding a large graph into every delivered product is waste, and the "
+        "sidecar already carries the same data. Turn it on for the one image per run you "
+        "want to reopen. PNG only -- JPEG cannot carry text chunks."
+    ),
+)
+
 WORKFLOW_SIDECAR_INPUTS: list = [
     io.Boolean.Input(
         "save_workflow_sidecar", default=True, optional=True,
@@ -55,3 +66,24 @@ def write_workflow_sidecar(filepath: str, extra_pnginfo, prompt) -> str:
     except Exception as e:
         print(f"[BD Save] workflow sidecar failed for {filepath}: {e}", flush=True)
         return ""
+
+
+def embed_workflow_chunks(extra_pnginfo, prompt):
+    """A PngInfo carrying workflow+prompt, or None when there is nothing to embed.
+
+    Pass as `pnginfo=` to PIL's PNG save. Returns None rather than an empty PngInfo
+    so callers can tell "nothing to embed" from "embedded".
+    """
+    try:
+        from PIL.PngImagePlugin import PngInfo
+    except Exception:
+        return None
+    wf = extra_pnginfo.get("workflow") if isinstance(extra_pnginfo, dict) else None
+    if wf is None and prompt is None:
+        return None
+    meta = PngInfo()
+    if wf is not None:
+        meta.add_text("workflow", json.dumps(wf))
+    if prompt is not None:
+        meta.add_text("prompt", json.dumps(prompt))
+    return meta

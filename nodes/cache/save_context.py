@@ -168,6 +168,34 @@ def _resolve_save_path(template: str, vars_dict: dict, suffix: str,
     return full_path, rel_path
 
 
+
+def _write_run_workflow(base_dir, context_id, version, extra_pnginfo):
+    """One native .json per run, next to the products rather than inside each one.
+
+    Returns the path written, or "" when there is nothing to write. A missing graph
+    is reported rather than swallowed: it means the caller did not send
+    extra_data.extra_pnginfo.workflow, and every sidecar for the run will record
+    null for the workflow.
+    """
+    wf = extra_pnginfo.get("workflow") if isinstance(extra_pnginfo, dict) else None
+    if not wf:
+        print("[BD SaveContext] no workflow in extra_pnginfo -- run will have no "
+              "native workflow file (client did not send extra_data)", flush=True)
+        return ""
+    try:
+        import json as _json
+        os.makedirs(base_dir, exist_ok=True)
+        name = "%s_workflow_v%s.json" % (context_id or "run", version or "01")
+        path = os.path.join(base_dir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(wf, f)
+        print("[BD SaveContext] workflow -> %s" % path, flush=True)
+        return path
+    except Exception as e:
+        print("[BD SaveContext] workflow file failed: %r" % (e,), flush=True)
+        return ""
+
+
 class BD_SaveContext(io.ComfyNode):
     """Define a save context: template + variables stored globally for downstream save nodes."""
 
@@ -223,11 +251,23 @@ class BD_SaveContext(io.ComfyNode):
                 io.Boolean.Input("strict", default=False, optional=True,
                                  tooltip="If True, save nodes raise an error when the template contains undefined "
                                          "%variables% at save time."),
+                io.Boolean.Input(
+                    "save_workflow_file", default=True, optional=True,
+                    tooltip=(
+                        "Write the run's workflow ONCE as a native ComfyUI .json in the "
+                        "context's base directory, instead of relying on a copy inside every "
+                        "per-image sidecar. Named <context_id>_workflow_v<version>.json. "
+                        "Drag it into ComfyUI to reopen the exact graph this run used. "
+                        "Needs the client to send the graph (the ComfyUI frontend does; a "
+                        "headless caller must post extra_data.extra_pnginfo.workflow)."
+                    ),
+                ),
             ],
             outputs=[
                 io.String.Output(display_name="context_id"),
                 io.String.Output(display_name="status"),
             ],
+            hidden=[io.Hidden.extra_pnginfo, io.Hidden.prompt],
         )
 
     @classmethod
@@ -237,7 +277,8 @@ class BD_SaveContext(io.ComfyNode):
     @classmethod
     def execute(cls, context_id, template, character="", name="", version="01",
                 project="", subfolder="", tag="", custom_vars="", base_dir="",
-                auto_increment=True, increment_padding=3, strict=False) -> io.NodeOutput:
+                auto_increment=True, increment_padding=3, strict=False,
+                save_workflow_file=True) -> io.NodeOutput:
         vars_dict = {
             "character": character, "name": name, "version": version,
             "project": project, "subfolder": subfolder, "tag": tag,
@@ -246,6 +287,10 @@ class BD_SaveContext(io.ComfyNode):
 
         # Validate base_dir now so the user sees errors at registration, not save time.
         resolved_base = _resolve_base_dir(base_dir)
+
+        if save_workflow_file:
+            _write_run_workflow(resolved_base, context_id, version,
+                                getattr(cls.hidden, "extra_pnginfo", None))
 
         # Be tolerant of bad/misaligned widget values so a single off input can't
         # prune the whole save chain. increment_padding < 1 (incl. False/0 from a
