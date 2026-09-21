@@ -25,6 +25,10 @@ import folder_paths
 import comfy.utils
 from comfy_api.latest import io
 
+from ..cache.workflow_sidecar import (
+    WORKFLOW_SIDECAR_INPUTS,
+    write_workflow_sidecar,
+)
 from .parts_types import (
     PARTS_BUNDLE, ensure_bundle, frame_size as _frame_size,
     parse_category_table, DEFAULT_CATEGORY_TABLE, CATEGORY_TABLE_DEFAULT_PATH,
@@ -344,7 +348,9 @@ class BD_PartsExport(io.ComfyNode):
                         f"Default bundled file: {CATEGORY_TABLE_DEFAULT_PATH}"
                     ),
                 ),
+                *WORKFLOW_SIDECAR_INPUTS,
             ],
+            hidden=[io.Hidden.extra_pnginfo, io.Hidden.prompt],
             outputs=[
                 io.Custom(PARTS_BUNDLE).Output(display_name="parts"),
                 io.String.Output(display_name="output_dir"),
@@ -368,7 +374,8 @@ class BD_PartsExport(io.ComfyNode):
                 save_composite=True, composite_size=0,
                 save_psd=True, save_psb=False, save_base=True, save_manifest=True,
                 base_image=None, background_image=None,
-                category_table=None, category_table_path="") -> io.NodeOutput:
+                category_table=None, category_table_path="",
+                save_workflow_sidecar: bool = True) -> io.NodeOutput:
         ensure_bundle(parts, source="BD_PartsExport.parts")
 
         from ..cache.save_context import resolve_context_path, get_context, auto_pick_context
@@ -717,6 +724,15 @@ class BD_PartsExport(io.ComfyNode):
                 os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
             else:
                 manifest_path = os.path.join(folder, f"{base}_manifest.json")
+            if save_workflow_sidecar:
+                # One per run, beside the manifest -- a parts run emits dozens of
+                # PNGs and a single graph produced all of them.
+                try:
+                    write_workflow_sidecar(manifest_path,
+                                           getattr(cls.hidden, "extra_pnginfo", None),
+                                           getattr(cls.hidden, "prompt", None))
+                except Exception as _e:
+                    print(f"[BD PartsExport] workflow sidecar skipped: {_e}", flush=True)
             with open(manifest_path, "w") as _mf:
                 _json.dump(manifest, _mf, indent=2)
             summary_lines.append(f"  manifest: {os.path.basename(manifest_path)}  ({len(parts_manifest)} parts)")
