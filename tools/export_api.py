@@ -3,9 +3,13 @@
 Export a UI-graph template (example_workflows/BD-*.json) to API/prompt format
 (<name>.api.json) — the stable, self-contained contract handed to downstream agents.
 
-Reuses run_workflow.py's graph→API converter (queries the live server's object_info), so the
-export always matches the currently-loaded node schemas. Regenerate this whenever the UI
-template changes — the UI .json stays the single source of truth; the .api.json is derived.
+Reuses tools/workflow_to_api.py's graph→API converter (queries the live server's
+object_info), so the export always matches the currently-loaded node schemas. Regenerate
+this whenever the UI template changes — the UI .json stays the single source of truth;
+the .api.json is derived.
+
+That converter flattens subgraphs itself, so --expand-subgraphs is no longer required;
+it still works and is kept for graphs where the older expander's output is what you want.
 
 Usage:
     python3 tools/export_api.py example_workflows/BD-trellis2_unreal_fbx.json
@@ -13,11 +17,15 @@ Usage:
 """
 import argparse, importlib.util, json, os, sys
 
-RUN_WORKFLOW = "/opt/comfyui/run_workflow.py"
+# In-repo and subgraph-aware. The old host-local run_workflow.py is the fallback
+# only; it drops UUID-typed subgraph instances and predates the slot fix.
+CONVERTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflow_to_api.py")
+FALLBACK = "/opt/comfyui/run_workflow.py"
 
 
 def load_runner():
-    spec = importlib.util.spec_from_file_location("run_workflow", RUN_WORKFLOW)
+    path = CONVERTER if os.path.exists(CONVERTER) else FALLBACK
+    spec = importlib.util.spec_from_file_location("bd_workflow_to_api", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
