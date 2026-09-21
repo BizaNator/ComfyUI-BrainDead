@@ -726,7 +726,9 @@ class BD_PartsExport(io.ComfyNode):
                 manifest_path = os.path.join(folder, f"{base}_manifest.json")
             if save_workflow_sidecar:
                 # One per run, beside the manifest -- a parts run emits dozens of
-                # PNGs and a single graph produced all of them.
+                # PNGs and a single graph produced all of them. The helper lands
+                # this at <manifest>_workflow.json: the manifest is itself a
+                # .json, so the plain sidecar name would BE the manifest.
                 try:
                     write_workflow_sidecar(manifest_path,
                                            getattr(cls.hidden, "extra_pnginfo", None),

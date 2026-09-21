@@ -49,6 +49,10 @@ WORKFLOW_SIDECAR_INPUTS: list = [
 def write_workflow_sidecar(filepath: str, extra_pnginfo, prompt) -> str:
     """Write a `<filepath minus ext>.json` sidecar with the workflow + prompt graph.
 
+    If that name would be `filepath` itself -- the caller passed a .json, as
+    BD_PartsExport does with its manifest -- `_workflow` is appended instead, so
+    the sidecar can never overwrite the file it belongs to.
+
     Returns the sidecar path on success, or "" if there was nothing to write
     (no extra_pnginfo/prompt available, e.g. running outside a normal queued
     execution) or the write failed.
@@ -59,6 +63,11 @@ def write_workflow_sidecar(filepath: str, extra_pnginfo, prompt) -> str:
     if not workflow and not prompt:
         return ""
     sidecar_path = filepath.rsplit(".", 1)[0] + ".json" if "." in filepath else filepath + ".json"
+    if os.path.abspath(sidecar_path) == os.path.abspath(filepath):
+        # The caller's own file is already a .json -- BD_PartsExport sits the
+        # sidecar beside its manifest. Writing there would clobber it, or be
+        # clobbered by it, depending on which write lands last.
+        sidecar_path = filepath.rsplit(".", 1)[0] + "_workflow.json"
     try:
         with open(sidecar_path, "w", encoding="utf-8") as f:
             json.dump({"workflow": workflow, "prompt": prompt}, f)
