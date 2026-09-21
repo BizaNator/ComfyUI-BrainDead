@@ -213,14 +213,24 @@ Eyeglass        = eyeglass:accessories
 
 # Accessories
 ~sunglasses     = sunglasses:accessories
+# Qwen-VL names the part, not the category: billpage's came back as
+# "black_sunglass_frame", which ~sunglasses (plural) does not contain. Stem it.
+~sunglass       = sunglasses:accessories
 ~eyeglass       = glasses:accessories
 ~goggles        = goggles:accessories
 ~glasses        = glasses:accessories
+~spectacles     = glasses:accessories
 ~watch          = watch:accessories
 ~bracelet       = bracelet:accessories
 ~necklace       = necklace:accessories
 ~chain          = chain:accessories
 ~earring        = earring:accessories
+# "earings" (one r) is what the VLM writes, and it does not contain "earring" --
+# but it DOES contain "ring", so without this line every pair of earrings was
+# filed as a finger ring.
+~earings        = earring:accessories
+~earing         = earring:accessories
+~ear ring       = earring:accessories
 ~ring           = ring:accessories
 ~headphone      = headphones:accessories
 ~hat            = hat:accessories
