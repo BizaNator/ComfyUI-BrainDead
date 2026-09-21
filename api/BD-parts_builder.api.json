@@ -595,7 +595,7 @@
       "target_pixels_custom": 1048576,
       "negative_prompt": "",
       "composite_mode": "mask_region",
-      "full_image_pass": false
+      "full_image_pass": true
     },
     "_meta": {
       "title": "\u2469 BD Parts Underpaint (reveal beneath)"

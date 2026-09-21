@@ -1546,7 +1546,7 @@
         1048576,
         "",
         "mask_region",
-        false
+        true
       ],
       "title": "⑩ BD Parts Underpaint (reveal beneath)"
     },

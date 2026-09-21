@@ -530,7 +530,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
                 ),
                 io.Boolean.Input(
                     "full_image_pass",
-                    default=False,
+                    default=True,
                     optional=True,
                     tooltip=(
                         "Feed the WHOLE image to the model each pass instead of a per-part crop.\n"
@@ -540,8 +540,9 @@ class BD_PartsUnderpaint(io.ComfyNode):
                         "middle). Turn this ON for edit models.\n"
                         "When ON, context_extend_factor is ignored. Combine with composite_mode="
                         "mask_region for clean object removal with zero drift outside the mask.\n"
-                        "Leave OFF only for a true masked inpaint model (flux_fill) where a focused "
-                        "crop is cheaper and correct.\n"
+                        "ON by default: the default model_type is an edit model, so OFF was the "
+                        "wrong pairing out of the box. Leave OFF only for a true masked inpaint "
+                        "model (flux_fill) where a focused crop is cheaper and correct.\n"
                         "Note: per_part_sequential + full_image_pass runs a full-image generation per "
                         "part (slower). all_parts_combined does it in a single pass."
                     ),
@@ -613,6 +614,16 @@ class BD_PartsUnderpaint(io.ComfyNode):
 
         tag2pinfo = parts["tag2pinfo"]
         skip_set = _parse_skip(skip_tags)
+
+        if not full_image_pass and model_type in ("qwen_edit", "kontext_dev"):
+            # Silent in the output otherwise: the crop looks like a whole canvas
+            # to an instruction model and it paints a whole subject into it.
+            print(f"[BD PartsUnderpaint] model_type={model_type} is an instruction "
+                  f"edit model but full_image_pass is OFF. It will only see each "
+                  f"part's crop, and is likely to hallucinate a whole subject into "
+                  f"it rather than reveal what is underneath. Turn full_image_pass "
+                  f"ON unless you are running a masked inpaint model (flux_fill).",
+                  flush=True)
 
         # ── Convert source_image to uint8 numpy ───────────────────────────────
         src_t = source_image.detach().cpu().float()
