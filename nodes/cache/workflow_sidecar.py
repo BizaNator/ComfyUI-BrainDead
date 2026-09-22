@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 from comfy_api.latest import io
 
@@ -44,6 +45,26 @@ WORKFLOW_SIDECAR_INPUTS: list = [
         ),
     ),
 ]
+
+
+def close_provenance(workflow) -> None:
+    """Fill in how long the run took, once, at the moment a file is written.
+
+    BD_Provenance stamps `started_at` when it executes, which is early by design
+    -- it has to be, or the save nodes would not see its block. That makes the
+    node itself the wrong place to measure duration. The first writer to reach a
+    finished product closes it; later writers in the same run leave it alone, so
+    the number is the time to the FIRST product rather than a different value per
+    file.
+    """
+    if not isinstance(workflow, dict):
+        return
+    block = (workflow.get("extra") or {}).get("bd_provenance")
+    if not isinstance(block, dict) or "duration_sec" in block:
+        return
+    started = block.get("started_at")
+    if isinstance(started, (int, float)) and started > 0:
+        block["duration_sec"] = round(time.time() - started, 2)
 
 
 def write_workflow_sidecar(filepath: str, extra_pnginfo, prompt) -> str:
@@ -83,6 +104,7 @@ def write_workflow_sidecar(filepath: str, extra_pnginfo, prompt) -> str:
         # clobbered by it, depending on which write lands last.
         sidecar_path = filepath.rsplit(".", 1)[0] + "_workflow.json"
     if isinstance(workflow, dict) and "nodes" in workflow:
+        close_provenance(workflow)
         payload = dict(workflow)
         # ComfyUI ignores unknown top-level keys and round-trips them, so the
         # API prompt rides along without making the file unopenable.
@@ -123,6 +145,7 @@ def embed_workflow_chunks(extra_pnginfo, prompt):
     except Exception:
         return None
     wf = extra_pnginfo.get("workflow") if isinstance(extra_pnginfo, dict) else None
+    close_provenance(wf)
     if wf is None and prompt is None:
         return None
     meta = PngInfo()
