@@ -47,15 +47,29 @@ WORKFLOW_SIDECAR_INPUTS: list = [
 
 
 def write_workflow_sidecar(filepath: str, extra_pnginfo, prompt) -> str:
-    """Write a `<filepath minus ext>.json` sidecar with the workflow + prompt graph.
+    """Write a `<filepath minus ext>.json` sidecar that ComfyUI can actually open.
 
-    If that name would be `filepath` itself -- the caller passed a .json, as
-    BD_PartsExport does with its manifest -- `_workflow` is appended instead, so
-    the sidecar can never overwrite the file it belongs to.
+    The graph goes at the TOP level, because that is what the loader accepts --
+    a UI graph, or an API prompt. An earlier version wrote
+    {"workflow": ..., "prompt": ...}, which is neither, so every sidecar opened
+    as an empty canvas.
 
-    Returns the sidecar path on success, or "" if there was nothing to write
-    (no extra_pnginfo/prompt available, e.g. running outside a normal queued
-    execution) or the write failed.
+    ComfyUI only populates extra_pnginfo.workflow when the FRONTEND submits. A
+    headless caller must attach it itself:
+
+        payload["extra_data"] = {"extra_pnginfo": {"workflow": ui_graph}}
+
+    When it does not, there is no UI graph anywhere on the server and no node can
+    recover one -- so fall back to the API prompt, which is always available and
+    is a complete, runnable record; it simply has no layout. A warning names the
+    cause so this is found in the log rather than in an empty canvas.
+
+    If the derived name would be `filepath` itself -- the caller passed a .json,
+    as BD_PartsExport does with its manifest -- `_workflow` is appended instead,
+    so the sidecar can never overwrite the file it belongs to.
+
+    Returns the sidecar path on success, or "" if there was nothing to write or
+    the write failed.
     """
     if not filepath:
         return ""
@@ -68,9 +82,30 @@ def write_workflow_sidecar(filepath: str, extra_pnginfo, prompt) -> str:
         # sidecar beside its manifest. Writing there would clobber it, or be
         # clobbered by it, depending on which write lands last.
         sidecar_path = filepath.rsplit(".", 1)[0] + "_workflow.json"
+    if isinstance(workflow, dict) and "nodes" in workflow:
+        payload = dict(workflow)
+        # ComfyUI ignores unknown top-level keys and round-trips them, so the
+        # API prompt rides along without making the file unopenable.
+        if prompt:
+            payload.setdefault("extra", {})
+            if isinstance(payload["extra"], dict):
+                payload["extra"]["bd_api_prompt"] = prompt
+    else:
+        # Once per run, on the function rather than on module state, so the
+        # function stays self-contained for the AST-extraction tests.
+        if not getattr(write_workflow_sidecar, "_warned_no_ui_graph", False):
+            write_workflow_sidecar._warned_no_ui_graph = True
+            print("[BD Save] no UI graph in extra_pnginfo -- writing the API "
+                  "prompt instead. ComfyUI fills extra_pnginfo.workflow only for "
+                  "FRONTEND submissions; a headless caller must send "
+                  'extra_data={"extra_pnginfo": {"workflow": ui_graph}} or the '
+                  "sidecar cannot carry the laid-out graph.", flush=True)
+        payload = prompt
+    if not payload:
+        return ""
     try:
         with open(sidecar_path, "w", encoding="utf-8") as f:
-            json.dump({"workflow": workflow, "prompt": prompt}, f)
+            json.dump(payload, f)
         return sidecar_path
     except Exception as e:
         print(f"[BD Save] workflow sidecar failed for {filepath}: {e}", flush=True)

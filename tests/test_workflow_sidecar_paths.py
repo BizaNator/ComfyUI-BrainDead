@@ -52,7 +52,7 @@ class SidecarPath(unittest.TestCase):
         with open(manifest) as f:
             self.assertEqual(json.load(f), {"parts": ["nose", "lips"]})
         with open(got) as f:
-            self.assertEqual(json.load(f)["workflow"], GRAPH["workflow"])
+            self.assertEqual(json.load(f)["nodes"], GRAPH["workflow"]["nodes"])
 
     def test_an_image_caller_is_unchanged(self):
         png = os.path.join(self.dir, "nose_nose.png")
