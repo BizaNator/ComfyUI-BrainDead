@@ -403,6 +403,12 @@ class BD_BulkSave(io.ComfyNode):
             inputs.append(io.AnyType.Input(f"input_{i}", optional=True,
                                            tooltip=f"Input slot #{i}. Wire any data type. Empty slots are skipped."))
         inputs.extend(WORKFLOW_SIDECAR_INPUTS)
+        inputs.append(io.Boolean.Input(
+            "save_enable", default=True, optional=True,
+            tooltip="Master gate for this Run. Wire a conditional BOOLEAN output here — "
+                    "False skips every save this node would otherwise do (all inputs, "
+                    "no files written, no context lookup), True (or leave unwired) saves "
+                    "normally. Added last so it does not shift existing workflows' widget order."))
         return io.Schema(
             node_id="BD_BulkSave",
             display_name="BD Bulk Save",
@@ -435,9 +441,14 @@ class BD_BulkSave(io.ComfyNode):
                 format="png", jpg_quality=95, skip_if_exists=False,
                 custom_vars="",
                 save_alpha_separately=False, alpha_mask=None, invert_alpha=False,
-                save_workflow_sidecar=True,
+                save_workflow_sidecar=True, save_enable=True,
                 **inputs) -> io.NodeOutput:
         from .save_context import resolve_context_path, get_context, auto_pick_context
+
+        if not save_enable:
+            msg = "BD_BulkSave: save_enable=False — skipped, nothing written"
+            print(f"[BD BulkSave] {msg}", flush=True)
+            return io.NodeOutput(0, "", msg)
 
         wired = []
         for i in range(1, 17):
