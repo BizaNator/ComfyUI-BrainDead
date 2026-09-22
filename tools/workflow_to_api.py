@@ -242,11 +242,25 @@ def flatten(graph, subgraphs, flat, prefix="", boundary_in=None, boundary_out=No
             return ("__BOUNDARY_IN__", out_slot, ltype)
         return (nid(local_node_id), out_slot, ltype)
 
-    # We must process subgraph instances first (so their out-sources exist before
-    # we wire their consumers). Order: recurse all instances, then add links.
-    for node in nodes:
-        ntype = node["type"]
-        if ntype in sub_by_id:
+    # Subgraph instances must be expanded before anything that consumes them, and
+    # `nodes` is canvas order, not dependency order -- an instance sitting earlier
+    # in the array than the instance feeding it would resolve its boundary inputs
+    # against an `instance_out_sources` entry that does not exist yet, fall through
+    # to the concrete-node branch, and wire to an id that is never placed. Expand
+    # to a fixed point: each pass takes only the instances whose instance-valued
+    # inputs are already resolved.
+    _instances = [n for n in nodes if n["type"] in sub_by_id]
+    _inst_ids = {n["id"] for n in _instances}
+
+    def _ready(n):
+        for fed in inbound.get(n["id"], {}).values():
+            oid = fed[0]
+            if oid != n["id"] and oid in _inst_ids and oid not in instance_out_sources:
+                return False
+        return True
+
+    def _expand(node):
+            ntype = node["type"]
             sub = sub_by_id[ntype]
             inst_prefix = f"{prefix}{node['id']}:"
 
@@ -268,7 +282,7 @@ def flatten(graph, subgraphs, flat, prefix="", boundary_in=None, boundary_out=No
             if inst_mode == 2:
                 # Muted instance: contributes nothing; all interface outputs are dead.
                 instance_out_sources[node["id"]] = {i: None for i in range(len(iface_outputs))}
-                continue
+                return
             if inst_mode == 4:
                 # Bypassed instance: behaves like a bypassed node -- each interface
                 # OUTPUT passes through to the instance INPUT with a matching type
@@ -286,7 +300,7 @@ def flatten(graph, subgraphs, flat, prefix="", boundary_in=None, boundary_out=No
                         match = o_idx
                     out_src[o_idx] = child_boundary_in.get(match) if match is not None else None
                 instance_out_sources[node["id"]] = out_src
-                continue
+                return
 
             out_src = flatten(sub, subgraphs, flat,
                               prefix=inst_prefix,
@@ -294,6 +308,18 @@ def flatten(graph, subgraphs, flat, prefix="", boundary_in=None, boundary_out=No
             # Apply proxyWidget overrides from the instance, if any widgets_values present.
             _apply_proxy_widgets(node, inst_prefix, flat)
             instance_out_sources[node["id"]] = out_src
+
+    _pending = list(_instances)
+    while _pending:
+        _batch = [n for n in _pending if _ready(n)]
+        if not _batch:
+            _batch = _pending        # cycle or unresolvable: degrade to array order
+        for _n in _batch:
+            _expand(_n)
+        _left = [n for n in _pending if n["id"] not in instance_out_sources]
+        if len(_left) == len(_pending):
+            break                    # no progress; stop rather than spin
+        _pending = _left
 
     # Second pass: place concrete nodes.
     for node in nodes:
