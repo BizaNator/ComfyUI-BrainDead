@@ -484,6 +484,11 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                                        "contour + 6 px, like the eyes and brows. contour: the exact lip outline, no "
                                        "margin. hull: its convex hull (no cupid's bow). plane: the box FaceMaker "
                                        "v10-v26 drew for its lip stamp."),
+                io.Combo.Input("eye_fill", options=["flat", "none"], default="flat", optional=True,
+                               tooltip="flat: each MediaPipe eye zone of the eyeless plate becomes one flat tone (the "
+                                       "median of the skin around it) - the flat eye section the engine eye sits on, "
+                                       "which FaceMaker v26 made in its removed 'Crop and Fill Eyes' step. none: keep "
+                                       "the closed lids 2.1 draws."),
             ],
             outputs=[
                 io.Image.Output(display_name="bald"),
@@ -508,7 +513,7 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                 bald_prompt=C.BALD_PROMPT, mouthless_prompt=C.MOUTHLESS_PROMPT, eyeless_prompt=C.EYELESS_PROMPT,
                 seed=20260933, steps=40, cfg=1.0, sampler_name="euler", scheduler="simple", attempts_per_stage=2,
                 work_size="1024", reframe_below=0.90, reframe_fill=0.94, max_scale_err=0.015,
-                max_offset_px=3.0, lip_zone="organic") -> io.NodeOutput:
+                max_offset_px=3.0, lip_zone="organic", eye_fill="flat") -> io.NodeOutput:
         src, head = _source(image, head_mask)
         H, W = src.shape[:2]
         size = int(work_size)
@@ -620,6 +625,9 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                                           "settings": "BD_FaceSocketInfill as FaceMaker v10-v26 #8580, lips %s" % lip_zone}
             except Exception as e:                           # no face found etc. - the plates still stand
                 report["feature_mask"] = {"error": str(e)[:200]}
+        if eye_fill == "flat" and "eyeless" in done and (feat[..., 1] > 127).any():
+            out[2], tones = C.flat_fill(out[2], feat[..., 1] > 127, np.asarray(matte) > 0.5)
+            report["eye_fill"] = {"mode": "flat", "zones": tones}
         print("[BD PartsBuilder2Plates] ok=%s frame=%s edits=%d feature_mask=%s" % (report["ok"], frame, q.count,
               report.get("feature_mask", {}).get("socket_px", report.get("feature_mask"))), flush=True)
         return io.NodeOutput(_t(out[0]), _t(out[1]), _t(out[2]), _m(matte), _t(fsrc),
@@ -773,8 +781,50 @@ class BD_CompareImages(io.ComfyNode):
         return io.NodeOutput(_t(heat), _t(panel), json.dumps(score, indent=1))
 
 
+class BD_EvenLight(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_EvenLight",
+            display_name="BD Even Light",
+            category=CATEGORY,
+            description=(
+                "Even a head's lighting without flattening its facets. The light is the head's luminance blurred "
+                "heavily (mask-normalised, sigma in px at 1024); the facets are what is left. Output = mean + "
+                "keep_light x (light - mean) + facet_gain x facets, colour carried by ratio; outside the mask the "
+                "image is unchanged.\n\nWhy: Qwen Image 2.1 reads a cel-shading prompt as one hard key light - a "
+                "bright side and a shadow side - and prompts that ask for even light flatten the facets too. Put this "
+                "after a 2.1 shading pass (FaceMaker's Qwen Cell Shaded) to keep its facet contrast and take most of "
+                "the light out."),
+            inputs=[
+                io.Image.Input("image"),
+                io.Mask.Input("mask", optional=True,
+                              tooltip="Head mask (1 = head). None: pixels that differ from the corner colour."),
+                io.Float.Input("keep_light", default=0.5, min=0.0, max=1.0, step=0.05,
+                               tooltip="Share of the lighting gradient kept. 0 = perfectly even, 1 = unchanged."),
+                io.Float.Input("facet_gain", default=0.9, min=0.0, max=3.0, step=0.05,
+                               tooltip="Facet contrast multiplier. 1 = unchanged."),
+                io.Float.Input("sigma", default=60.0, min=5.0, max=400.0, step=5.0,
+                               tooltip="Light blur in px at 1024 (scaled with the image). Larger than a facet."),
+            ],
+            outputs=[io.Image.Output(display_name="image"), io.String.Output(display_name="report")],
+        )
+
+    @classmethod
+    def execute(cls, image, mask=None, keep_light=0.5, facet_gain=0.9, sigma=60.0) -> io.NodeOutput:
+        rgb = _img_u8(image)[..., :3]
+        H, W = rgb.shape[:2]
+        head = _mask_bool(mask, (H, W))
+        if head is None:
+            corners = np.concatenate([rgb[:16, :16].reshape(-1, 3), rgb[:16, -16:].reshape(-1, 3)])
+            head = np.abs(rgb.astype(np.int16) - np.median(corners, 0)).max(-1) > 12
+        out, stats = C.even_light(rgb, head, keep_light, facet_gain, sigma)
+        print("[BD EvenLight] %s" % stats, flush=True)
+        return io.NodeOutput(_t(out), json.dumps(stats))
+
+
 PARTS_BUILDER2_V3_NODES = [BD_PartsVocabulary, BD_PartsBuilder2, BD_PartsBuilder2Plates, BD_PartsBuilder2Assemble,
-                           BD_CompareImages]
+                           BD_CompareImages, BD_EvenLight]
 PARTS_BUILDER2_NODES = {c.__name__: c for c in PARTS_BUILDER2_V3_NODES}
 PARTS_BUILDER2_DISPLAY_NAMES = {
     "BD_PartsVocabulary": "BD Parts Vocabulary",
@@ -782,4 +832,5 @@ PARTS_BUILDER2_DISPLAY_NAMES = {
     "BD_PartsBuilder2Plates": "BD Parts Builder 2 Plates (Qwen 2.1)",
     "BD_PartsBuilder2Assemble": "BD Parts Builder 2 Assemble",
     "BD_CompareImages": "BD Compare Images",
+    "BD_EvenLight": "BD Even Light",
 }

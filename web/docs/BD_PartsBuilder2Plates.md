@@ -28,6 +28,7 @@ Make the featureless head plates (bald, mouthless/browless, eyeless) from the so
 | `max_scale_err` | FLOAT | Largest allowed scale change per axis. Default 0.015 (1.5%). |
 | `max_offset_px` | FLOAT | Largest allowed centre move, in 1024-px units. Default 3.0. |
 | `lip_zone` | COMBO | Lip shape in `socket_mask` / `feature_mask`. `organic` (default): the MediaPipe outer lip contour + 6 px, like the eyes and brows. `contour`: the exact lip outline, no margin. `hull`: its convex hull (no cupid's bow). `plane`: the box FaceMaker v10-v26 drew for its lip stamp. |
+| `eye_fill` | COMBO | `flat` (default): each MediaPipe eye zone of the eyeless plate becomes one flat tone, the median of the skin around it. This is the flat eye section the engine eye sits on. `none`: keep the closed lids 2.1 draws. |
 
 ## Outputs
 
@@ -35,7 +36,7 @@ Make the featureless head plates (bald, mouthless/browless, eyeless) from the so
 |------|------|-------------|
 | `bald` | IMAGE | Bald head, cut by the matte onto white. |
 | `mouthless` | IMAGE | Mouthless/browless plate, eyes kept. |
-| `eyeless` | IMAGE | Eyeless plate: no brows, eyes or mouth. The engine base. |
+| `eyeless` | IMAGE | Eyeless plate: no brows, eyes or mouth, and with `eye_fill` flat, a flat eye section. The engine base and FaceMaker's input. |
 | `matte` | MASK | The plate matte: the bald edit's own alpha, faint noise under 5% zeroed. |
 | `plate_source` | IMAGE | The source in the plate frame. |
 | `plate_head` | MASK | The source's head mask in the plate frame. |
@@ -110,6 +111,15 @@ the cupid's bow). `socket_mask` is that mask; `feature_mask` is the same zones b
 them apart. FaceMaker subtracts `socket_mask` from the matte: the head with the eyes, brows and lips
 removed is where its lines and shadows go. Save both next to the plates (the template saves `parts_builder_2/socket_mask`,
 `parts_builder_2/feature_mask` and `parts_builder_2/plate_matte`).
+
+## Flat eye section
+
+The engine eye sits on a flat patch of skin. FaceMaker v26 made that patch in its own pre-face
+"Crop and Fill Eyes" step, which v27 removed on the understanding that the eyeless plate arrives
+prepared. 2.1 draws closed eyelids and lash creases where the eyes were, so with `eye_fill` flat the node
+fills each eye zone with one tone. The zone is the same MediaPipe eye zone as in `feature_mask` (G),
+grown 3 px to cover the lash line; the tone is the median of a skin ring 8-22 px outside it, far enough
+out to miss the lid-crease shadow; the edge is feathered 2 px. Later 2.1 passes keep the patch flat.
 
 ## Attention backend
 
