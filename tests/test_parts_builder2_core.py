@@ -718,3 +718,12 @@ def test_visible_wins_adds_own_pixels_and_clears_over_a_lower_visible_part():
     assert (F[0:12, :, 3] == 0).all()                     # cleared over the lower part + 2 px fringe
     assert (F[13:20, :, 3] == 255).all()                  # hidden completion elsewhere is kept
     assert st["clipped_px"] == 12 * 40
+
+
+def test_with_interior_fills_an_open_mouth_ring():
+    ring = np.zeros((40, 60), bool)
+    ring[10:30, 10:50] = True
+    ring[14:26, 16:44] = False                            # the open mouth inside the lips
+    filled = C.with_interior(ring)
+    assert filled[10:30, 10:50].all() and filled.sum() == 20 * 40
+    assert not filled[0:10].any()
