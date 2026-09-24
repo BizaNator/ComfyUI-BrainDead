@@ -19,6 +19,10 @@ __version__ = "2.0.0"
 
 from comfy_api.latest import io, ComfyExtension
 
+# cuDNN 9.10-9.15: masked attention fails intermittently and can abort the process (nodes/_cudnn_sdpa.py)
+from .nodes import _cudnn_sdpa
+_cudnn_sdpa.apply()
+
 # =============================================================================
 # V3 Node Imports
 # =============================================================================

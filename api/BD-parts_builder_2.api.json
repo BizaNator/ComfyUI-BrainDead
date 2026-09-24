@@ -298,7 +298,8 @@
       "head_mask": [
         "2",
         0
-      ]
+      ],
+      "lip_zone": "organic"
     },
     "_meta": {
       "title": "\u2464 Parts Builder 2 Plates (Qwen 2.1)"
@@ -392,6 +393,69 @@
     }
   },
   "26": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "18",
+        8
+      ]
+    },
+    "_meta": {
+      "title": "socket mask as image"
+    }
+  },
+  "27": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "26",
+        0
+      ],
+      "filename_prefix": "parts_builder_2/socket_mask"
+    },
+    "_meta": {
+      "title": "Save socket mask (FaceMaker loads this)"
+    }
+  },
+  "28": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "18",
+        9
+      ],
+      "filename_prefix": "parts_builder_2/feature_mask"
+    },
+    "_meta": {
+      "title": "Save feature mask (R mouth, G eyes, B brows)"
+    }
+  },
+  "29": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "18",
+        3
+      ]
+    },
+    "_meta": {
+      "title": "matte as image"
+    }
+  },
+  "30": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "29",
+        0
+      ],
+      "filename_prefix": "parts_builder_2/plate_matte"
+    },
+    "_meta": {
+      "title": "Save plate matte (FaceMaker head mask)"
+    }
+  },
+  "31": {
     "class_type": "BD_PartsBuilder2Assemble",
     "inputs": {
       "complete_parts": [
@@ -423,11 +487,11 @@
       "title": "\u2465 Parts Builder 2 Assemble"
     }
   },
-  "27": {
+  "32": {
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "26",
+        "31",
         1
       ]
     },
@@ -435,11 +499,11 @@
       "title": "reassembled"
     }
   },
-  "28": {
+  "33": {
     "class_type": "PreviewImage",
     "inputs": {
       "images": [
-        "26",
+        "31",
         2
       ]
     },
@@ -447,11 +511,11 @@
       "title": "difference (red = off)"
     }
   },
-  "29": {
+  "34": {
     "class_type": "PreviewAny",
     "inputs": {
       "source": [
-        "26",
+        "31",
         3
       ]
     },
@@ -459,7 +523,7 @@
       "title": "Assemble report"
     }
   },
-  "30": {
+  "35": {
     "class_type": "BD_PartsExport",
     "inputs": {
       "parts": [
@@ -492,11 +556,11 @@
       "title": "\u2466 Export visible layers + head without items"
     }
   },
-  "31": {
+  "36": {
     "class_type": "BD_PartsExport",
     "inputs": {
       "parts": [
-        "26",
+        "31",
         0
       ],
       "filename": "engine_stack",
@@ -519,6 +583,126 @@
     },
     "_meta": {
       "title": "\u2467 Export engine stack"
+    }
+  },
+  "37": {
+    "class_type": "BD_CompareImages",
+    "inputs": {
+      "reference": [
+        "1",
+        0
+      ],
+      "candidate": [
+        "35",
+        3
+      ],
+      "gain": 3.0,
+      "threshold": 40,
+      "region": [
+        "2",
+        0
+      ],
+      "label": "visible layers vs MASTER 1"
+    },
+    "_meta": {
+      "title": "\u2468 Compare: visible PSD vs MASTER 1"
+    }
+  },
+  "38": {
+    "class_type": "BD_CompareImages",
+    "inputs": {
+      "reference": [
+        "18",
+        4
+      ],
+      "candidate": [
+        "31",
+        1
+      ],
+      "gain": 3.0,
+      "threshold": 40,
+      "region": [
+        "18",
+        5
+      ],
+      "label": "engine stack vs source"
+    },
+    "_meta": {
+      "title": "\u2468 Compare: engine stack vs source"
+    }
+  },
+  "39": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "37",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "visible layers vs MASTER 1"
+    }
+  },
+  "40": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "38",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "engine stack vs source"
+    }
+  },
+  "41": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "37",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "score (visible)"
+    }
+  },
+  "42": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "38",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "score (engine)"
+    }
+  },
+  "43": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "37",
+        1
+      ],
+      "filename_prefix": "parts_builder_2/compare_visible"
+    },
+    "_meta": {
+      "title": "Save compare (visible)"
+    }
+  },
+  "44": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "38",
+        1
+      ],
+      "filename_prefix": "parts_builder_2/compare_engine"
+    },
+    "_meta": {
+      "title": "Save compare (engine)"
     }
   }
 }

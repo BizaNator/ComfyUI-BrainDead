@@ -27,6 +27,7 @@ Make the featureless head plates (bald, mouthless/browless, eyeless) from the so
 | `reframe_fill` | FLOAT | Share of the frame the bald head fills after re-framing. Default 0.94. |
 | `max_scale_err` | FLOAT | Largest allowed scale change per axis. Default 0.015 (1.5%). |
 | `max_offset_px` | FLOAT | Largest allowed centre move, in 1024-px units. Default 3.0. |
+| `lip_zone` | COMBO | Lip shape in `socket_mask` / `feature_mask`. `organic` (default): the MediaPipe outer lip contour + 6 px, like the eyes and brows. `contour`: the exact lip outline, no margin. `hull`: its convex hull (no cupid's bow). `plane`: the box FaceMaker v10-v26 drew for its lip stamp. |
 
 ## Outputs
 
@@ -39,7 +40,9 @@ Make the featureless head plates (bald, mouthless/browless, eyeless) from the so
 | `plate_source` | IMAGE | The source in the plate frame. |
 | `plate_head` | MASK | The source's head mask in the plate frame. |
 | `plate_frame` | STRING | JSON: `box_source_px` [x0, y0, side], `size`, `source_size`, `scale`, and the mapping `plate_px = (source_px - box_xy) * size / box_side`. |
-| `report` | STRING | JSON: per stage the seed used, the fit to its input and to the source, `pass`, `pass_by`; overall `ok`; the prompts. |
+| `report` | STRING | JSON: per stage the seed used, the fit to its input and to the source, `pass`, `pass_by`; overall `ok`; the prompts; `feature_mask` (status, `socket_px`). |
+| `socket_mask` | MASK | Eye / brow / mouth exclusion mask in the plate frame: MediaPipe on the bald plate. FaceMaker loads this instead of detecting. Empty if no bald passed or no face was found. |
+| `feature_mask` | IMAGE | The same zones split by channel: R = mouth / lips, G = eyes, B = brows. |
 
 ## The chain
 
@@ -94,7 +97,29 @@ ready for `BD_PartsBuilder2Assemble`. Without a crop and at the source size, the
 
 `work_size` 2048 runs every edit at 2048 (Qwen Image 2.1's maximum) instead of 1024. A smaller source or crop is resized up to 2048 first.
 
+## Feature masks
+
+FaceMaker keeps its lines and shadows out of the eyes, brows and mouth with an exclusion mask. MediaPipe
+cannot find those features on the eyeless plate, so the node finds them once, on the **bald** plate
+(bald, not faceless: eyes, brows and mouth are still there, in the final frame), and hands the mask
+over with the plates. Detection is `BD_FaceSocketInfill` with the settings FaceMaker v10-v26 used:
+eyes in iris mode inset 2, brow band 12, lip band 6, every zone +6 px, feathered 3, nose off. FaceMaker
+drew the lips as a box for its old lip-stamp prompt; an exclusion mask only has to cover the lips, so
+`lip_zone` defaults to `organic` (on the proving head: 40,156 px against the box's 44,632, and it follows
+the cupid's bow). `socket_mask` is that mask; `feature_mask` is the same zones by channel for tools that need
+them apart. FaceMaker subtracts `socket_mask` from the matte: the head with the eyes, brows and lips
+removed is where its lines and shadows go. Save both next to the plates (the template saves `parts_builder_2/socket_mask`,
+`parts_builder_2/feature_mask` and `parts_builder_2/plate_matte`).
+
+## Attention backend
+
+Every Qwen Image 2.1 edit runs with cuDNN taken out of ComfyUI's attention backend list. On the first
+2.1 edit in a process that also holds Lotus-2 and Qwen3-VL, cuDNN attention can fail with
+"No valid execution plans built"; retrying after that failure aborts the ComfyUI process. The
+memory-efficient backend takes the same attention mask. The list is restored after each edit.
+
 ## Wiring
 
 Wire `eyeless`, `matte`, `plate_frame`, `plate_source` and `plate_head` into
-`BD_PartsBuilder2Assemble`. `mouthless` (eyes kept) is for uses that keep the eyes, such as Tripo.
+`BD_PartsBuilder2Assemble`. `mouthless` (eyes kept) is for uses that keep the eyes, such as Tripo. For FaceMaker, save
+`eyeless`, `matte` (MaskToImage) and `socket_mask` (MaskToImage): they are its three inputs.

@@ -10,6 +10,8 @@ Build BD-parts_builder_2: Qwen Image 2.1 layer decomposition of a character head
   ⑥ BD Parts Builder 2 Assemble - the engine stack (back parts -> eyeless plate -> front parts)
   ⑦ Export visible layers + head without items (PSD rebuilds the source)
   ⑧ Export the engine stack (PSD)
+  ⑨ Compare - BD Compare Images: MASTER 1 vs the visible-layer PSD composite, and the plate-frame source vs
+     the engine stack (red = off, with the score) - how to judge success at a glance
 
 New nodes exist only where this branch is loaded, so read /object_info from that server:
     python3 tools/build_parts_builder_2.py [--server http://127.0.0.1:8188]
@@ -181,7 +183,7 @@ bprev = add("PreviewImage", (2400, 540), (500, 470), {}, title="head without ite
 rep1 = add("PreviewAny", (2920, 50), (480, 960), {}, title="Parts Builder 2 report")
 
 # ── ⑤ plates, ⑥ assemble ─────────────────────────────────────────────────────
-group("⑤ Plates - bald -> mouthless + eyeless (cut onto white, frame-proven)", 0, 1080, 1880, 900)
+group("⑤ Plates - bald -> mouthless + eyeless (cut onto white, frame-proven) + eye/brow/mouth masks", 0, 1080, 1880, 1200)
 pl = add("BD_PartsBuilder2Plates", (20, 1130), (440, 820), {"seed": SEED + 2}, title="⑤ Parts Builder 2 Plates (Qwen 2.1)")
 pv_b = add("PreviewImage", (480, 1130), (340, 400), {}, title="bald")
 pv_m = add("PreviewImage", (840, 1130), (340, 400), {}, title="mouthless / browless")
@@ -190,6 +192,14 @@ rep2 = add("PreviewAny", (1560, 1130), (300, 820), {}, title="Plates report")
 sv_b = add("SaveImage", (480, 1560), (340, 390), {"filename_prefix": "parts_builder_2/plate_bald"}, title="Save bald")
 sv_m = add("SaveImage", (840, 1560), (340, 390), {"filename_prefix": "parts_builder_2/plate_mouthless"}, title="Save mouthless")
 sv_e = add("SaveImage", (1200, 1560), (340, 390), {"filename_prefix": "parts_builder_2/plate_eyeless"}, title="Save eyeless")
+sm_i = add("MaskToImage", (1560, 1560), (300, 60), {}, title="socket mask as image")
+sv_sm = add("SaveImage", (1560, 1640), (300, 300), {"filename_prefix": "parts_builder_2/socket_mask"},
+            title="Save socket mask (FaceMaker loads this)")
+sv_fm = add("SaveImage", (1200, 1960), (340, 300), {"filename_prefix": "parts_builder_2/feature_mask"},
+            title="Save feature mask (R mouth, G eyes, B brows)")
+mt_i = add("MaskToImage", (840, 1960), (340, 60), {}, title="matte as image")
+sv_mt = add("SaveImage", (840, 2030), (340, 230), {"filename_prefix": "parts_builder_2/plate_matte"},
+            title="Save plate matte (FaceMaker head mask)")
 
 group("⑥ Assemble - the engine stack vs the source", 1920, 1080, 1500, 900)
 asm = add("BD_PartsBuilder2Assemble", (1940, 1130), (360, 300), {}, title="⑥ Parts Builder 2 Assemble")
@@ -198,11 +208,24 @@ pv_d = add("PreviewImage", (2860, 1130), (520, 520), {}, title="difference (red 
 rep3 = add("PreviewAny", (1940, 1460), (360, 490), {}, title="Assemble report")
 
 # ── ⑦ ⑧ exports ──────────────────────────────────────────────────────────────
-group("⑦ ⑧ Export - PSD + PNGs + manifest (BD Parts Export)", 0, 2020, 1880, 700, "#353")
-ex1 = add("BD_PartsExport", (20, 2070), (440, 620), {"filename": "visible_layers", "name_prefix": "parts_builder_2"},
+group("⑦ ⑧ Export - PSD + PNGs + manifest (BD Parts Export)", 0, 2320, 1880, 700, "#353")
+ex1 = add("BD_PartsExport", (20, 2370), (440, 620), {"filename": "visible_layers", "name_prefix": "parts_builder_2"},
           title="⑦ Export visible layers + head without items")
-ex2 = add("BD_PartsExport", (480, 2070), (440, 620), {"filename": "engine_stack", "name_prefix": "parts_builder_2"},
+ex2 = add("BD_PartsExport", (480, 2370), (440, 620), {"filename": "engine_stack", "name_prefix": "parts_builder_2"},
           title="⑧ Export engine stack")
+
+# ── ⑨ compare ────────────────────────────────────────────────────────────────
+group("⑨ Compare - is it right? reference | result | difference (red = off) + score", 1920, 2320, 1500, 1500, "#533")
+cmp1 = add("BD_CompareImages", (1940, 2370), (360, 200), {"label": "visible layers vs MASTER 1"},
+           title="⑨ Compare: visible PSD vs MASTER 1")
+cmp2 = add("BD_CompareImages", (1940, 3100), (360, 200), {"label": "engine stack vs source"},
+           title="⑨ Compare: engine stack vs source")
+pc1 = add("PreviewImage", (2320, 2370), (1080, 420), {}, title="visible layers vs MASTER 1")
+pc2 = add("PreviewImage", (2320, 3100), (1080, 420), {}, title="engine stack vs source")
+sc1 = add("PreviewAny", (1940, 2600), (360, 460), {}, title="score (visible)")
+sc2 = add("PreviewAny", (1940, 3330), (360, 460), {}, title="score (engine)")
+svc1 = add("SaveImage", (2320, 2810), (540, 260), {"filename_prefix": "parts_builder_2/compare_visible"}, title="Save compare (visible)")
+svc2 = add("SaveImage", (2320, 3540), (540, 260), {"filename_prefix": "parts_builder_2/compare_engine"}, title="Save compare (engine)")
 
 md = ("## BD Parts Builder 2\n\n"
       "Qwen Image 2.1 layer decomposition of a character head - prompts only, no SAM, every layer in the "
@@ -218,7 +241,10 @@ md = ("## BD Parts Builder 2\n\n"
       "onto white and frame-proven. Small heads (a hat set the framing) are re-framed; work_size 2048 for more "
       "pixels.\n"
       "5. **Assemble** - the engine stack: back parts -> eyeless plate -> front parts, compared with the source.\n"
-      "6. **Export** - visible layers + head without items (the PSD rebuilds the source) and the engine stack.\n\n"
+      "6. **Export** - visible layers + head without items (the PSD rebuilds the source) and the engine stack.\n"
+      "7. **Compare** - BD Compare Images puts reference | result | difference side by side (red = off) with a score: "
+      "mean difference on the head and the share more than 40 levels off. The visible PSD should be near 0; the "
+      "engine stack lands around 5-25 (redrawn plates).\n\n"
       "**Models** - `qwen_image_2.1_bf16`, `qwen3vl_8b_bf16` (CLIPLoader type qwen_image), "
       "`qwen_image_2.1_vae_bf16` (Comfy-Org/Qwen-Image-2.1, auto-download links on the loaders); "
       "`Qwen3-VL-8B-Instruct` (AILab QwenVL); Lotus2 depth. An edit takes ~15 s at 1024 (40 steps) on the "
@@ -228,7 +254,7 @@ md = ("## BD Parts Builder 2\n\n"
       "---\n**BrainDeadGuild** - created by **BizaNator**\n"
       "[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · "
       "[GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n")
-add("MarkdownNote", (960, 2070), (900, 620), {"__md__": md}, title="ℹ️ About — 🧠 BrainDead Parts Builder 2")
+add("MarkdownNote", (960, 2370), (900, 620), {"__md__": md}, title="ℹ️ About — 🧠 BrainDead Parts Builder 2")
 
 # ── links ────────────────────────────────────────────────────────────────────
 link(load, "IMAGE", prev_in, "images")
@@ -258,6 +284,11 @@ for o, p, s in (("bald", pv_b, sv_b), ("mouthless", pv_m, sv_m), ("eyeless", pv_
     link(pl, o, p, "images")
     link(pl, o, s, "images")
 link(pl, "report", rep2, "source")
+link(pl, "socket_mask", sm_i, "mask")
+link(sm_i, "IMAGE", sv_sm, "images")
+link(pl, "feature_mask", sv_fm, "images")
+link(pl, "matte", mt_i, "mask")
+link(mt_i, "IMAGE", sv_mt, "images")
 link(pb, "complete_parts", asm, "complete_parts")
 link(pl, "eyeless", asm, "plate")
 link(pl, "matte", asm, "matte")
@@ -270,6 +301,16 @@ link(asm, "report", rep3, "source")
 link(pb, "parts", ex1, "parts")
 link(pb, "base_image", ex1, "base_image")
 link(asm, "engine_parts", ex2, "parts")
+link(load, "IMAGE", cmp1, "reference")
+link(ex1, "composite_image", cmp1, "candidate")
+link(alpha, "MASK", cmp1, "region")
+link(pl, "plate_source", cmp2, "reference")
+link(asm, "reassembled", cmp2, "candidate")
+link(pl, "plate_head", cmp2, "region")
+for c, pv, sc, sv in ((cmp1, pc1, sc1, svc1), (cmp2, pc2, sc2, svc2)):
+    link(c, "side_by_side", pv, "images")
+    link(c, "side_by_side", sv, "images")
+    link(c, "score", sc, "source")
 
 wf = {"id": "bd-parts-builder-2", "revision": 0, "last_node_id": nid, "last_link_id": lid,
       "nodes": nodes, "links": links, "groups": groups, "config": {}, "extra": {"ds": {"scale": 0.35, "offset": [100, 100]}},
