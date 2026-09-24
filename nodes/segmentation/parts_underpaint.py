@@ -50,6 +50,8 @@ from .parts_batch_edit import (
     _resize_rgb_to,
     _dilate_alpha,
     _parse_skip,
+    _encode_qwen_image_21,
+    _is_qwen_image_21,
 )
 
 
@@ -236,7 +238,12 @@ def _run_underpaint_pass(
         prefilled = _prefill_region(crop_rgb, crop_mask, prefill_mode)
         ref_t = torch.from_numpy(prefilled.astype(np.float32) / 255.0).unsqueeze(0)
 
-        if model_type in ("flux_fill", "flux_text_only"):
+        if model_type == "qwen_image_21":
+            pos_cond, ref_latent, (h_lat, w_lat) = _encode_qwen_image_21(
+                clip, vae, prompt, ref_t, target_pixels=tp,
+            )
+            neg_cond = _encode_qwen_image_21(clip, vae, "", ref_t, target_pixels=tp)[0]
+        elif model_type in ("flux_fill", "flux_text_only"):
             pos_cond, ref_latent, (h_lat, w_lat) = _encode_text_only_with_ref(
                 clip, vae, prompt, ref_t, target_pixels=tp,
             )
@@ -253,7 +260,7 @@ def _run_underpaint_pass(
         noise_mask_t = torch.from_numpy(noise_mask_np).unsqueeze(0)
 
         # Optional latent upscale (high-res-fix — Qwen Lightning LoRA recipe)
-        if latent_upscale_factor > 1.0:
+        if latent_upscale_factor > 1.0 and model_type != "qwen_image_21":
             new_lat_h = int(round(lat_h * latent_upscale_factor))
             new_lat_w = int(round(lat_w * latent_upscale_factor))
             upscaled = _upscale_latent_spatial(ref_latent, new_lat_h, new_lat_w, latent_upscale_method)
@@ -281,7 +288,7 @@ def _run_underpaint_pass(
             pos_cond, neg_cond, start_latent, denoise=float(denoise),
         )
 
-        if tonemap_reinhard_multiplier > 0.0:
+        if tonemap_reinhard_multiplier > 0.0 and model_type != "qwen_image_21":
             out_latent = out_latent.copy()
             out_latent["samples"] = _tonemap_reinhard_latent(
                 out_latent["samples"], float(tonemap_reinhard_multiplier),
@@ -369,7 +376,7 @@ class BD_PartsUnderpaint(io.ComfyNode):
                 ),
                 io.Combo.Input(
                     "model_type",
-                    options=["qwen_edit", "kontext_dev", "flux_fill"],
+                    options=["qwen_edit", "kontext_dev", "flux_fill", "qwen_image_21"],
                     default="qwen_edit",
                     tooltip=(
                         "Which edit model is wired in:\n"
@@ -614,6 +621,13 @@ class BD_PartsUnderpaint(io.ComfyNode):
 
         tag2pinfo = parts["tag2pinfo"]
         skip_set = _parse_skip(skip_tags)
+
+        # A Qwen Image 2.1 MODEL input switches the node to 2.1 encoding and sampling,
+        # whatever model_type says - swapping the loaders is the whole graph change.
+        if _is_qwen_image_21(model) and model_type != "qwen_image_21":
+            print(f"[BD PartsUnderpaint] Qwen Image 2.1 model detected: model_type "
+                  f"{model_type} -> qwen_image_21", flush=True)
+            model_type = "qwen_image_21"
 
         if not full_image_pass and model_type in ("qwen_edit", "kontext_dev"):
             # Silent in the output otherwise: the crop looks like a whole canvas

@@ -260,6 +260,38 @@ def _crop_rgba_to_content(rgba: np.ndarray, alpha_threshold: int = 32,
     return rgba[y1:y2, x1:x2], (x1, y1, x2, y2)
 
 
+
+def _is_qwen_image_21(model) -> bool:
+    """True when the MODEL input is Qwen Image 2.1 (comfy.model_base.QwenImage21)."""
+    try:
+        return type(model.model).__name__ == "QwenImage21"
+    except Exception:
+        return False
+
+
+def _encode_qwen_image_21(clip, vae, prompt: str, image_rgb: torch.Tensor,
+                          target_pixels: int = 1024 * 1024):
+    """Inline replica of core TextEncodeQwenImage21 (comfy_extras/nodes_qwen.py), one image.
+
+    The reference is resized to ~target_pixels at multiples of 32 (aspect kept); the text
+    encoder sees it and its VAE latent is attached as reference_latents. Returns
+    (conditioning, ref_latent, (h_px, w_px)) like _encode_qwen_edit_plus.
+    """
+    samples = image_rgb[:1, :, :, :3].movedim(-1, 1)
+    res = int(round(math.sqrt(float(target_pixels))))
+    ratio = samples.shape[3] / samples.shape[2]
+    width = max(32, round(math.sqrt(res * res * ratio) / 32) * 32)
+    height = max(32, round(math.sqrt(res * res / ratio) / 32) * 32)
+    if (width, height) == (samples.shape[3], samples.shape[2]):
+        s_img = image_rgb[:1, :, :, :3]
+    else:
+        s_img = comfy.utils.common_upscale(samples, width, height, "lanczos", "disabled").movedim(1, -1)
+    ref_latent = vae.encode(s_img)
+    tokens = clip.tokenize(prompt, images=[s_img], keep_vision=False, prevent_empty_text=True)
+    cond = clip.encode_from_tokens_scheduled(tokens)
+    cond = node_helpers.conditioning_set_values(cond, {"reference_latents": [ref_latent]}, append=True)
+    return cond, ref_latent, (height, width)
+
 def _encode_qwen_edit_plus(clip, vae, prompt: str, image_rgb: torch.Tensor,
                            image_rgb_2: torch.Tensor | None = None,
                            target_pixels: int = 1024 * 1024):
@@ -466,6 +498,9 @@ def _decode_to_rgb(vae, latent_dict) -> torch.Tensor:
     img = vae.decode(latent_dict["samples"])
     if img.dim() == 5:
         img = img.reshape(-1, *img.shape[-3:])
+    if img.shape[-1] > 3:        # Qwen Image 2.1 VAE decodes RGBA: lay it over white with its
+        a = img[..., 3:4].clamp(0, 1)   # own alpha - the RGB under transparent pixels is filler
+        img = img[..., :3] * a + (1.0 - a)   # (purple), and the nodes key parts off a white bg
     return img  # (1, H, W, 3) in [0, 1] approx
 
 
@@ -744,6 +779,14 @@ class BD_PartsBatchEdit(io.ComfyNode):
         # ModelSamplingAuraFlow shift adjusts the noise schedule so Lightning denoises properly
         # at non-standard latent shapes. CFGNorm keeps guidance stable. Both are no-op if 0.0.
         patches_applied = []
+        # Qwen Image 2.1 samples with its own schedule (cfg 1, ~40 steps); the AuraFlow
+        # shift / CFGNorm / latent upscale / tonemap below are 2509-2511 Lightning tuning.
+        q21 = _is_qwen_image_21(model)
+        if q21:
+            print("[BD PartsBatchEdit] Qwen Image 2.1 model detected: TextEncodeQwenImage21 encoding, "
+                  "no AuraFlow/CFGNorm/latent-upscale/tonemap", flush=True)
+            model_sampling_shift, cfg_norm_strength = 0.0, 0.0
+            latent_upscale_factor, tonemap_reinhard_multiplier = 1.0, 0.0
         if model_sampling_shift > 0.0:
             try:
                 from comfy_extras.nodes_model_advanced import ModelSamplingAuraFlow
@@ -895,12 +938,13 @@ class BD_PartsBatchEdit(io.ComfyNode):
             # Encode: both modes use Qwen Edit Plus (with VL image tokens).
             # flatten_redraw additionally encodes a NEGATIVE conditioning the same
             # way (image1 + empty prompt) — matches user's manual recipe.
-            pos_cond, ref_latent, (h_lat, w_lat) = _encode_qwen_edit_plus(
+            enc = _encode_qwen_image_21 if q21 else _encode_qwen_edit_plus
+            pos_cond, ref_latent, (h_lat, w_lat) = enc(
                 clip, vae, prompt, ref_t, target_pixels=tp,
             )
             neg_cond_local = neg_cond
-            if effective_mode == "flatten_redraw":
-                neg_cond_local, _, _ = _encode_qwen_edit_plus(
+            if effective_mode == "flatten_redraw" or q21:
+                neg_cond_local, _, _ = enc(
                     clip, vae, "", ref_t, target_pixels=tp,
                 )
 
@@ -927,10 +971,12 @@ class BD_PartsBatchEdit(io.ComfyNode):
                 else:
                     upscaled = ref_latent
                 start_latent = {"samples": upscaled.to(dtype=torch.float32)}
-                # APPEND (not replace) — matches the ReferenceLatent node behavior
-                pos_cond = node_helpers.conditioning_set_values(
-                    pos_cond, {"reference_latents": [upscaled]}, append=True,
-                )
+                # APPEND (not replace) — matches the ReferenceLatent node behavior.
+                # 2.1: the encoder already attached the reference latent.
+                if not q21:
+                    pos_cond = node_helpers.conditioning_set_values(
+                        pos_cond, {"reference_latents": [upscaled]}, append=True,
+                    )
             elif effective_mode == "true_inpaint":
                 # Inpaint mask = enclosed holes (+ optional buffer dilation).
                 # If no holes detected, fall back to "regen everything inside the
