@@ -134,8 +134,9 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
         )
 
     layers = []
-    # Layer order back-to-front: background_image → base_image → parts → masks.
-    # nested_layers_to_psd appends in list order, with index 0 = bottom of stack.
+    # Built back-to-front here (background_image -> base_image -> parts -> masks) and REVERSED before writing:
+    # pytoshop's nested_layers_to_psd takes its list TOP first (it reverses the list into the bottom-up layer
+    # records), so passing it back-to-front opened every PSD upside down in Photoshop (UEFN-430, 2026-09-24).
     if background_image is not None:
         layers.append(_full_canvas_layer("background", background_image))
     if base_image is not None:
@@ -214,7 +215,7 @@ def _save_layered_psd(parts: dict, out_path: str, output_size: int = 0,
                         for info in tag2pinfo.values()), default=64)
 
     psd = nested_layers_to_psd(
-        layers, color_mode=3, size=(canvas_w, canvas_h),
+        layers[::-1], color_mode=3, size=(canvas_w, canvas_h),
         compression=enums.Compression.raw,
         version=enums.Version.version_2 if psb else enums.Version.version_1,
     )
