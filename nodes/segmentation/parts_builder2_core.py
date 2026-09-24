@@ -364,6 +364,45 @@ def to_frame(img, box, size, nearest=False, fill=255):
     return np.asarray(Image.fromarray(a).resize((size, size), Image.NEAREST if nearest else Image.LANCZOS))
 
 
+# ── comparison (the red-zone difference) ──────────────────────────────────────
+def compare(ref_rgb, cand_rgb, region, gain=3.0, threshold=40):
+    """How far a candidate lands from the reference, per pixel. -> (heat uint8 RGB, score dict).
+
+    heat: red = |reference - candidate| (mean over RGB) x gain; the region tinted teal so the outline shows.
+    score: mean difference on the region (0 = identical, in 0..255 levels) and the share of the region more
+    than `threshold` levels off - the numbers the head chain was judged by (UEFN-430)."""
+    d = np.abs(cand_rgb[..., :3].astype(np.float32) - ref_rgb[..., :3].astype(np.float32)).mean(-1)
+    heat = np.zeros(ref_rgb.shape[:2] + (3,), np.uint8)
+    heat[..., 0] = np.clip(d * gain, 0, 255).astype(np.uint8)
+    heat[..., 1] = heat[..., 2] = (region * 40).astype(np.uint8)
+    n = int(region.sum())
+    score = {"diff_on_region": round(float(d[region].mean()), 2) if n else None,
+             "share_over_%d" % threshold: round(float((d[region] > threshold).mean()), 4) if n else None,
+             "region_px": n, "max_diff": round(float(d[region].max()), 1) if n else None}
+    return heat, score, d
+
+
+def side_by_side(ref_rgb, cand_rgb, heat, labels=("reference", "candidate", "difference (red = off)"), footer=""):
+    """reference | candidate | difference, labelled, one panel."""
+    from PIL import ImageDraw
+    H, W = ref_rgb.shape[:2]
+    bar = max(24, H // 32)
+    panel = Image.new("RGB", (W * 3, H + bar * (2 if footer else 1)), "white")
+    for i, a in enumerate((ref_rgb[..., :3], cand_rgb[..., :3], heat)):
+        panel.paste(Image.fromarray(np.ascontiguousarray(a)), (i * W, bar))
+    dr = ImageDraw.Draw(panel)
+    try:
+        from PIL import ImageFont
+        font = ImageFont.load_default(size=max(14, bar - 8))
+    except Exception:
+        font = None
+    for i, t in enumerate(labels):
+        dr.text((i * W + 8, 4), t, fill=(0, 0, 0), font=font)
+    if footer:
+        dr.text((8, H + bar + 4), footer, fill=(0, 0, 0), font=font)
+    return np.asarray(panel)
+
+
 # ── reassembly ───────────────────────────────────────────────────────────────
 def reassemble(plate_rgb, matte01, layers_back_front, order, src_rgb, head, owner=None, tags=None):
     """back parts (order) -> plate over matte -> front parts (order). -> (composite uint8, heat uint8, report)."""
@@ -379,12 +418,8 @@ def reassemble(plate_rgb, matte01, layers_back_front, order, src_rgb, head, owne
     for t in order:
         comp = over(comp, layers_back_front[t][1])
     comp = comp.clip(0, 255)
-    d = np.abs(comp - src_rgb.astype(np.float32)).mean(-1)
-    heat = np.zeros(plate_rgb.shape, np.uint8)
-    heat[..., 0] = np.clip(d * 3, 0, 255).astype(np.uint8)
-    heat[..., 1] = heat[..., 2] = (head * 40).astype(np.uint8)
-    r = {"diff_on_head": round(float(d[head].mean()), 2) if head.any() else None,
-         "share_of_head_over_40": round(float((d[head] > 40).mean()), 4) if head.any() else None, "per_layer": {}}
+    heat, sc, d = compare(src_rgb, comp, head)
+    r = {"diff_on_head": sc["diff_on_region"], "share_of_head_over_40": sc["share_over_40"], "per_layer": {}}
     if owner is not None and tags:
         for k, t in enumerate(tags):
             mm = owner == k + 1

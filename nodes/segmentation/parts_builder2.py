@@ -29,6 +29,7 @@ Rules the chain enforces (each cost a run to learn):
   * a stage that fails its frame proof stops the chain; nothing is built from a rejected plate
 """
 
+import contextlib
 import json
 
 import numpy as np
@@ -49,6 +50,30 @@ except Exception:                               # pragma: no cover - reported at
     _TE21 = None
 
 CATEGORY = "🧠BrainDead/Segmentation"
+
+
+@contextlib.contextmanager
+def _no_cudnn_attention():
+    """Take cuDNN out of ComfyUI's SDPA backend priority for the duration (comfy.ops reads the list per call).
+
+    Qwen Image 2.1's prefix attention (QwenImage21Cache) can fail with "cuDNN Frontend error: No valid execution
+    plans built" on its first use in a process that also holds Lotus2's FLUX and Qwen3-VL - seen three times on
+    2026-09-23, never with the models already warm - and a retry after that failure aborts the process. So every
+    Parts Builder 2 edit runs without the cuDNN backend; memory-efficient attention takes the same mask."""
+    try:
+        import comfy.ops as _ops
+        from torch.nn.attention import SDPBackend
+        prio = getattr(_ops, "SDPA_BACKEND_PRIORITY", None)
+    except Exception:
+        prio = None
+    saved = list(prio) if prio is not None else None
+    try:
+        if prio is not None:
+            prio[:] = [b for b in prio if b != SDPBackend.CUDNN_ATTENTION]
+        yield
+    finally:
+        if prio is not None:
+            prio[:] = saved
 
 
 # ── tensors <-> numpy ────────────────────────────────────────────────────────
@@ -93,6 +118,36 @@ def _source(image, head_mask):
     return np.ascontiguousarray(rgb), head
 
 
+# The BD_FaceSocketInfill settings FaceMaker v10-v26 built its eye / brow / mouth exclusion mask with (#8580 ->
+# #8447): eyes iris-mode inset 2, brow band 12, lip band 6, every zone +6 px, feathered 3, nose off. The lips were a
+# "plane" - a box drawn for the old Qwen lip-stamp prompt, far larger than the lips. The exclusion mask only has to
+# cover the lips, so the lip zone is a Plates input (lip_zone) and defaults to "organic": the MediaPipe outer lip
+# contour with the same +6 px margin as the eyes and brows (owner, 2026-09-23).
+FACEMAKER_SOCKETS = dict(face_data_path="", detection_confidence=0.25, eyes=True, brows=True, lips=True, nose=False,
+                         oval_subtract_sockets=False, eye_mode="iris", eye_inset=2, expand_x=6, expand_y=6,
+                         eyes_expand_x=-1, eyes_expand_y=-1, brows_expand_x=-1, brows_expand_y=-1, brow_band=12,
+                         lip_band=6, lips_expand_x=-1, lips_expand_y=-1, nose_expand_x=-1, nose_expand_y=-1, feather=3,
+                         eyes_feather=-1, brows_feather=-1, lips_feather=-1, nose_feather=-1, fill_mode="flat",
+                         fill_from_guide=False, fill_r=0, fill_g=0, fill_b=0, lip_mode="organic", surround_style="solid",
+                         lip_trapezoid_taper=0.7, solid_bevel=False, solid_bevel_width=8, solid_bevel_strength=0.5,
+                         solid_bevel_zones="lips", solid_lift_shadow=0.3)
+
+
+def _feature_masks(bald_u8, lip_zone="organic"):
+    """MediaPipe on the bald plate (bald, not faceless: eyes, brows and mouth are still there) ->
+    socket_mask (float HxW, the FaceMaker exclusion mask) and feature_mask (RGB: R = mouth / lips, G = eyes,
+    B = brows), in the plate frame. Owner, 2026-09-23: detect once when the head is bald but not faceless,
+    save the mask with the masters, load it into FaceMaker."""
+    from .face_socket_infill import BD_FaceSocketInfill
+    H, W = bald_u8.shape[:2]
+    out = BD_FaceSocketInfill.execute(image=_t(bald_u8[..., :3]), **dict(FACEMAKER_SOCKETS, lip_mode=lip_zone)).args
+    sock, eyes, brows, lips, status = out[2], out[5], out[8], out[9], out[-1]
+    f = lambda m: (m[0] if m.ndim == 3 else m).detach().cpu().float().numpy() if m is not None else np.zeros((H, W), np.float32)
+    socket = np.clip(f(sock), 0, 1)
+    rgb = np.dstack([_u8(np.clip(f(lips), 0, 1)), _u8(np.clip(f(eyes), 0, 1)), _u8(np.clip(f(brows), 0, 1))])
+    return socket, rgb, str(status)
+
+
 class _Q21:
     """One Qwen Image 2.1 edit, exactly the graph the head chain was proven with."""
 
@@ -104,18 +159,23 @@ class _Q21:
         self.steps, self.cfg, self.sampler, self.scheduler = steps, cfg, sampler_name, scheduler
         self.count = 0
 
-    def __call__(self, image_u8, prompt, seed):
-        comfy.model_management.throw_exception_if_processing_interrupted()
-        H, W = image_u8.shape[:2]
-        img = torch.from_numpy(image_u8.astype(np.float32) / 255.0)[None]
-        # inference mode like BD_PartsBatchEdit: with autograd on, 2.1's masked attention has no cuDNN plan
-        # ("cuDNN Frontend error: No valid execution plans built")
-        with torch.inference_mode():
+    def _run(self, img, prompt, seed):
+        with torch.inference_mode():                     # as BD_PartsBatchEdit samples
             pos, neg, latent = _TE21.execute(self.clip, prompt, "", vae=self.vae, resolution=0,
                                              images={"image_1": img}).args
             out = common_ksampler(self.model, int(seed), self.steps, self.cfg, self.sampler, self.scheduler,
                                   pos, neg, latent, denoise=1.0)[0]
-            dec = self.vae.decode(out["samples"])
+            return self.vae.decode(out["samples"])
+
+    def __call__(self, image_u8, prompt, seed):
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        H, W = image_u8.shape[:2]
+        img = torch.from_numpy(image_u8.astype(np.float32) / 255.0)[None]
+        # Never let cuDNN attention try: when it fails ("No valid execution plans built") the exception leaves
+        # ComfyUI's aimdo allocator with pinned pages, and re-entering the model then aborts the whole process
+        # (core dump on production, 2026-09-23 20:32). Memory-efficient attention takes the same mask.
+        with _no_cudnn_attention():
+            dec = self._run(img, prompt, seed)
         if dec.ndim == 5:
             dec = dec.reshape(-1, dec.shape[-3], dec.shape[-2], dec.shape[-1])
         arr = _u8(dec[0].detach().cpu().float().numpy())
@@ -359,7 +419,7 @@ class BD_PartsBuilder2(io.ComfyNode):
 
         prev = [p["visible"] for p in R["parts"].values()] + [complete[k] for k in order if k in complete]
         report = {"node": "BD_PartsBuilder2", "vote": vote, "present": present, "paint_order_back_to_front": order,
-                  "paint_order_evidence": evidence, "edits": q.count, "colour_retries": retried,
+                  "paint_order_evidence": evidence, "edits": q.count, "attention": "cuDNN backend excluded", "colour_retries": retried,
                   "unexplained_cover": round(R["unexplained"], 4),
                   "alpha_repaired_px": int((head & ~head0).sum()),
                   "base_frame": base_frame, "base_seed": base_seed,
@@ -418,6 +478,12 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                 io.Float.Input("max_scale_err", default=0.015, min=0.001, max=0.2, step=0.001),
                 io.Float.Input("max_offset_px", default=3.0, min=0.1, max=50.0, step=0.1,
                                tooltip="Centre move limit, in 1024-px units."),
+                io.Combo.Input("lip_zone", options=["organic", "contour", "hull", "plane"], default="organic",
+                               optional=True,
+                               tooltip="Lip shape in socket_mask / feature_mask. organic: the MediaPipe outer lip "
+                                       "contour + 6 px, like the eyes and brows. contour: the exact lip outline, no "
+                                       "margin. hull: its convex hull (no cupid's bow). plane: the box FaceMaker "
+                                       "v10-v26 drew for its lip stamp."),
             ],
             outputs=[
                 io.Image.Output(display_name="bald"),
@@ -428,6 +494,12 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                 io.Mask.Output(display_name="plate_head"),
                 io.String.Output(display_name="plate_frame"),
                 io.String.Output(display_name="report"),
+                io.Mask.Output(display_name="socket_mask",
+                               tooltip="Eye / brow / mouth exclusion mask (MediaPipe on the bald plate; lips per "
+                                       "lip_zone), in the plate frame. Save it with the plates; FaceMaker subtracts "
+                                       "it from the matte instead of detecting."),
+                io.Image.Output(display_name="feature_mask",
+                                tooltip="RGB: R = mouth / lips, G = eyes, B = brows (plate frame)."),
             ],
         )
 
@@ -436,7 +508,7 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                 bald_prompt=C.BALD_PROMPT, mouthless_prompt=C.MOUTHLESS_PROMPT, eyeless_prompt=C.EYELESS_PROMPT,
                 seed=20260933, steps=40, cfg=1.0, sampler_name="euler", scheduler="simple", attempts_per_stage=2,
                 work_size="1024", reframe_below=0.90, reframe_fill=0.94, max_scale_err=0.015,
-                max_offset_px=3.0) -> io.NodeOutput:
+                max_offset_px=3.0, lip_zone="organic") -> io.NodeOutput:
         src, head = _source(image, head_mask)
         H, W = src.shape[:2]
         size = int(work_size)
@@ -536,10 +608,23 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                  "ok": report["ok"], "failed_stage": report["failed_stage"]}
         report["plate_frame"] = frame
         report["prompts"] = prompts
+        report["attention"] = "cuDNN backend excluded"
         out = [done.get(s, done.get(s + "_rejected", white)) for s in ("bald", "mouthless", "eyeless")]
-        print("[BD PartsBuilder2Plates] ok=%s frame=%s edits=%d" % (report["ok"], frame, q.count), flush=True)
+        socket, feat = np.zeros((size, size), np.float32), np.zeros((size, size, 3), np.uint8)
+        if "bald" in done:                                   # a frame-proven bald: bald, not faceless
+            try:
+                socket, feat, st = _feature_masks(done["bald"], lip_zone)
+                report["feature_mask"] = {"status": st[:200], "socket_px": int((socket > 0.5).sum()),
+                                          "channels": "R = mouth/lips, G = eyes, B = brows",
+                                          "lip_zone": lip_zone,
+                                          "settings": "BD_FaceSocketInfill as FaceMaker v10-v26 #8580, lips %s" % lip_zone}
+            except Exception as e:                           # no face found etc. - the plates still stand
+                report["feature_mask"] = {"error": str(e)[:200]}
+        print("[BD PartsBuilder2Plates] ok=%s frame=%s edits=%d feature_mask=%s" % (report["ok"], frame, q.count,
+              report.get("feature_mask", {}).get("socket_px", report.get("feature_mask"))), flush=True)
         return io.NodeOutput(_t(out[0]), _t(out[1]), _t(out[2]), _m(matte), _t(fsrc),
-                             _m(fhead.astype(np.float32)), json.dumps(frame), json.dumps(report, indent=1))
+                             _m(fhead.astype(np.float32)), json.dumps(frame), json.dumps(report, indent=1),
+                             _m(socket), _t(feat))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -632,11 +717,69 @@ class BD_PartsBuilder2Assemble(io.ComfyNode):
         return io.NodeOutput(_bundle(tag2, size, size), _t(comp), _t(heat), json.dumps(rep, indent=1))
 
 
-PARTS_BUILDER2_V3_NODES = [BD_PartsVocabulary, BD_PartsBuilder2, BD_PartsBuilder2Plates, BD_PartsBuilder2Assemble]
+# ═════════════════════════════════════════════════════════════════════════════
+class BD_CompareImages(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="BD_CompareImages",
+            display_name="BD Compare Images",
+            category=CATEGORY,
+            description=(
+                "How far a candidate lands from a reference - the red-zone difference the head chain is judged by. "
+                "difference: red = per-pixel |reference - candidate| x gain, the region tinted teal. side_by_side: "
+                "reference | candidate | difference with the score under it. score: mean difference on the region "
+                "(0 = identical, in 0-255 levels) and the share of the region more than `threshold` levels off.\n\n"
+                "Use it wherever a result should reproduce a source: the visible-layer PSD composite against the "
+                "headshot, the engine stack against the plate-frame source, a plate against the image it was made "
+                "from. A candidate with alpha is laid over white first; a different size is resized to the reference."),
+            inputs=[
+                io.Image.Input("reference", tooltip="What the candidate should reproduce."),
+                io.Image.Input("candidate", tooltip="The result being judged."),
+                io.Mask.Input("region", optional=True,
+                              tooltip="Where to measure (1 = measure). None: pixels that are not white in either image."),
+                io.Float.Input("gain", default=3.0, min=0.5, max=20.0, step=0.5,
+                               tooltip="Red = difference x gain (3: 85 levels off is full red)."),
+                io.Int.Input("threshold", default=40, min=1, max=255, tooltip="Levels off that count as 'off' in the score."),
+                io.String.Input("label", default="", optional=True, tooltip="Shown on the side_by_side panel."),
+            ],
+            outputs=[
+                io.Image.Output(display_name="difference"),
+                io.Image.Output(display_name="side_by_side"),
+                io.String.Output(display_name="score"),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, reference, candidate, region=None, gain=3.0, threshold=40, label="") -> io.NodeOutput:
+        ref = _img_u8(reference)
+        cand = _img_u8(candidate)
+        ref = C.over_white(ref) if ref.shape[-1] == 4 else ref[..., :3]
+        cand = C.over_white(cand) if cand.shape[-1] == 4 else cand[..., :3]
+        H, W = ref.shape[:2]
+        if cand.shape[:2] != (H, W):
+            cand = np.asarray(C.Image.fromarray(cand).resize((W, H), C.Image.LANCZOS))
+        reg = _mask_bool(region, (H, W))
+        if reg is None:
+            reg = (ref.astype(np.int16).min(-1) < 245) | (cand.astype(np.int16).min(-1) < 245)
+        heat, score, _ = C.compare(ref, cand, reg, gain, threshold)
+        score = dict(score, label=label or None, threshold=threshold, gain=gain)
+        foot = "%s  mean diff %s  |  %s%% of the region > %d levels off" % (
+            (label + ":") if label else "", score["diff_on_region"],
+            None if score["share_over_%d" % threshold] is None else round(100 * score["share_over_%d" % threshold], 1),
+            threshold)
+        panel = C.side_by_side(ref, cand, heat, footer=foot.strip())
+        print("[BD CompareImages] %s" % foot.strip(), flush=True)
+        return io.NodeOutput(_t(heat), _t(panel), json.dumps(score, indent=1))
+
+
+PARTS_BUILDER2_V3_NODES = [BD_PartsVocabulary, BD_PartsBuilder2, BD_PartsBuilder2Plates, BD_PartsBuilder2Assemble,
+                           BD_CompareImages]
 PARTS_BUILDER2_NODES = {c.__name__: c for c in PARTS_BUILDER2_V3_NODES}
 PARTS_BUILDER2_DISPLAY_NAMES = {
     "BD_PartsVocabulary": "BD Parts Vocabulary",
     "BD_PartsBuilder2": "BD Parts Builder 2 (Qwen 2.1)",
     "BD_PartsBuilder2Plates": "BD Parts Builder 2 Plates (Qwen 2.1)",
     "BD_PartsBuilder2Assemble": "BD Parts Builder 2 Assemble",
+    "BD_CompareImages": "BD Compare Images",
 }
