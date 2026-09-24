@@ -521,10 +521,11 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
         pbar = comfy.utils.ProgressBar(4)
 
         # where each item is, in the source frame: its complete layer off bare skin + its visible edit's cover
-        lay, accessory = {}, set()
+        lay, lay_vis, accessory = {}, {}, set()
         for b in (parts, complete_parts):
             if b is None:
                 continue
+            visible_bundle = b is parts
             b = ensure_bundle(b, source="BD_PartsBuilder2Plates")
             fh, fw = b.get("frame_size") or (H, W)
             for tag, info in b["tag2pinfo"].items():
@@ -537,17 +538,21 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                 ec = info.get("edit_cover")
                 if ec is not None and ec.shape == (fh, fw):
                     m |= ec > 127
-                lay[key] = lay.get(key, np.zeros((H, W), bool)) | _to_source(m, fh, fw, H, W)
+                ms = _to_source(m, fh, fw, H, W)
+                lay[key] = lay.get(key, np.zeros((H, W), bool)) | ms
+                if visible_bundle:
+                    lay_vis[key] = lay_vis.get(key, np.zeros((H, W), bool)) | ms
 
-        def removed(stage):
+        def removed(stage, layers=None):
+            layers = lay if layers is None else layers
             keys = set()
             for s in ("bald", stage):
                 for t in C.REMOVES[s]:
                     keys |= accessory if t == "__accessories__" else {t}
             g = np.zeros((H, W), bool)
             for t in keys:
-                if t in lay:
-                    g |= lay[t]
+                if t in layers:
+                    g |= layers[t]
             return g
 
         prompts = {"bald": bald_prompt, "mouthless": mouthless_prompt, "eyeless": eyeless_prompt}
@@ -561,6 +566,10 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                 prev = done[made_from[stage]]
                 g = C.to_frame(removed(stage), box, size)
                 region = fhead & ~C.cv2.dilate(g.astype(np.uint8), np.ones((dil, dil), np.uint8)).astype(bool)
+                gv = C.to_frame(removed(stage, lay_vis), box, size) if lay_vis else None
+                region_vis = None
+                if gv is not None:
+                    region_vis = fhead & ~C.cv2.dilate(gv.astype(np.uint8), np.ones((dil, dil), np.uint8)).astype(bool)
                 ok, got = False, None
                 for i in range(attempts_per_stage):
                     raw = q(prev, prompts[stage], seed + i)
@@ -570,6 +579,13 @@ class BD_PartsBuilder2Plates(io.ComfyNode):
                     fp = C.register(prev, got, region, max_scale_err, max_offset_px)
                     fm = C.register(fsrc, got, region, max_scale_err, max_offset_px)
                     ok, how = bool(fp.get("pass")) and bool(fm.get("pass")), "direct"
+                    if not ok and region_vis is not None and C.unmeasured(fp, fm):
+                        # the complete layers' hidden extents left too little head to register on (a cap, dark
+                        # glasses and a full beard cover nearly the whole face): prove on the head minus what is
+                        # VISIBLY removed. Only when ECC could not measure - a measured miss is never re-tried.
+                        fp = dict(C.register(prev, got, region_vis, max_scale_err, max_offset_px), region="visible items")
+                        fm = dict(C.register(fsrc, got, region_vis, max_scale_err, max_offset_px), region="visible items")
+                        ok, how = bool(fp.get("pass")) and bool(fm.get("pass")), "direct, visible-item region"
                     up = report["stages"].get(made_from[stage], {})
                     if not ok and fp.get("pass") and made_from[stage] != "source" and (fm.get("ecc") or 0) < 0.7:
                         ch = C.chain_proof(up.get("vs_source", {}), fp, max_scale_err, max_offset_px)

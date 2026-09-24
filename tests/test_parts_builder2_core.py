@@ -455,6 +455,27 @@ def test_register_needs_enough_region(head512):
     assert r["pass"] is None
 
 
+def test_unmeasured_is_ecc_failure_or_too_little_region_not_a_measured_miss(head512):
+    # Plates retries a stage's frame proof on the visible-item region ONLY when the proof could not be measured
+    # (billpage/front, cast run 2026-09-24: cap + dark glasses + full beard left too little head); a measured scale
+    # or offset outside the tolerance is a real miss and must never be re-tried on another region
+    img, head = head512
+    tiny = np.zeros(img.shape[:2], bool)
+    tiny[100:120, 100:120] = True
+    too_little = C.register(img, _warp(img, [[1, 0, 1], [0, 1, 0]]), tiny)
+    flat = np.full(img.shape, 255, np.uint8)
+    flat[head] = 200
+    no_converge = C.register(img, flat, head)
+    shifted = C.register(img, _warp(img, [[1, 0, 20], [0, 1, 0]]), head)
+    passed = C.register(img, img.copy(), head)
+    assert C.unmeasured(too_little) and C.unmeasured(passed, too_little)
+    if "note" in no_converge:                             # this OpenCV build may also measure a flat copy
+        assert C.unmeasured(no_converge)
+    assert not C.unmeasured(shifted) and shifted["pass"] is False
+    assert not C.unmeasured(shifted, too_little)          # one measured miss rules out the re-try
+    assert not C.unmeasured(passed)
+
+
 def test_chain_proof_multiplies_scales_and_adds_moves():
     up = {"scale_x": 1.1, "scale_y": 0.9, "centre_move_px": 1.25}
     this = {"scale_x": 1.1, "scale_y": 1.0, "centre_move_px": 0.5}

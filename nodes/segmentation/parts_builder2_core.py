@@ -237,6 +237,13 @@ def register(ref_rgb, mov_rgb, region, max_scale_err=0.015, max_offset_px=3.0):
     return r
 
 
+def unmeasured(*proofs):
+    """True when some frame proof could not be measured at all (ECC did not converge, or too little region) and
+    none of them MEASURED a miss - a scale / offset outside the tolerance is a real miss, never a reason to re-try."""
+    um = [p.get("pass") is None or str(p.get("note", "")).startswith("ECC failed") for p in proofs]
+    return any(um) and not any(p.get("pass") is False and not u for p, u in zip(proofs, um))
+
+
 def chain_proof(upstream, this, max_scale_err=0.015, max_offset_px=3.0):
     """Compose the input's proof vs the source with this stage's proof vs its input. An upstream stage that was
     not proven (no numbers) proves nothing downstream."""
