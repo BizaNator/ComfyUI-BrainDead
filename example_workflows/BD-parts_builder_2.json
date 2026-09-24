@@ -959,7 +959,8 @@
         0.94,
         0.015,
         3.0,
-        "organic"
+        "organic",
+        "flat"
       ],
       "title": "⑤ Parts Builder 2 Plates (Qwen 2.1)"
     },

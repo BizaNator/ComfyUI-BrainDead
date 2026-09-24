@@ -623,3 +623,51 @@ def test_register_kernels_scale_with_resolution():
     region = np.zeros((2048, 2048), bool)
     region[200:1800, 200:1800] = True
     assert C.register(big, big.copy(), region)["pass"] is True
+
+
+def test_flat_fill_makes_each_eye_zone_one_skin_tone():
+    img = np.full((256, 256, 3), 200, np.uint8)             # skin
+    img[100:130, 60:100] = (40, 20, 10)                     # a dark closed lid + lash line
+    img[100:130, 156:196] = (60, 30, 15)
+    zone = np.zeros((256, 256), bool)
+    zone[104:126, 64:96] = True
+    zone[104:126, 160:192] = True
+    out, tones = C.flat_fill(img, zone, grow=4, ring=(6, 16), feather=0, min_px=50)
+    assert len(tones) == 2
+    assert all(t["tone"] == [200, 200, 200] for t in tones)  # sampled from the skin ring, not the lid
+    assert (out[100:130, 70:90] == 200).all()               # grown zone covers the lash line top and bottom
+    assert (out[110:120, 60:100] == 200).all()              # ... and at both corners of the eye
+    assert out[5, 5].tolist() == [200, 200, 200]
+
+
+def test_flat_fill_ignores_specks_and_empty_zones():
+    img = np.full((64, 64, 3), 120, np.uint8)
+    zone = np.zeros((64, 64), bool)
+    zone[10:12, 10:12] = True                               # below min_px
+    out, tones = C.flat_fill(img, zone)
+    assert tones == [] and (out == img).all()
+
+
+def test_even_light_removes_the_gradient_and_keeps_the_facets():
+    H = W = 256
+    x = np.linspace(-60, 60, W)[None, :].repeat(H, 0)         # a left-to-right key light
+    facets = np.where(((np.arange(H)[:, None] // 16) + (np.arange(W)[None, :] // 16)) % 2 == 0, 25.0, -25.0)
+    Y = np.clip(128 + x + facets, 0, 255)
+    img = np.repeat(Y[..., None], 3, -1).astype(np.uint8)
+    head = np.ones((H, W), bool)
+    out, st = C.even_light(img, head, keep_light=0.0, facet_gain=1.0, sigma=60.0 * 1024 / W / 4)
+    o = out[..., 0].astype(np.float32)
+    left, right = o[:, 32:96].mean(), o[:, 160:224].mean()
+    assert abs(left - right) < 12                           # was ~60 levels apart
+    assert o.std() > 18                                     # the checker (facets) survives
+    same, _ = C.even_light(img, head, keep_light=1.0, facet_gain=1.0)
+    assert np.abs(same.astype(int) - img.astype(int)).max() <= 2
+
+
+def test_even_light_leaves_the_outside_alone():
+    img = np.full((128, 128, 3), 255, np.uint8)
+    img[32:96, 32:96] = 90
+    head = np.zeros((128, 128), bool)
+    head[32:96, 32:96] = True
+    out, _ = C.even_light(img, head)
+    assert (out[~head] == 255).all()

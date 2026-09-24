@@ -403,6 +403,67 @@ def side_by_side(ref_rgb, cand_rgb, heat, labels=("reference", "candidate", "dif
     return np.asarray(panel)
 
 
+# ── flat eye section + even light (FaceMaker inputs) ────────────────────────
+def flat_fill(img_rgb, zone, head=None, grow=3, ring=(8, 22), feather=2.0, min_px=200):
+    """Fill each connected zone with ONE flat tone: the median of a skin ring around it. -> (image, tones).
+
+    FaceMaker's engine eye sits on a flat eye section; v26 made it with its "Crop and Fill Eyes" pre-face step,
+    which v27 removed. The eyeless plate carries closed lids instead, so the Plates node flattens the MediaPipe
+    eye zones itself. The zone is grown by `grow` px to cover the lash line; the ring (`ring` px outside the grown
+    zone, inside `head`) is far enough out to miss the lid-crease shadow; the edge is feathered by `feather`."""
+    zone = np.asarray(zone).astype(bool)
+    out = np.asarray(img_rgb)[..., :3].astype(np.float32).copy()
+    head = np.ones(zone.shape, bool) if head is None else np.asarray(head).astype(bool)
+    n, lab = cv2.connectedComponents(zone.astype(np.uint8))
+    tones = []
+    for i in range(1, n):
+        z = lab == i
+        if z.sum() < min_px:
+            continue
+        k = lambda r: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+        g = cv2.dilate(z.astype(np.uint8), k(grow)) > 0 if grow else z
+        rg = (cv2.dilate(g.astype(np.uint8), k(ring[1])) > 0) & ~(cv2.dilate(g.astype(np.uint8), k(ring[0])) > 0) & head
+        if rg.sum() < 20:
+            continue
+        tone = np.median(out[rg], axis=0)
+        soft = cv2.GaussianBlur(g.astype(np.float32), (0, 0), feather) if feather else g.astype(np.float32)
+        out = out * (1 - soft[..., None]) + tone[None, None, :] * soft[..., None]
+        tones.append({"px": int(z.sum()), "tone": [int(round(t)) for t in tone]})
+    return np.clip(out, 0, 255).astype(np.uint8), tones
+
+
+def even_light(img_rgb, head, keep_light=0.5, facet_gain=0.9, sigma=60.0):
+    """Even a head's lighting without flattening its facets. -> (image, stats).
+
+    light  = the head's luminance, blurred with a mask-normalised Gaussian of `sigma` px (at 1024; scaled with size)
+    facets = luminance - light
+    out    = mean + keep_light * (light - mean) + facet_gain * facets, colour carried by ratio; outside `head`
+             the image is unchanged. Qwen Image 2.1 reads "cell shaded with dynamic shadowing" as one hard key
+             light (a bright side and a shadow side); prompts that ask for even light also flatten the facets.
+             This keeps the facets and takes most of the light out. keep_light 0.5 / facet_gain 0.9 matched
+             don_juan's v21 albedo (light std 18 vs 23, facet std 42 vs 39, left-right 25 vs 21 levels)."""
+    rgb = np.asarray(img_rgb)[..., :3].astype(np.float32)
+    H, W = rgb.shape[:2]
+    m = np.asarray(head).astype(bool)
+    if m.sum() < 100:
+        return rgb.astype(np.uint8), {"skipped": "empty head mask"}
+    Y = rgb @ np.array([0.299, 0.587, 0.114], np.float32)
+    mean = float(Y[m].mean())
+    sg = sigma * W / 1024.0
+    num = cv2.GaussianBlur(np.where(m, Y, 0).astype(np.float32), (0, 0), sg)
+    den = cv2.GaussianBlur(m.astype(np.float32), (0, 0), sg)
+    light = np.where(den > 1e-3, num / np.maximum(den, 1e-3), mean)
+    facets = Y - light
+    Yn = mean + keep_light * (light - mean) + facet_gain * facets
+    ratio = np.clip(Yn, 0, 255) / np.maximum(Y, 1.0)
+    out = np.where(m[..., None], np.clip(rgb * ratio[..., None], 0, 255), rgb)
+    stats = {"mean": round(mean, 1), "light_std_in": round(float(light[m].std()), 1),
+             "light_std_out": round(float((keep_light * (light - mean))[m].std()), 1),
+             "facet_std_in": round(float(facets[m].std()), 1),
+             "facet_std_out": round(float((facet_gain * facets)[m].std()), 1)}
+    return out.astype(np.uint8), stats
+
+
 # ── reassembly ───────────────────────────────────────────────────────────────
 def reassemble(plate_rgb, matte01, layers_back_front, order, src_rgb, head, owner=None, tags=None):
     """back parts (order) -> plate over matte -> front parts (order). -> (composite uint8, heat uint8, report)."""

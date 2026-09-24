@@ -299,7 +299,8 @@
         "2",
         0
       ],
-      "lip_zone": "organic"
+      "lip_zone": "organic",
+      "eye_fill": "flat"
     },
     "_meta": {
       "title": "\u2464 Parts Builder 2 Plates (Qwen 2.1)"
