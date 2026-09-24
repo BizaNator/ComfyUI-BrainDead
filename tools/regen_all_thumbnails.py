@@ -28,7 +28,7 @@ STABLE_EW = "/opt/comfyui/stable/custom_nodes/ComfyUI-BrainDead/example_workflow
 GALLERY_SLUG = {
     "BD-CubePart_Part_Decomposition": "cubepart", "BD-trellis2_shape_to_texture": "trellis2",
     "BD-ovoxel_pbr_bake": "ovoxel", "BD-pixal3d_image_to_3d": "pixal3d",
-    "BD-parts_builder": "partsbuilder", "BD-lotus2_depth_normal": "lotus2",
+    "BD-parts_builder": "partsbuilder", "BD-parts_builder_2": "partsbuilder2", "BD-lotus2_depth_normal": "lotus2",
     "BD-facewrap_pipeline": "facewrap", "BD-glsl_skin_tinting": "glsl",
     "BD-character_consistency": "character", "BD-background_removal": "bgremoval",
     "BD-face_segmentation": "faceseg", "BD-channel_operations": "channels", "BD-mask_tools": "masks", "BD-pbr_from_image": "pbr",
@@ -89,6 +89,14 @@ CONFIGS = {
         "bullets": ["Image -> Lotus2 depth -> QwenVL tags", "SAM3 Multi-Prompt -> Parts Refine",
                     "Fill Holes -> Parts Builder", "PartsBatchEdit (Qwen Inpaint)",
                     "Parts Export (per-part RGBA + PSD + category table)"]},
+    "BD-parts_builder_2": {
+        "title": "BD Parts Builder 2", "subtitle": "Qwen Image 2.1 head layers - prompts, no SAM",
+        "bullets": ["Closed-list vote (Qwen3-VL) -> only present items",
+                    "Visible + complete layer per item, paint order from the source",
+                    "Head without items -> bald -> mouthless / eyeless plates",
+                    "Frame-proven, small heads re-framed, 1024 or 2048",
+                    "Engine stack + PSD export (BD Parts Export)"],
+        "chips": ["Qwen 2.1", "RGBA", "PSD", "engine stack"]},
     "BD-lotus2_depth_normal": {
         "title": "Lotus-2", "subtitle": "FLUX diffusion depth + normal",
         "bullets": ["Load Image -> Lotus-2 Loader", "Predict depth or normal",

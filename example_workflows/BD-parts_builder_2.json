@@ -1,0 +1,2082 @@
+{
+  "id": "bd-parts-builder-2",
+  "revision": 0,
+  "last_node_id": 32,
+  "last_link_id": 46,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        20,
+        50
+      ],
+      "size": [
+        340,
+        440
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1,
+            5,
+            8,
+            10,
+            15
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            2
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "① Load Headshot (RGBA)"
+    },
+    {
+      "id": 2,
+      "type": "InvertMask",
+      "pos": [
+        390,
+        50
+      ],
+      "size": [
+        230,
+        60
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            14,
+            19
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "InvertMask"
+      },
+      "widgets_values": [],
+      "title": "head mask (alpha)"
+    },
+    {
+      "id": 3,
+      "type": "PreviewImage",
+      "pos": [
+        390,
+        150
+      ],
+      "size": [
+        340,
+        340
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "Headshot"
+    },
+    {
+      "id": 4,
+      "type": "UNETLoader",
+      "pos": [
+        20,
+        610
+      ],
+      "size": [
+        360,
+        90
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            3
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader",
+        "models": [
+          {
+            "name": "qwen_image_2.1_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_bf16.safetensors",
+            "directory": "diffusion_models"
+          }
+        ]
+      },
+      "widgets_values": [
+        "qwen_image_2.1_bf16.safetensors",
+        "default"
+      ],
+      "title": "Qwen Image 2.1"
+    },
+    {
+      "id": 5,
+      "type": "QwenImage21Cache",
+      "pos": [
+        400,
+        610
+      ],
+      "size": [
+        320,
+        90
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            11,
+            16
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "QwenImage21Cache"
+      },
+      "widgets_values": [
+        "auto",
+        "default"
+      ],
+      "title": "Qwen Image 2.1 Cache"
+    },
+    {
+      "id": 6,
+      "type": "CLIPLoader",
+      "pos": [
+        20,
+        740
+      ],
+      "size": [
+        360,
+        110
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            12,
+            17
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPLoader",
+        "models": [
+          {
+            "name": "qwen3vl_8b_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_bf16.safetensors",
+            "directory": "text_encoders"
+          }
+        ]
+      },
+      "widgets_values": [
+        "qwen3vl_8b_bf16.safetensors",
+        "qwen_image",
+        "default"
+      ],
+      "title": "qwen3vl_8b (qwen_image)"
+    },
+    {
+      "id": 7,
+      "type": "VAELoader",
+      "pos": [
+        400,
+        740
+      ],
+      "size": [
+        320,
+        70
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            13,
+            18
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader",
+        "models": [
+          {
+            "name": "qwen_image_2.1_vae_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+            "directory": "vae"
+          }
+        ]
+      },
+      "widgets_values": [
+        "qwen_image_2.1_vae_bf16.safetensors"
+      ],
+      "title": "Qwen 2.1 VAE (RGBA)"
+    },
+    {
+      "id": 8,
+      "type": "BD_PartsVocabulary",
+      "pos": [
+        820,
+        50
+      ],
+      "size": [
+        400,
+        440
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "vocabulary",
+          "type": "STRING",
+          "links": [
+            21
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "vlm_prompt",
+          "type": "STRING",
+          "links": [
+            4
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsVocabulary"
+      },
+      "widgets_values": [
+        "hair | hair | hair | no\neyebrows | eyebrows | eyebrows | no\neyes | eyes | eyes | no\nmouth | mouth | mouth and lips | no\nbeard | beard | beard | no\nmoustache | moustache | moustache | no\nglasses | glasses | glasses | yes\nsunglasses | sunglasses | sunglasses | yes\nhat | hat or cap | hat | yes\nhelmet | helmet | helmet | yes\nheadband | headband or bandana | headband or bandana | yes\nheadphones | headphones | headphones | yes\nearrings | earrings | earrings | yes\npiercings | piercings | piercings | yes"
+      ],
+      "title": "② Parts Vocabulary"
+    },
+    {
+      "id": 9,
+      "type": "AILab_QwenVL",
+      "pos": [
+        1240,
+        50
+      ],
+      "size": [
+        380,
+        440
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "name": "video",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "custom_prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "custom_prompt"
+          },
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "RESPONSE",
+          "type": "STRING",
+          "links": [
+            6,
+            20
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AILab_QwenVL"
+      },
+      "widgets_values": [
+        "Qwen3-VL-8B-Instruct",
+        "None (FP16)",
+        "auto",
+        "🖼️ Tags",
+        "",
+        400,
+        false,
+        1,
+        "fixed"
+      ],
+      "title": "Qwen3-VL vote"
+    },
+    {
+      "id": 10,
+      "type": "PreviewAny",
+      "pos": [
+        1640,
+        50
+      ],
+      "size": [
+        220,
+        440
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "vote"
+    },
+    {
+      "id": 11,
+      "type": "BD_Lotus2ModelLoader",
+      "pos": [
+        820,
+        610
+      ],
+      "size": [
+        360,
+        200
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "LOTUS2_MODEL",
+          "links": [
+            7
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Lotus2ModelLoader"
+      },
+      "widgets_values": [
+        "depth",
+        "bf16",
+        "auto",
+        "black-forest-labs/FLUX.1-dev",
+        "",
+        false
+      ],
+      "title": "Lotus2 depth"
+    },
+    {
+      "id": 12,
+      "type": "BD_Lotus2Predict",
+      "pos": [
+        1200,
+        610
+      ],
+      "size": [
+        320,
+        200
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "LOTUS2_MODEL",
+          "link": 7
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 8
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "map",
+          "type": "IMAGE",
+          "links": [
+            9
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "raw_linear",
+          "type": "IMAGE",
+          "links": [
+            22
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "colorized_preview",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_Lotus2Predict"
+      },
+      "widgets_values": [
+        10,
+        1024,
+        3.5,
+        1,
+        "auto"
+      ],
+      "title": "③ Depth"
+    },
+    {
+      "id": 13,
+      "type": "PreviewImage",
+      "pos": [
+        1540,
+        610
+      ],
+      "size": [
+        320,
+        400
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "depth"
+    },
+    {
+      "id": 14,
+      "type": "BD_PartsBuilder2",
+      "pos": [
+        1940,
+        50
+      ],
+      "size": [
+        440,
+        960
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 10
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 11
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 12
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 13
+        },
+        {
+          "name": "head_mask",
+          "type": "MASK",
+          "link": 14
+        },
+        {
+          "name": "depth_image",
+          "type": "IMAGE",
+          "link": 22
+        },
+        {
+          "name": "presence",
+          "type": "STRING",
+          "widget": {
+            "name": "presence"
+          },
+          "link": 20
+        },
+        {
+          "name": "vocabulary",
+          "type": "STRING",
+          "widget": {
+            "name": "vocabulary"
+          },
+          "link": 21
+        }
+      ],
+      "outputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "links": [
+            26,
+            44
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "complete_parts",
+          "type": "PARTS_BUNDLE",
+          "links": [
+            27,
+            35
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "base_image",
+          "type": "IMAGE",
+          "links": [
+            24,
+            45
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "layers_preview",
+          "type": "IMAGE",
+          "links": [
+            23
+          ],
+          "slot_index": 3
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            25
+          ],
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsBuilder2"
+      },
+      "widgets_values": [
+        "",
+        "hair | hair | hair | no\neyebrows | eyebrows | eyebrows | no\neyes | eyes | eyes | no\nmouth | mouth | mouth and lips | no\nbeard | beard | beard | no\nmoustache | moustache | moustache | no\nglasses | glasses | glasses | yes\nsunglasses | sunglasses | sunglasses | yes\nhat | hat or cap | hat | yes\nhelmet | helmet | helmet | yes\nheadband | headband or bandana | headband or bandana | yes\nheadphones | headphones | headphones | yes\nearrings | earrings | earrings | yes\npiercings | piercings | piercings | yes",
+        20260931,
+        "fixed",
+        40,
+        1.0,
+        "euler",
+        "simple",
+        true,
+        true,
+        true,
+        3,
+        0.5,
+        60.0
+      ],
+      "title": "④ Parts Builder 2 (Qwen 2.1)"
+    },
+    {
+      "id": 15,
+      "type": "PreviewImage",
+      "pos": [
+        2400,
+        50
+      ],
+      "size": [
+        500,
+        460
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 23
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "layers (visible, then complete)"
+    },
+    {
+      "id": 16,
+      "type": "PreviewImage",
+      "pos": [
+        2400,
+        540
+      ],
+      "size": [
+        500,
+        470
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 24
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "head without items"
+    },
+    {
+      "id": 17,
+      "type": "PreviewAny",
+      "pos": [
+        2920,
+        50
+      ],
+      "size": [
+        480,
+        960
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 25
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "Parts Builder 2 report"
+    },
+    {
+      "id": 18,
+      "type": "BD_PartsBuilder2Plates",
+      "pos": [
+        20,
+        1130
+      ],
+      "size": [
+        440,
+        820
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 15
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 16
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 17
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 18
+        },
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "link": 26
+        },
+        {
+          "name": "complete_parts",
+          "type": "PARTS_BUNDLE",
+          "link": 27
+        },
+        {
+          "name": "head_mask",
+          "type": "MASK",
+          "link": 19
+        }
+      ],
+      "outputs": [
+        {
+          "name": "bald",
+          "type": "IMAGE",
+          "links": [
+            28,
+            29
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "mouthless",
+          "type": "IMAGE",
+          "links": [
+            30,
+            31
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "eyeless",
+          "type": "IMAGE",
+          "links": [
+            32,
+            33,
+            36
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "matte",
+          "type": "MASK",
+          "links": [
+            37
+          ],
+          "slot_index": 3
+        },
+        {
+          "name": "plate_source",
+          "type": "IMAGE",
+          "links": [
+            39
+          ],
+          "slot_index": 4
+        },
+        {
+          "name": "plate_head",
+          "type": "MASK",
+          "links": [
+            40
+          ],
+          "slot_index": 5
+        },
+        {
+          "name": "plate_frame",
+          "type": "STRING",
+          "links": [
+            38
+          ],
+          "slot_index": 6
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            34
+          ],
+          "slot_index": 7
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsBuilder2Plates"
+      },
+      "widgets_values": [
+        "This is an RGBA image with transparency. Make the character's head completely bald: remove the hair on the head, any hat or head covering, headband or bandana, glasses or sunglasses, headphones and earrings, the beard and the moustache, and show a smooth, round, complete bald scalp that continues the skin tone and the hard-edged low-poly facets of the forehead, with clean skin wherever the hair, beard or those items were. The eyebrows are not part of the hair: keep both eyebrows exactly as they are, whatever their colour. Keep the face, the eyes, the eyebrows, the lips, the nose and the ears exactly as they are, and keep the pose, the head size and position and the low-poly 3D render style exactly as in the image. The image has alpha channel and the background is transparent.",
+        "Remove the lips and everything inside the mouth from the character's face: the whole mouth area becomes plain skin that continues the surrounding skin tone and the hard-edged low-poly facets, with no lip colour, no teeth, no outline and no line, while the chin, the jaw and the cheeks stay exactly where they are. Remove the eyebrows the same way, so the brow ridges are plain skin. Keep the eyes open and exactly as they are. Keep the rest of the head, the ears, the pose, the head size and position, the lighting and the low-poly 3D render style exactly as in the image.",
+        "Remove the eyebrows, the eyes, the lips and everything inside the mouth from the character's face: the brow ridges become plain skin, each eye becomes a closed, smooth eyelid of plain skin with no eyelashes, no eye line and no eye colour, and the whole mouth area becomes plain skin with no lip colour, no teeth, no outline and no line - all of it continuing the surrounding skin tone and the hard-edged low-poly facets, while the chin, the jaw and the cheeks stay exactly where they are. Keep the rest of the head, the ears, the pose, the head size and position, the lighting and the low-poly 3D render style exactly as in the image.",
+        20260933,
+        "fixed",
+        40,
+        1.0,
+        "euler",
+        "simple",
+        2,
+        "1024",
+        0.9,
+        0.94,
+        0.015,
+        3.0
+      ],
+      "title": "⑤ Parts Builder 2 Plates (Qwen 2.1)"
+    },
+    {
+      "id": 19,
+      "type": "PreviewImage",
+      "pos": [
+        480,
+        1130
+      ],
+      "size": [
+        340,
+        400
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 28
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "bald"
+    },
+    {
+      "id": 20,
+      "type": "PreviewImage",
+      "pos": [
+        840,
+        1130
+      ],
+      "size": [
+        340,
+        400
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 30
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "mouthless / browless"
+    },
+    {
+      "id": 21,
+      "type": "PreviewImage",
+      "pos": [
+        1200,
+        1130
+      ],
+      "size": [
+        340,
+        400
+      ],
+      "flags": {},
+      "order": 20,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 32
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "eyeless (engine base)"
+    },
+    {
+      "id": 22,
+      "type": "PreviewAny",
+      "pos": [
+        1560,
+        1130
+      ],
+      "size": [
+        300,
+        820
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 34
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "Plates report"
+    },
+    {
+      "id": 23,
+      "type": "SaveImage",
+      "pos": [
+        480,
+        1560
+      ],
+      "size": [
+        340,
+        390
+      ],
+      "flags": {},
+      "order": 22,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 29
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "parts_builder_2/plate_bald"
+      ],
+      "title": "Save bald"
+    },
+    {
+      "id": 24,
+      "type": "SaveImage",
+      "pos": [
+        840,
+        1560
+      ],
+      "size": [
+        340,
+        390
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 31
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "parts_builder_2/plate_mouthless"
+      ],
+      "title": "Save mouthless"
+    },
+    {
+      "id": 25,
+      "type": "SaveImage",
+      "pos": [
+        1200,
+        1560
+      ],
+      "size": [
+        340,
+        390
+      ],
+      "flags": {},
+      "order": 24,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 33
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "parts_builder_2/plate_eyeless"
+      ],
+      "title": "Save eyeless"
+    },
+    {
+      "id": 26,
+      "type": "BD_PartsBuilder2Assemble",
+      "pos": [
+        1940,
+        1130
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 25,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "complete_parts",
+          "type": "PARTS_BUNDLE",
+          "link": 35
+        },
+        {
+          "name": "plate",
+          "type": "IMAGE",
+          "link": 36
+        },
+        {
+          "name": "matte",
+          "type": "MASK",
+          "link": 37
+        },
+        {
+          "name": "plate_frame",
+          "type": "STRING",
+          "link": 38
+        },
+        {
+          "name": "plate_source",
+          "type": "IMAGE",
+          "link": 39
+        },
+        {
+          "name": "plate_head",
+          "type": "MASK",
+          "link": 40
+        }
+      ],
+      "outputs": [
+        {
+          "name": "engine_parts",
+          "type": "PARTS_BUNDLE",
+          "links": [
+            46
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "reassembled",
+          "type": "IMAGE",
+          "links": [
+            41
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "difference",
+          "type": "IMAGE",
+          "links": [
+            42
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            43
+          ],
+          "slot_index": 3
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsBuilder2Assemble"
+      },
+      "widgets_values": [],
+      "title": "⑥ Parts Builder 2 Assemble"
+    },
+    {
+      "id": 27,
+      "type": "PreviewImage",
+      "pos": [
+        2320,
+        1130
+      ],
+      "size": [
+        520,
+        520
+      ],
+      "flags": {},
+      "order": 26,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 41
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "reassembled"
+    },
+    {
+      "id": 28,
+      "type": "PreviewImage",
+      "pos": [
+        2860,
+        1130
+      ],
+      "size": [
+        520,
+        520
+      ],
+      "flags": {},
+      "order": 27,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 42
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "difference (red = off)"
+    },
+    {
+      "id": 29,
+      "type": "PreviewAny",
+      "pos": [
+        1940,
+        1460
+      ],
+      "size": [
+        360,
+        490
+      ],
+      "flags": {},
+      "order": 28,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 43
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "Assemble report"
+    },
+    {
+      "id": 30,
+      "type": "BD_PartsExport",
+      "pos": [
+        20,
+        2070
+      ],
+      "size": [
+        440,
+        620
+      ],
+      "flags": {},
+      "order": 29,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "link": 44
+        },
+        {
+          "name": "base_image",
+          "type": "IMAGE",
+          "link": 45
+        },
+        {
+          "name": "background_image",
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "output_dir",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "summary",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "composite_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "composite_image_masked",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "parts_image_batch",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsExport"
+      },
+      "widgets_values": [
+        "visible_layers",
+        "parts_builder_2",
+        true,
+        "",
+        true,
+        true,
+        true,
+        true,
+        true,
+        0,
+        true,
+        false,
+        true,
+        true,
+        "# BD Parts Category Table — Character (Sapiens2 taxonomy)\n# Format:  tag = slug:region\n#   tag    — exact part tag from BD_PartsBuilder (must match case)\n#   slug   — short filename-safe name exposed as %slug% in BD_SaveContext templates\n#   region — body region for folder/path grouping exposed as %region% in templates\n#\n# Lines starting with # are ignored. Blank lines are ignored.\n# tag = slug      (no colon) sets slug only, region stays empty.\n# Empty table (all lines blank/comments) = passthrough: tag is used as slug, region is \"\".\n#\n# Fuzzy / substring matching (Qwen-VL free-form tags):\n# Prefix a line with ~ to do a case-insensitive substring match instead of exact.\n# Among all matching ~patterns, the LONGEST wins (most-specific first).\n# Put more-specific patterns before less-specific ones in this file for readability;\n# the parser sorts by length automatically so ordering doesn't matter for correctness.\n#   ~sneaker    matches \"blue left sneaker\", \"right white sneaker\", etc.\n#   ~left shoe  matches \"left red shoe\" (wins over ~shoe for left-side tags)\n#\n# Example template using these vars:\n#   %character%/%region%/%slug%%suffix%\n#   → Letti/head/face_0001.png, Letti/clothing/upper_shirt_0001.png\n\n# ── Head ──────────────────────────────────────────────────────────────────────\nFace_Neck       = face_neck:head\nHair            = hair:head\n\n# ── Body ──────────────────────────────────────────────────────────────────────\nTorso           = torso:body\n\n# ── Clothing ──────────────────────────────────────────────────────────────────\nUpper_Clothing  = upper_clothing:clothing\nLower_Clothing  = lower_clothing:clothing\nApparel         = apparel:clothing\n\n# ── Arms ──────────────────────────────────────────────────────────────────────\nLeft_Upper_Arm  = left_upper_arm:arms\nLeft_Lower_Arm  = left_lower_arm:arms\nLeft_Hand       = left_hand:arms\nRight_Upper_Arm = right_upper_arm:arms\nRight_Lower_Arm = right_lower_arm:arms\nRight_Hand      = right_hand:arms\n\n# ── Legs ──────────────────────────────────────────────────────────────────────\nLeft_Upper_Leg  = left_upper_leg:legs\nLeft_Lower_Leg  = left_lower_leg:legs\nLeft_Foot       = left_foot:legs\nRight_Upper_Leg = right_upper_leg:legs\nRight_Lower_Leg = right_lower_leg:legs\nRight_Foot      = right_foot:legs\n\n# ── Footwear ──────────────────────────────────────────────────────────────────\nLeft_Shoe       = left_shoe:footwear\nLeft_Sock       = left_sock:footwear\nRight_Shoe      = right_shoe:footwear\nRight_Sock      = right_sock:footwear\n\n# ── Face detail ───────────────────────────────────────────────────────────────\nLower_Lip       = lower_lip:face\nUpper_Lip       = upper_lip:face\nLower_Teeth     = lower_teeth:face\nUpper_Teeth     = upper_teeth:face\nTongue          = tongue:face\n\n# ── Accessories ───────────────────────────────────────────────────────────────\nEyeglass        = eyeglass:accessories\n\n# ── Qwen-VL fuzzy matches (~pattern = case-insensitive substring) ─────────────\n\n# Body parts — head/face (side-specific first, then generic)\n~eye brows      = eyebrows:head\n~left eye       = left_eye:head\n~right eye      = right_eye:head\n~eye brow       = eyebrow:head\n~facial hair    = facial_hair:head\n~left ear       = left_ear:head\n~right ear      = right_ear:head\n~eye            = eye:head\n~ear            = ear:head\n~nose           = nose:head\n~mouth          = mouth:head\n~lips           = lips:head\n~lip            = lip:head\n~beard          = beard:head\n~mustache       = mustache:head\n~face           = face:head\n~hair           = hair:head\n~neck           = neck:head\n~head           = head:head\n\n# Body parts — torso/upper body\n~left shoulder  = left_shoulder:body\n~right shoulder = right_shoulder:body\n~shoulder       = shoulder:body\n~chest          = chest:body\n~torso          = torso:body\n~upper body     = upper_body:body\n~abdomen        = abdomen:body\n~belly          = belly:body\n~waist          = waist:body\n~back           = back:body\n~spine          = spine:body\n\n# Body parts — arms/hands (side-specific first)\n~left upper arm  = left_upper_arm:arms\n~right upper arm = right_upper_arm:arms\n~left lower arm  = left_lower_arm:arms\n~right lower arm = right_lower_arm:arms\n~left arm        = left_arm:arms\n~right arm       = right_arm:arms\n~left hand       = left_hand:arms\n~right hand      = right_hand:arms\n~left forearm    = left_forearm:arms\n~right forearm   = right_forearm:arms\n~left wrist      = left_wrist:arms\n~right wrist     = right_wrist:arms\n~left elbow      = left_elbow:arms\n~right elbow     = right_elbow:arms\n~arm             = arm:arms\n~hand            = hand:arms\n~forearm         = forearm:arms\n~wrist           = wrist:arms\n~elbow           = elbow:arms\n~fingers         = fingers:arms\n~finger          = finger:arms\n~palm            = palm:arms\n\n# Body parts — legs/feet (side-specific first)\n~left upper leg  = left_upper_leg:legs\n~right upper leg = right_upper_leg:legs\n~left lower leg  = left_lower_leg:legs\n~right lower leg = right_lower_leg:legs\n~left leg        = left_leg:legs\n~right leg       = right_leg:legs\n~left foot       = left_foot:legs\n~right foot      = right_foot:legs\n~left thigh      = left_thigh:legs\n~right thigh     = right_thigh:legs\n~left calf       = left_calf:legs\n~right calf      = right_calf:legs\n~left knee       = left_knee:legs\n~right knee      = right_knee:legs\n~left ankle      = left_ankle:legs\n~right ankle     = right_ankle:legs\n~leg             = leg:legs\n~foot            = foot:legs\n~thigh           = thigh:legs\n~calf            = calf:legs\n~knee            = knee:legs\n~ankle           = ankle:legs\n~toe             = toe:legs\n~toes            = toes:legs\n\n# Clothing — skin/body coverings\n~skin           = skin:body\n~body           = body:body\n~nude           = nude:body\n~underwear      = underwear:clothing\n~underpants     = underwear:clothing\n~bra            = bra:clothing\n~panties        = panties:clothing\n~boxer          = boxers:clothing\n~apron          = apron:clothing\n# Footwear — side-specific first (longer = wins over bare \"shoe\"/\"sneaker\")\n~left sneaker   = left_sneaker:footwear\n~right sneaker  = right_sneaker:footwear\n~left shoe      = left_shoe:footwear\n~right shoe     = right_shoe:footwear\n~left boot      = left_boot:footwear\n~right boot     = right_boot:footwear\n~left sock      = left_sock:footwear\n~right sock     = right_sock:footwear\n~sneaker        = sneaker:footwear\n~shoe           = shoe:footwear\n~boot           = boot:footwear\n~sock           = sock:footwear\n~heel           = heel:footwear\n~sandal         = sandal:footwear\n~slipper        = slipper:footwear\n~kicks          = sneaker:footwear\n\n# Clothing — upper body\n~jacket         = jacket:clothing\n~coat           = coat:clothing\n~hoodie         = hoodie:clothing\n~sweater        = sweater:clothing\n~sweatshirt     = sweatshirt:clothing\n~shirt          = shirt:clothing\n~blouse         = blouse:clothing\n~top            = top:clothing\n~dress          = dress:clothing\n~skirt          = skirt:clothing\n~vest           = vest:clothing\n~suit           = suit:clothing\n~blazer         = blazer:clothing\n~cardigan       = cardigan:clothing\n~tank           = tank_top:clothing\n\n# Clothing — lower body (more specific before less specific)\n~denim jean     = jeans:clothing\n~jean           = jeans:clothing\n~denim          = jeans:clothing\n~trouser        = trousers:clothing\n~pant           = pants:clothing\n~short          = shorts:clothing\n~legging        = leggings:clothing\n~skirt          = skirt:clothing\n\n# Lower body — extra\n~overall        = overalls:clothing\n~swimsuit       = swimsuit:clothing\n~bikini         = bikini:clothing\n~armor          = armor:clothing\n\n# Accessories\n~sunglasses     = sunglasses:accessories\n# Qwen-VL names the part, not the category: billpage's came back as\n# \"black_sunglass_frame\", which ~sunglasses (plural) does not contain. Stem it.\n~sunglass       = sunglasses:accessories\n~eyeglass       = glasses:accessories\n~goggles        = goggles:accessories\n~glasses        = glasses:accessories\n~spectacles     = glasses:accessories\n~watch          = watch:accessories\n~bracelet       = bracelet:accessories\n~necklace       = necklace:accessories\n~chain          = chain:accessories\n~earring        = earring:accessories\n# \"earings\" (one r) is what the VLM writes, and it does not contain \"earring\" --\n# but it DOES contain \"ring\", so without this line every pair of earrings was\n# filed as a finger ring.\n~earings        = earring:accessories\n~earing         = earring:accessories\n~ear ring       = earring:accessories\n~ring           = ring:accessories\n~headphone      = headphones:accessories\n~hat            = hat:accessories\n~cap            = cap:accessories\n~helmet         = helmet:accessories\n~beanie         = beanie:accessories\n~headband       = headband:accessories\n~scarf          = scarf:accessories\n~left glove     = left_glove:accessories\n~right glove    = right_glove:accessories\n~glove          = glove:accessories\n~face mask      = face_mask:accessories\n~bag            = bag:accessories\n~backpack       = backpack:accessories\n~purse          = purse:accessories\n~belt           = belt:accessories\n~tie            = tie:accessories\n~bow tie        = bow_tie:accessories\n",
+        "",
+        true
+      ],
+      "title": "⑦ Export visible layers + head without items"
+    },
+    {
+      "id": 31,
+      "type": "BD_PartsExport",
+      "pos": [
+        480,
+        2070
+      ],
+      "size": [
+        440,
+        620
+      ],
+      "flags": {},
+      "order": 30,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "link": 46
+        },
+        {
+          "name": "base_image",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "background_image",
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "parts",
+          "type": "PARTS_BUNDLE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "output_dir",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "summary",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "composite_image",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "composite_image_masked",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "parts_image_batch",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BD_PartsExport"
+      },
+      "widgets_values": [
+        "engine_stack",
+        "parts_builder_2",
+        true,
+        "",
+        true,
+        true,
+        true,
+        true,
+        true,
+        0,
+        true,
+        false,
+        true,
+        true,
+        "# BD Parts Category Table — Character (Sapiens2 taxonomy)\n# Format:  tag = slug:region\n#   tag    — exact part tag from BD_PartsBuilder (must match case)\n#   slug   — short filename-safe name exposed as %slug% in BD_SaveContext templates\n#   region — body region for folder/path grouping exposed as %region% in templates\n#\n# Lines starting with # are ignored. Blank lines are ignored.\n# tag = slug      (no colon) sets slug only, region stays empty.\n# Empty table (all lines blank/comments) = passthrough: tag is used as slug, region is \"\".\n#\n# Fuzzy / substring matching (Qwen-VL free-form tags):\n# Prefix a line with ~ to do a case-insensitive substring match instead of exact.\n# Among all matching ~patterns, the LONGEST wins (most-specific first).\n# Put more-specific patterns before less-specific ones in this file for readability;\n# the parser sorts by length automatically so ordering doesn't matter for correctness.\n#   ~sneaker    matches \"blue left sneaker\", \"right white sneaker\", etc.\n#   ~left shoe  matches \"left red shoe\" (wins over ~shoe for left-side tags)\n#\n# Example template using these vars:\n#   %character%/%region%/%slug%%suffix%\n#   → Letti/head/face_0001.png, Letti/clothing/upper_shirt_0001.png\n\n# ── Head ──────────────────────────────────────────────────────────────────────\nFace_Neck       = face_neck:head\nHair            = hair:head\n\n# ── Body ──────────────────────────────────────────────────────────────────────\nTorso           = torso:body\n\n# ── Clothing ──────────────────────────────────────────────────────────────────\nUpper_Clothing  = upper_clothing:clothing\nLower_Clothing  = lower_clothing:clothing\nApparel         = apparel:clothing\n\n# ── Arms ──────────────────────────────────────────────────────────────────────\nLeft_Upper_Arm  = left_upper_arm:arms\nLeft_Lower_Arm  = left_lower_arm:arms\nLeft_Hand       = left_hand:arms\nRight_Upper_Arm = right_upper_arm:arms\nRight_Lower_Arm = right_lower_arm:arms\nRight_Hand      = right_hand:arms\n\n# ── Legs ──────────────────────────────────────────────────────────────────────\nLeft_Upper_Leg  = left_upper_leg:legs\nLeft_Lower_Leg  = left_lower_leg:legs\nLeft_Foot       = left_foot:legs\nRight_Upper_Leg = right_upper_leg:legs\nRight_Lower_Leg = right_lower_leg:legs\nRight_Foot      = right_foot:legs\n\n# ── Footwear ──────────────────────────────────────────────────────────────────\nLeft_Shoe       = left_shoe:footwear\nLeft_Sock       = left_sock:footwear\nRight_Shoe      = right_shoe:footwear\nRight_Sock      = right_sock:footwear\n\n# ── Face detail ───────────────────────────────────────────────────────────────\nLower_Lip       = lower_lip:face\nUpper_Lip       = upper_lip:face\nLower_Teeth     = lower_teeth:face\nUpper_Teeth     = upper_teeth:face\nTongue          = tongue:face\n\n# ── Accessories ───────────────────────────────────────────────────────────────\nEyeglass        = eyeglass:accessories\n\n# ── Qwen-VL fuzzy matches (~pattern = case-insensitive substring) ─────────────\n\n# Body parts — head/face (side-specific first, then generic)\n~eye brows      = eyebrows:head\n~left eye       = left_eye:head\n~right eye      = right_eye:head\n~eye brow       = eyebrow:head\n~facial hair    = facial_hair:head\n~left ear       = left_ear:head\n~right ear      = right_ear:head\n~eye            = eye:head\n~ear            = ear:head\n~nose           = nose:head\n~mouth          = mouth:head\n~lips           = lips:head\n~lip            = lip:head\n~beard          = beard:head\n~mustache       = mustache:head\n~face           = face:head\n~hair           = hair:head\n~neck           = neck:head\n~head           = head:head\n\n# Body parts — torso/upper body\n~left shoulder  = left_shoulder:body\n~right shoulder = right_shoulder:body\n~shoulder       = shoulder:body\n~chest          = chest:body\n~torso          = torso:body\n~upper body     = upper_body:body\n~abdomen        = abdomen:body\n~belly          = belly:body\n~waist          = waist:body\n~back           = back:body\n~spine          = spine:body\n\n# Body parts — arms/hands (side-specific first)\n~left upper arm  = left_upper_arm:arms\n~right upper arm = right_upper_arm:arms\n~left lower arm  = left_lower_arm:arms\n~right lower arm = right_lower_arm:arms\n~left arm        = left_arm:arms\n~right arm       = right_arm:arms\n~left hand       = left_hand:arms\n~right hand      = right_hand:arms\n~left forearm    = left_forearm:arms\n~right forearm   = right_forearm:arms\n~left wrist      = left_wrist:arms\n~right wrist     = right_wrist:arms\n~left elbow      = left_elbow:arms\n~right elbow     = right_elbow:arms\n~arm             = arm:arms\n~hand            = hand:arms\n~forearm         = forearm:arms\n~wrist           = wrist:arms\n~elbow           = elbow:arms\n~fingers         = fingers:arms\n~finger          = finger:arms\n~palm            = palm:arms\n\n# Body parts — legs/feet (side-specific first)\n~left upper leg  = left_upper_leg:legs\n~right upper leg = right_upper_leg:legs\n~left lower leg  = left_lower_leg:legs\n~right lower leg = right_lower_leg:legs\n~left leg        = left_leg:legs\n~right leg       = right_leg:legs\n~left foot       = left_foot:legs\n~right foot      = right_foot:legs\n~left thigh      = left_thigh:legs\n~right thigh     = right_thigh:legs\n~left calf       = left_calf:legs\n~right calf      = right_calf:legs\n~left knee       = left_knee:legs\n~right knee      = right_knee:legs\n~left ankle      = left_ankle:legs\n~right ankle     = right_ankle:legs\n~leg             = leg:legs\n~foot            = foot:legs\n~thigh           = thigh:legs\n~calf            = calf:legs\n~knee            = knee:legs\n~ankle           = ankle:legs\n~toe             = toe:legs\n~toes            = toes:legs\n\n# Clothing — skin/body coverings\n~skin           = skin:body\n~body           = body:body\n~nude           = nude:body\n~underwear      = underwear:clothing\n~underpants     = underwear:clothing\n~bra            = bra:clothing\n~panties        = panties:clothing\n~boxer          = boxers:clothing\n~apron          = apron:clothing\n# Footwear — side-specific first (longer = wins over bare \"shoe\"/\"sneaker\")\n~left sneaker   = left_sneaker:footwear\n~right sneaker  = right_sneaker:footwear\n~left shoe      = left_shoe:footwear\n~right shoe     = right_shoe:footwear\n~left boot      = left_boot:footwear\n~right boot     = right_boot:footwear\n~left sock      = left_sock:footwear\n~right sock     = right_sock:footwear\n~sneaker        = sneaker:footwear\n~shoe           = shoe:footwear\n~boot           = boot:footwear\n~sock           = sock:footwear\n~heel           = heel:footwear\n~sandal         = sandal:footwear\n~slipper        = slipper:footwear\n~kicks          = sneaker:footwear\n\n# Clothing — upper body\n~jacket         = jacket:clothing\n~coat           = coat:clothing\n~hoodie         = hoodie:clothing\n~sweater        = sweater:clothing\n~sweatshirt     = sweatshirt:clothing\n~shirt          = shirt:clothing\n~blouse         = blouse:clothing\n~top            = top:clothing\n~dress          = dress:clothing\n~skirt          = skirt:clothing\n~vest           = vest:clothing\n~suit           = suit:clothing\n~blazer         = blazer:clothing\n~cardigan       = cardigan:clothing\n~tank           = tank_top:clothing\n\n# Clothing — lower body (more specific before less specific)\n~denim jean     = jeans:clothing\n~jean           = jeans:clothing\n~denim          = jeans:clothing\n~trouser        = trousers:clothing\n~pant           = pants:clothing\n~short          = shorts:clothing\n~legging        = leggings:clothing\n~skirt          = skirt:clothing\n\n# Lower body — extra\n~overall        = overalls:clothing\n~swimsuit       = swimsuit:clothing\n~bikini         = bikini:clothing\n~armor          = armor:clothing\n\n# Accessories\n~sunglasses     = sunglasses:accessories\n# Qwen-VL names the part, not the category: billpage's came back as\n# \"black_sunglass_frame\", which ~sunglasses (plural) does not contain. Stem it.\n~sunglass       = sunglasses:accessories\n~eyeglass       = glasses:accessories\n~goggles        = goggles:accessories\n~glasses        = glasses:accessories\n~spectacles     = glasses:accessories\n~watch          = watch:accessories\n~bracelet       = bracelet:accessories\n~necklace       = necklace:accessories\n~chain          = chain:accessories\n~earring        = earring:accessories\n# \"earings\" (one r) is what the VLM writes, and it does not contain \"earring\" --\n# but it DOES contain \"ring\", so without this line every pair of earrings was\n# filed as a finger ring.\n~earings        = earring:accessories\n~earing         = earring:accessories\n~ear ring       = earring:accessories\n~ring           = ring:accessories\n~headphone      = headphones:accessories\n~hat            = hat:accessories\n~cap            = cap:accessories\n~helmet         = helmet:accessories\n~beanie         = beanie:accessories\n~headband       = headband:accessories\n~scarf          = scarf:accessories\n~left glove     = left_glove:accessories\n~right glove    = right_glove:accessories\n~glove          = glove:accessories\n~face mask      = face_mask:accessories\n~bag            = bag:accessories\n~backpack       = backpack:accessories\n~purse          = purse:accessories\n~belt           = belt:accessories\n~tie            = tie:accessories\n~bow tie        = bow_tie:accessories\n",
+        "",
+        true
+      ],
+      "title": "⑧ Export engine stack"
+    },
+    {
+      "id": 32,
+      "type": "MarkdownNote",
+      "pos": [
+        960,
+        2070
+      ],
+      "size": [
+        900,
+        620
+      ],
+      "flags": {},
+      "order": 31,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "## BD Parts Builder 2\n\nQwen Image 2.1 layer decomposition of a character head - prompts only, no SAM, every layer in the source's own pixels.\n\n**Flow**\n1. **Load** a headshot with alpha (e.g. HeadMasters MASTER 1).\n2. **Vote** - Qwen3-VL answers true/false for a CLOSED list (BD Parts Vocabulary). 2.1 draws any item it is asked for, present or not, so only voted items are requested.\n3. **Parts Builder 2** - per item a *visible* edit (where it is; pixels come from the source, so the visible layers rebuild it exactly) and a *complete* edit (the whole object, hidden parts included, split into front and _back). Paint order is read off the source. base_image = head without items.\n4. **Plates** - bald (its alpha is the matte), then mouthless and eyeless, each ONE edit of the bald, cut onto white and frame-proven. Small heads (a hat set the framing) are re-framed; work_size 2048 for more pixels.\n5. **Assemble** - the engine stack: back parts -> eyeless plate -> front parts, compared with the source.\n6. **Export** - visible layers + head without items (the PSD rebuilds the source) and the engine stack.\n\n**Models** - `qwen_image_2.1_bf16`, `qwen3vl_8b_bf16` (CLIPLoader type qwen_image), `qwen_image_2.1_vae_bf16` (Comfy-Org/Qwen-Image-2.1, auto-download links on the loaders); `Qwen3-VL-8B-Instruct` (AILab QwenVL); Lotus2 depth. An edit takes ~15 s at 1024 (40 steps) on the studio card; a head with 6 items is ~16 edits plus the plates.\n\n**Rules learned the hard way** - never feed a stage 2.1's raw output (noise amplifies); at most 2 generations from the source; never ask for an item the vote did not find.\n\n---\n**BrainDeadGuild** - created by **BizaNator**\n[BrainDeadGuild.com](https://BrainDeadGuild.com) · [BrainDead.TV](https://BrainDead.TV) · [GitHub](https://github.com/BizaNator/ComfyUI-BrainDead) · [Discord](https://braindeadguild.com/discord)\n"
+      ],
+      "title": "ℹ️ About — 🧠 BrainDead Parts Builder 2"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      1,
+      1,
+      2,
+      0,
+      "MASK"
+    ],
+    [
+      3,
+      4,
+      0,
+      5,
+      0,
+      "MODEL"
+    ],
+    [
+      4,
+      8,
+      1,
+      9,
+      2,
+      "STRING"
+    ],
+    [
+      5,
+      1,
+      0,
+      9,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      9,
+      0,
+      10,
+      0,
+      "STRING"
+    ],
+    [
+      7,
+      11,
+      0,
+      12,
+      0,
+      "LOTUS2_MODEL"
+    ],
+    [
+      8,
+      1,
+      0,
+      12,
+      1,
+      "IMAGE"
+    ],
+    [
+      9,
+      12,
+      0,
+      13,
+      0,
+      "IMAGE"
+    ],
+    [
+      10,
+      1,
+      0,
+      14,
+      0,
+      "IMAGE"
+    ],
+    [
+      11,
+      5,
+      0,
+      14,
+      1,
+      "MODEL"
+    ],
+    [
+      12,
+      6,
+      0,
+      14,
+      2,
+      "CLIP"
+    ],
+    [
+      13,
+      7,
+      0,
+      14,
+      3,
+      "VAE"
+    ],
+    [
+      14,
+      2,
+      0,
+      14,
+      4,
+      "MASK"
+    ],
+    [
+      15,
+      1,
+      0,
+      18,
+      0,
+      "IMAGE"
+    ],
+    [
+      16,
+      5,
+      0,
+      18,
+      1,
+      "MODEL"
+    ],
+    [
+      17,
+      6,
+      0,
+      18,
+      2,
+      "CLIP"
+    ],
+    [
+      18,
+      7,
+      0,
+      18,
+      3,
+      "VAE"
+    ],
+    [
+      19,
+      2,
+      0,
+      18,
+      6,
+      "MASK"
+    ],
+    [
+      20,
+      9,
+      0,
+      14,
+      6,
+      "STRING"
+    ],
+    [
+      21,
+      8,
+      0,
+      14,
+      7,
+      "STRING"
+    ],
+    [
+      22,
+      12,
+      1,
+      14,
+      5,
+      "IMAGE"
+    ],
+    [
+      23,
+      14,
+      3,
+      15,
+      0,
+      "IMAGE"
+    ],
+    [
+      24,
+      14,
+      2,
+      16,
+      0,
+      "IMAGE"
+    ],
+    [
+      25,
+      14,
+      4,
+      17,
+      0,
+      "STRING"
+    ],
+    [
+      26,
+      14,
+      0,
+      18,
+      4,
+      "PARTS_BUNDLE"
+    ],
+    [
+      27,
+      14,
+      1,
+      18,
+      5,
+      "PARTS_BUNDLE"
+    ],
+    [
+      28,
+      18,
+      0,
+      19,
+      0,
+      "IMAGE"
+    ],
+    [
+      29,
+      18,
+      0,
+      23,
+      0,
+      "IMAGE"
+    ],
+    [
+      30,
+      18,
+      1,
+      20,
+      0,
+      "IMAGE"
+    ],
+    [
+      31,
+      18,
+      1,
+      24,
+      0,
+      "IMAGE"
+    ],
+    [
+      32,
+      18,
+      2,
+      21,
+      0,
+      "IMAGE"
+    ],
+    [
+      33,
+      18,
+      2,
+      25,
+      0,
+      "IMAGE"
+    ],
+    [
+      34,
+      18,
+      7,
+      22,
+      0,
+      "STRING"
+    ],
+    [
+      35,
+      14,
+      1,
+      26,
+      0,
+      "PARTS_BUNDLE"
+    ],
+    [
+      36,
+      18,
+      2,
+      26,
+      1,
+      "IMAGE"
+    ],
+    [
+      37,
+      18,
+      3,
+      26,
+      2,
+      "MASK"
+    ],
+    [
+      38,
+      18,
+      6,
+      26,
+      3,
+      "STRING"
+    ],
+    [
+      39,
+      18,
+      4,
+      26,
+      4,
+      "IMAGE"
+    ],
+    [
+      40,
+      18,
+      5,
+      26,
+      5,
+      "MASK"
+    ],
+    [
+      41,
+      26,
+      1,
+      27,
+      0,
+      "IMAGE"
+    ],
+    [
+      42,
+      26,
+      2,
+      28,
+      0,
+      "IMAGE"
+    ],
+    [
+      43,
+      26,
+      3,
+      29,
+      0,
+      "STRING"
+    ],
+    [
+      44,
+      14,
+      0,
+      30,
+      0,
+      "PARTS_BUNDLE"
+    ],
+    [
+      45,
+      14,
+      2,
+      30,
+      1,
+      "IMAGE"
+    ],
+    [
+      46,
+      26,
+      0,
+      31,
+      0,
+      "PARTS_BUNDLE"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "① Input - headshot with alpha",
+      "bounding": [
+        0,
+        0,
+        760,
+        520
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "Models - Qwen Image 2.1 (bf16, qwen3vl_8b, RGBA VAE)",
+      "bounding": [
+        0,
+        560,
+        760,
+        480
+      ],
+      "color": "#335",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "② Presence vote - closed list (2.1 draws anything it is asked for)",
+      "bounding": [
+        800,
+        0,
+        1080,
+        520
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 4,
+      "title": "③ Depth - Lotus2, brighter = nearer (paint-order tie-break only)",
+      "bounding": [
+        800,
+        560,
+        1080,
+        480
+      ],
+      "color": "#335",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 5,
+      "title": "④ Parts Builder 2 - visible + complete layers, paint order, head without items",
+      "bounding": [
+        1920,
+        0,
+        1500,
+        1040
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 6,
+      "title": "⑤ Plates - bald -> mouthless + eyeless (cut onto white, frame-proven)",
+      "bounding": [
+        0,
+        1080,
+        1880,
+        900
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 7,
+      "title": "⑥ Assemble - the engine stack vs the source",
+      "bounding": [
+        1920,
+        1080,
+        1500,
+        900
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 8,
+      "title": "⑦ ⑧ Export - PSD + PNGs + manifest (BD Parts Export)",
+      "bounding": [
+        0,
+        2020,
+        1880,
+        700
+      ],
+      "color": "#353",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.35,
+      "offset": [
+        100,
+        100
+      ]
+    }
+  },
+  "version": 0.4
+}

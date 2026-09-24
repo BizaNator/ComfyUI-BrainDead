@@ -22,7 +22,7 @@ AN internally-used node pack for Biloxi Studios designed to help with character,
 
 ## Workflow Templates
 
-Eighteen ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
+Ready-to-use workflows ship in [`example_workflows/`](example_workflows/) and appear in ComfyUI under **Workflow → Browse Templates → ComfyUI-BrainDead**, each with a thumbnail and an in-canvas note.
 
 <table>
 <tr>
@@ -120,6 +120,13 @@ Eighteen ready-to-use workflows ship in [`example_workflows/`](example_workflows
 <img src="docs/images/workflow_unrealfbx.jpg" width="100%" alt="TRELLIS2 to Unreal FBX"><br>
 <b>TRELLIS2 → Unreal FBX</b><br>
 <sub>Image → low-poly textured mesh + detail normal → single game-ready FBX (textures + vertex colors) via Blender</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/workflow_partsbuilder2.jpg" width="100%" alt="BD Parts Builder 2"><br>
+<b>BD Parts Builder 2</b><br>
+<sub>Headshot → closed-list vote → Qwen 2.1 visible + complete layers → bald / mouthless / eyeless plates → engine stack + PSD</sub>
 </td>
 </tr>
 </table>
@@ -354,6 +361,10 @@ Character segmentation, parts pipeline, PBR map derivation, asset prep.
 | **BD Parts Refine** | IoU-based dedup of overlapping prompts (e.g. "shoe" + "sneaker" + "left shoe" → 1 entry). Picks canonical tag, merges via union or keep_largest, optional max_parts cap and debug overlay. |
 | **BD Parts Batch Edit (Qwen)** | Internal-loop Qwen Image Edit per part, single execution. Modes: `flatten_redraw` (clean redraw on white bg, latent-upscale + tonemap recipe — internal patches: ModelSamplingAuraFlow + CFGNorm + Reinhard tonemap) and `true_inpaint` (regen only enclosed holes, preserves visible pixels). Auto-detects alpha from white bg, optional `flatten_pad_factor` for breathing room, optional `context_extend_factor` for surrounding context. |
 | **BD Parts Underpaint** | Background-reveal pass — removes masked objects and fills the exposed region with whatever would naturally be visible behind them. Runs after BD_PartsBatchEdit so the redrawn sprites are already clean. `model_type` selects the inpaint backend: **`qwen_edit`** (Qwen Image Edit — default, wire the same model/clip/vae as Batch Edit), **`kontext_dev`** (Flux Kontext Dev — better real-scene coherence; wire `flux1-kontext-dev.safetensors` + DualCLIPLoader + Flux VAE), **`flux_fill`** (Flux Fill Dev or any plain Flux inpaint model). `mode`: `per_part_sequential` removes objects one at a time (best coherence), `all_parts_combined` removes them all in a single pass (faster, uses `all_parts_prompt` where `{tag}`/`{tags}` expands to the full label list). `mask_dilate_pixels` (0–256) expands both the KSampler inpaint zone and the compositing boundary — raise to 64–128 to eliminate edge halos. |
+| **BD Parts Vocabulary** | The closed list of items **BD Parts Builder 2** may extract, plus the matching true/false prompt for a vision model (AILab QwenVL). Qwen Image 2.1 draws anything it is asked for, so only voted items are requested. |
+| **BD Parts Builder 2 (Qwen 2.1)** | Head layers with Qwen Image 2.1 prompts, no SAM: per voted item a *visible* edit (where it is - the pixels come from the source, so the layers rebuild it exactly) and a *complete* edit (the whole object, split into front and `_back`). Paint order read off the source; head without items frame-proven. Outputs two `PARTS_BUNDLE`s for **BD Parts Export**. |
+| **BD Parts Builder 2 Plates (Qwen 2.1)** | Featureless plates: bald (RGBA, its alpha = the matte) -> mouthless and eyeless, each one edit of the bald, cut onto white and frame-proven (a failed stage stops the chain). Small heads re-framed; `work_size` 1024 or 2048. |
+| **BD Parts Builder 2 Assemble** | The engine stack - back parts -> eyeless plate -> front parts - compared with the source; `engine_parts` exports as a PSD through **BD Parts Export**. |
 | **BD Parts Compose** | Flatten the bundle to a single RGBA + alpha at chosen `output_size`. Back-to-front by depth_median. |
 | **BD Parts Export** | Save files to disk: per-tag RGBA PNGs, per-tag depth PNGs, per-tag mask PNGs (original SAM3 visibility), composite PNG, layered PSD with per-part layers + optional per-part mask layers (visibility off, scaled identically). `composite_size` drives PSD canvas. SaveContext-aware. |
 
