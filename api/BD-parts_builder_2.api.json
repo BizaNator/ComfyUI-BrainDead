@@ -1,0 +1,524 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example.png"
+    },
+    "_meta": {
+      "title": "\u2460 Load Headshot (RGBA)"
+    }
+  },
+  "2": {
+    "class_type": "InvertMask",
+    "inputs": {
+      "mask": [
+        "1",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "head mask (alpha)"
+    }
+  },
+  "3": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Headshot"
+    }
+  },
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_2.1_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Qwen Image 2.1"
+    }
+  },
+  "5": {
+    "class_type": "QwenImage21Cache",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "device": "auto",
+      "dtype": "default"
+    },
+    "_meta": {
+      "title": "Qwen Image 2.1 Cache"
+    }
+  },
+  "6": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_8b_bf16.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "qwen3vl_8b (qwen_image)"
+    }
+  },
+  "7": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+    },
+    "_meta": {
+      "title": "Qwen 2.1 VAE (RGBA)"
+    }
+  },
+  "8": {
+    "class_type": "BD_PartsVocabulary",
+    "inputs": {
+      "vocabulary": "hair | hair | hair | no\neyebrows | eyebrows | eyebrows | no\neyes | eyes | eyes | no\nmouth | mouth | mouth and lips | no\nbeard | beard | beard | no\nmoustache | moustache | moustache | no\nglasses | glasses | glasses | yes\nsunglasses | sunglasses | sunglasses | yes\nhat | hat or cap | hat | yes\nhelmet | helmet | helmet | yes\nheadband | headband or bandana | headband or bandana | yes\nheadphones | headphones | headphones | yes\nearrings | earrings | earrings | yes\npiercings | piercings | piercings | yes"
+    },
+    "_meta": {
+      "title": "\u2461 Parts Vocabulary"
+    }
+  },
+  "9": {
+    "class_type": "AILab_QwenVL",
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct",
+      "quantization": "None (FP16)",
+      "attention_mode": "auto",
+      "preset_prompt": "\ud83d\uddbc\ufe0f Tags",
+      "custom_prompt": [
+        "8",
+        1
+      ],
+      "max_tokens": 400,
+      "keep_model_loaded": false,
+      "seed": 1,
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Qwen3-VL vote"
+    }
+  },
+  "10": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "9",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "vote"
+    }
+  },
+  "11": {
+    "class_type": "BD_Lotus2ModelLoader",
+    "inputs": {
+      "task": "depth",
+      "dtype": "bf16",
+      "device": "auto",
+      "flux_repo_id": "black-forest-labs/FLUX.1-dev",
+      "lotus2_weights_dir": "",
+      "cpu_offload": false
+    },
+    "_meta": {
+      "title": "Lotus2 depth"
+    }
+  },
+  "12": {
+    "class_type": "BD_Lotus2Predict",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "image": [
+        "1",
+        0
+      ],
+      "num_inference_steps": 10,
+      "process_res": 1024,
+      "guidance_scale": 3.5,
+      "timestep_core_predictor": 1,
+      "bg_fill": "auto"
+    },
+    "_meta": {
+      "title": "\u2462 Depth"
+    }
+  },
+  "13": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "12",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "depth"
+    }
+  },
+  "14": {
+    "class_type": "BD_PartsBuilder2",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "model": [
+        "5",
+        0
+      ],
+      "clip": [
+        "6",
+        0
+      ],
+      "vae": [
+        "7",
+        0
+      ],
+      "presence": [
+        "9",
+        0
+      ],
+      "vocabulary": [
+        "8",
+        0
+      ],
+      "seed": 20260931,
+      "steps": 40,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "make_complete": true,
+      "make_base": true,
+      "colour_retry": true,
+      "base_attempts": 3,
+      "fidelity_min": 0.5,
+      "explained_max": 60.0,
+      "head_mask": [
+        "2",
+        0
+      ],
+      "depth_image": [
+        "12",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "\u2463 Parts Builder 2 (Qwen 2.1)"
+    }
+  },
+  "15": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "14",
+        3
+      ]
+    },
+    "_meta": {
+      "title": "layers (visible, then complete)"
+    }
+  },
+  "16": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "14",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "head without items"
+    }
+  },
+  "17": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "14",
+        4
+      ]
+    },
+    "_meta": {
+      "title": "Parts Builder 2 report"
+    }
+  },
+  "18": {
+    "class_type": "BD_PartsBuilder2Plates",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "model": [
+        "5",
+        0
+      ],
+      "clip": [
+        "6",
+        0
+      ],
+      "vae": [
+        "7",
+        0
+      ],
+      "bald_prompt": "This is an RGBA image with transparency. Make the character's head completely bald: remove the hair on the head, any hat or head covering, headband or bandana, glasses or sunglasses, headphones and earrings, the beard and the moustache, and show a smooth, round, complete bald scalp that continues the skin tone and the hard-edged low-poly facets of the forehead, with clean skin wherever the hair, beard or those items were. The eyebrows are not part of the hair: keep both eyebrows exactly as they are, whatever their colour. Keep the face, the eyes, the eyebrows, the lips, the nose and the ears exactly as they are, and keep the pose, the head size and position and the low-poly 3D render style exactly as in the image. The image has alpha channel and the background is transparent.",
+      "mouthless_prompt": "Remove the lips and everything inside the mouth from the character's face: the whole mouth area becomes plain skin that continues the surrounding skin tone and the hard-edged low-poly facets, with no lip colour, no teeth, no outline and no line, while the chin, the jaw and the cheeks stay exactly where they are. Remove the eyebrows the same way, so the brow ridges are plain skin. Keep the eyes open and exactly as they are. Keep the rest of the head, the ears, the pose, the head size and position, the lighting and the low-poly 3D render style exactly as in the image.",
+      "eyeless_prompt": "Remove the eyebrows, the eyes, the lips and everything inside the mouth from the character's face: the brow ridges become plain skin, each eye becomes a closed, smooth eyelid of plain skin with no eyelashes, no eye line and no eye colour, and the whole mouth area becomes plain skin with no lip colour, no teeth, no outline and no line - all of it continuing the surrounding skin tone and the hard-edged low-poly facets, while the chin, the jaw and the cheeks stay exactly where they are. Keep the rest of the head, the ears, the pose, the head size and position, the lighting and the low-poly 3D render style exactly as in the image.",
+      "seed": 20260933,
+      "steps": 40,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "attempts_per_stage": 2,
+      "work_size": "1024",
+      "reframe_below": 0.9,
+      "reframe_fill": 0.94,
+      "max_scale_err": 0.015,
+      "max_offset_px": 3.0,
+      "parts": [
+        "14",
+        0
+      ],
+      "complete_parts": [
+        "14",
+        1
+      ],
+      "head_mask": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "\u2464 Parts Builder 2 Plates (Qwen 2.1)"
+    }
+  },
+  "19": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "18",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "bald"
+    }
+  },
+  "20": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "18",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "mouthless / browless"
+    }
+  },
+  "21": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "18",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "eyeless (engine base)"
+    }
+  },
+  "22": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "18",
+        7
+      ]
+    },
+    "_meta": {
+      "title": "Plates report"
+    }
+  },
+  "23": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "18",
+        0
+      ],
+      "filename_prefix": "parts_builder_2/plate_bald"
+    },
+    "_meta": {
+      "title": "Save bald"
+    }
+  },
+  "24": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "18",
+        1
+      ],
+      "filename_prefix": "parts_builder_2/plate_mouthless"
+    },
+    "_meta": {
+      "title": "Save mouthless"
+    }
+  },
+  "25": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "18",
+        2
+      ],
+      "filename_prefix": "parts_builder_2/plate_eyeless"
+    },
+    "_meta": {
+      "title": "Save eyeless"
+    }
+  },
+  "26": {
+    "class_type": "BD_PartsBuilder2Assemble",
+    "inputs": {
+      "complete_parts": [
+        "14",
+        1
+      ],
+      "plate": [
+        "18",
+        2
+      ],
+      "matte": [
+        "18",
+        3
+      ],
+      "plate_frame": [
+        "18",
+        6
+      ],
+      "plate_source": [
+        "18",
+        4
+      ],
+      "plate_head": [
+        "18",
+        5
+      ]
+    },
+    "_meta": {
+      "title": "\u2465 Parts Builder 2 Assemble"
+    }
+  },
+  "27": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "26",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "reassembled"
+    }
+  },
+  "28": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "26",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "difference (red = off)"
+    }
+  },
+  "29": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "26",
+        3
+      ]
+    },
+    "_meta": {
+      "title": "Assemble report"
+    }
+  },
+  "30": {
+    "class_type": "BD_PartsExport",
+    "inputs": {
+      "parts": [
+        "14",
+        0
+      ],
+      "filename": "visible_layers",
+      "name_prefix": "parts_builder_2",
+      "auto_increment": true,
+      "context_id": "",
+      "save_pngs": true,
+      "save_depth": true,
+      "save_masks": true,
+      "save_masked_pngs": true,
+      "save_composite": true,
+      "composite_size": 0,
+      "save_psd": true,
+      "save_psb": false,
+      "save_base": true,
+      "save_manifest": true,
+      "base_image": [
+        "14",
+        2
+      ],
+      "category_table": "# BD Parts Category Table \u2014 Character (Sapiens2 taxonomy)\n# Format:  tag = slug:region\n#   tag    \u2014 exact part tag from BD_PartsBuilder (must match case)\n#   slug   \u2014 short filename-safe name exposed as %slug% in BD_SaveContext templates\n#   region \u2014 body region for folder/path grouping exposed as %region% in templates\n#\n# Lines starting with # are ignored. Blank lines are ignored.\n# tag = slug      (no colon) sets slug only, region stays empty.\n# Empty table (all lines blank/comments) = passthrough: tag is used as slug, region is \"\".\n#\n# Fuzzy / substring matching (Qwen-VL free-form tags):\n# Prefix a line with ~ to do a case-insensitive substring match instead of exact.\n# Among all matching ~patterns, the LONGEST wins (most-specific first).\n# Put more-specific patterns before less-specific ones in this file for readability;\n# the parser sorts by length automatically so ordering doesn't matter for correctness.\n#   ~sneaker    matches \"blue left sneaker\", \"right white sneaker\", etc.\n#   ~left shoe  matches \"left red shoe\" (wins over ~shoe for left-side tags)\n#\n# Example template using these vars:\n#   %character%/%region%/%slug%%suffix%\n#   \u2192 Letti/head/face_0001.png, Letti/clothing/upper_shirt_0001.png\n\n# \u2500\u2500 Head \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nFace_Neck       = face_neck:head\nHair            = hair:head\n\n# \u2500\u2500 Body \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nTorso           = torso:body\n\n# \u2500\u2500 Clothing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nUpper_Clothing  = upper_clothing:clothing\nLower_Clothing  = lower_clothing:clothing\nApparel         = apparel:clothing\n\n# \u2500\u2500 Arms \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLeft_Upper_Arm  = left_upper_arm:arms\nLeft_Lower_Arm  = left_lower_arm:arms\nLeft_Hand       = left_hand:arms\nRight_Upper_Arm = right_upper_arm:arms\nRight_Lower_Arm = right_lower_arm:arms\nRight_Hand      = right_hand:arms\n\n# \u2500\u2500 Legs \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLeft_Upper_Leg  = left_upper_leg:legs\nLeft_Lower_Leg  = left_lower_leg:legs\nLeft_Foot       = left_foot:legs\nRight_Upper_Leg = right_upper_leg:legs\nRight_Lower_Leg = right_lower_leg:legs\nRight_Foot      = right_foot:legs\n\n# \u2500\u2500 Footwear \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLeft_Shoe       = left_shoe:footwear\nLeft_Sock       = left_sock:footwear\nRight_Shoe      = right_shoe:footwear\nRight_Sock      = right_sock:footwear\n\n# \u2500\u2500 Face detail \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLower_Lip       = lower_lip:face\nUpper_Lip       = upper_lip:face\nLower_Teeth     = lower_teeth:face\nUpper_Teeth     = upper_teeth:face\nTongue          = tongue:face\n\n# \u2500\u2500 Accessories \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nEyeglass        = eyeglass:accessories\n\n# \u2500\u2500 Qwen-VL fuzzy matches (~pattern = case-insensitive substring) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n# Body parts \u2014 head/face (side-specific first, then generic)\n~eye brows      = eyebrows:head\n~left eye       = left_eye:head\n~right eye      = right_eye:head\n~eye brow       = eyebrow:head\n~facial hair    = facial_hair:head\n~left ear       = left_ear:head\n~right ear      = right_ear:head\n~eye            = eye:head\n~ear            = ear:head\n~nose           = nose:head\n~mouth          = mouth:head\n~lips           = lips:head\n~lip            = lip:head\n~beard          = beard:head\n~mustache       = mustache:head\n~face           = face:head\n~hair           = hair:head\n~neck           = neck:head\n~head           = head:head\n\n# Body parts \u2014 torso/upper body\n~left shoulder  = left_shoulder:body\n~right shoulder = right_shoulder:body\n~shoulder       = shoulder:body\n~chest          = chest:body\n~torso          = torso:body\n~upper body     = upper_body:body\n~abdomen        = abdomen:body\n~belly          = belly:body\n~waist          = waist:body\n~back           = back:body\n~spine          = spine:body\n\n# Body parts \u2014 arms/hands (side-specific first)\n~left upper arm  = left_upper_arm:arms\n~right upper arm = right_upper_arm:arms\n~left lower arm  = left_lower_arm:arms\n~right lower arm = right_lower_arm:arms\n~left arm        = left_arm:arms\n~right arm       = right_arm:arms\n~left hand       = left_hand:arms\n~right hand      = right_hand:arms\n~left forearm    = left_forearm:arms\n~right forearm   = right_forearm:arms\n~left wrist      = left_wrist:arms\n~right wrist     = right_wrist:arms\n~left elbow      = left_elbow:arms\n~right elbow     = right_elbow:arms\n~arm             = arm:arms\n~hand            = hand:arms\n~forearm         = forearm:arms\n~wrist           = wrist:arms\n~elbow           = elbow:arms\n~fingers         = fingers:arms\n~finger          = finger:arms\n~palm            = palm:arms\n\n# Body parts \u2014 legs/feet (side-specific first)\n~left upper leg  = left_upper_leg:legs\n~right upper leg = right_upper_leg:legs\n~left lower leg  = left_lower_leg:legs\n~right lower leg = right_lower_leg:legs\n~left leg        = left_leg:legs\n~right leg       = right_leg:legs\n~left foot       = left_foot:legs\n~right foot      = right_foot:legs\n~left thigh      = left_thigh:legs\n~right thigh     = right_thigh:legs\n~left calf       = left_calf:legs\n~right calf      = right_calf:legs\n~left knee       = left_knee:legs\n~right knee      = right_knee:legs\n~left ankle      = left_ankle:legs\n~right ankle     = right_ankle:legs\n~leg             = leg:legs\n~foot            = foot:legs\n~thigh           = thigh:legs\n~calf            = calf:legs\n~knee            = knee:legs\n~ankle           = ankle:legs\n~toe             = toe:legs\n~toes            = toes:legs\n\n# Clothing \u2014 skin/body coverings\n~skin           = skin:body\n~body           = body:body\n~nude           = nude:body\n~underwear      = underwear:clothing\n~underpants     = underwear:clothing\n~bra            = bra:clothing\n~panties        = panties:clothing\n~boxer          = boxers:clothing\n~apron          = apron:clothing\n# Footwear \u2014 side-specific first (longer = wins over bare \"shoe\"/\"sneaker\")\n~left sneaker   = left_sneaker:footwear\n~right sneaker  = right_sneaker:footwear\n~left shoe      = left_shoe:footwear\n~right shoe     = right_shoe:footwear\n~left boot      = left_boot:footwear\n~right boot     = right_boot:footwear\n~left sock      = left_sock:footwear\n~right sock     = right_sock:footwear\n~sneaker        = sneaker:footwear\n~shoe           = shoe:footwear\n~boot           = boot:footwear\n~sock           = sock:footwear\n~heel           = heel:footwear\n~sandal         = sandal:footwear\n~slipper        = slipper:footwear\n~kicks          = sneaker:footwear\n\n# Clothing \u2014 upper body\n~jacket         = jacket:clothing\n~coat           = coat:clothing\n~hoodie         = hoodie:clothing\n~sweater        = sweater:clothing\n~sweatshirt     = sweatshirt:clothing\n~shirt          = shirt:clothing\n~blouse         = blouse:clothing\n~top            = top:clothing\n~dress          = dress:clothing\n~skirt          = skirt:clothing\n~vest           = vest:clothing\n~suit           = suit:clothing\n~blazer         = blazer:clothing\n~cardigan       = cardigan:clothing\n~tank           = tank_top:clothing\n\n# Clothing \u2014 lower body (more specific before less specific)\n~denim jean     = jeans:clothing\n~jean           = jeans:clothing\n~denim          = jeans:clothing\n~trouser        = trousers:clothing\n~pant           = pants:clothing\n~short          = shorts:clothing\n~legging        = leggings:clothing\n~skirt          = skirt:clothing\n\n# Lower body \u2014 extra\n~overall        = overalls:clothing\n~swimsuit       = swimsuit:clothing\n~bikini         = bikini:clothing\n~armor          = armor:clothing\n\n# Accessories\n~sunglasses     = sunglasses:accessories\n# Qwen-VL names the part, not the category: billpage's came back as\n# \"black_sunglass_frame\", which ~sunglasses (plural) does not contain. Stem it.\n~sunglass       = sunglasses:accessories\n~eyeglass       = glasses:accessories\n~goggles        = goggles:accessories\n~glasses        = glasses:accessories\n~spectacles     = glasses:accessories\n~watch          = watch:accessories\n~bracelet       = bracelet:accessories\n~necklace       = necklace:accessories\n~chain          = chain:accessories\n~earring        = earring:accessories\n# \"earings\" (one r) is what the VLM writes, and it does not contain \"earring\" --\n# but it DOES contain \"ring\", so without this line every pair of earrings was\n# filed as a finger ring.\n~earings        = earring:accessories\n~earing         = earring:accessories\n~ear ring       = earring:accessories\n~ring           = ring:accessories\n~headphone      = headphones:accessories\n~hat            = hat:accessories\n~cap            = cap:accessories\n~helmet         = helmet:accessories\n~beanie         = beanie:accessories\n~headband       = headband:accessories\n~scarf          = scarf:accessories\n~left glove     = left_glove:accessories\n~right glove    = right_glove:accessories\n~glove          = glove:accessories\n~face mask      = face_mask:accessories\n~bag            = bag:accessories\n~backpack       = backpack:accessories\n~purse          = purse:accessories\n~belt           = belt:accessories\n~tie            = tie:accessories\n~bow tie        = bow_tie:accessories\n",
+      "category_table_path": "",
+      "save_workflow_sidecar": true
+    },
+    "_meta": {
+      "title": "\u2466 Export visible layers + head without items"
+    }
+  },
+  "31": {
+    "class_type": "BD_PartsExport",
+    "inputs": {
+      "parts": [
+        "26",
+        0
+      ],
+      "filename": "engine_stack",
+      "name_prefix": "parts_builder_2",
+      "auto_increment": true,
+      "context_id": "",
+      "save_pngs": true,
+      "save_depth": true,
+      "save_masks": true,
+      "save_masked_pngs": true,
+      "save_composite": true,
+      "composite_size": 0,
+      "save_psd": true,
+      "save_psb": false,
+      "save_base": true,
+      "save_manifest": true,
+      "category_table": "# BD Parts Category Table \u2014 Character (Sapiens2 taxonomy)\n# Format:  tag = slug:region\n#   tag    \u2014 exact part tag from BD_PartsBuilder (must match case)\n#   slug   \u2014 short filename-safe name exposed as %slug% in BD_SaveContext templates\n#   region \u2014 body region for folder/path grouping exposed as %region% in templates\n#\n# Lines starting with # are ignored. Blank lines are ignored.\n# tag = slug      (no colon) sets slug only, region stays empty.\n# Empty table (all lines blank/comments) = passthrough: tag is used as slug, region is \"\".\n#\n# Fuzzy / substring matching (Qwen-VL free-form tags):\n# Prefix a line with ~ to do a case-insensitive substring match instead of exact.\n# Among all matching ~patterns, the LONGEST wins (most-specific first).\n# Put more-specific patterns before less-specific ones in this file for readability;\n# the parser sorts by length automatically so ordering doesn't matter for correctness.\n#   ~sneaker    matches \"blue left sneaker\", \"right white sneaker\", etc.\n#   ~left shoe  matches \"left red shoe\" (wins over ~shoe for left-side tags)\n#\n# Example template using these vars:\n#   %character%/%region%/%slug%%suffix%\n#   \u2192 Letti/head/face_0001.png, Letti/clothing/upper_shirt_0001.png\n\n# \u2500\u2500 Head \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nFace_Neck       = face_neck:head\nHair            = hair:head\n\n# \u2500\u2500 Body \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nTorso           = torso:body\n\n# \u2500\u2500 Clothing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nUpper_Clothing  = upper_clothing:clothing\nLower_Clothing  = lower_clothing:clothing\nApparel         = apparel:clothing\n\n# \u2500\u2500 Arms \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLeft_Upper_Arm  = left_upper_arm:arms\nLeft_Lower_Arm  = left_lower_arm:arms\nLeft_Hand       = left_hand:arms\nRight_Upper_Arm = right_upper_arm:arms\nRight_Lower_Arm = right_lower_arm:arms\nRight_Hand      = right_hand:arms\n\n# \u2500\u2500 Legs \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLeft_Upper_Leg  = left_upper_leg:legs\nLeft_Lower_Leg  = left_lower_leg:legs\nLeft_Foot       = left_foot:legs\nRight_Upper_Leg = right_upper_leg:legs\nRight_Lower_Leg = right_lower_leg:legs\nRight_Foot      = right_foot:legs\n\n# \u2500\u2500 Footwear \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLeft_Shoe       = left_shoe:footwear\nLeft_Sock       = left_sock:footwear\nRight_Shoe      = right_shoe:footwear\nRight_Sock      = right_sock:footwear\n\n# \u2500\u2500 Face detail \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nLower_Lip       = lower_lip:face\nUpper_Lip       = upper_lip:face\nLower_Teeth     = lower_teeth:face\nUpper_Teeth     = upper_teeth:face\nTongue          = tongue:face\n\n# \u2500\u2500 Accessories \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nEyeglass        = eyeglass:accessories\n\n# \u2500\u2500 Qwen-VL fuzzy matches (~pattern = case-insensitive substring) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n# Body parts \u2014 head/face (side-specific first, then generic)\n~eye brows      = eyebrows:head\n~left eye       = left_eye:head\n~right eye      = right_eye:head\n~eye brow       = eyebrow:head\n~facial hair    = facial_hair:head\n~left ear       = left_ear:head\n~right ear      = right_ear:head\n~eye            = eye:head\n~ear            = ear:head\n~nose           = nose:head\n~mouth          = mouth:head\n~lips           = lips:head\n~lip            = lip:head\n~beard          = beard:head\n~mustache       = mustache:head\n~face           = face:head\n~hair           = hair:head\n~neck           = neck:head\n~head           = head:head\n\n# Body parts \u2014 torso/upper body\n~left shoulder  = left_shoulder:body\n~right shoulder = right_shoulder:body\n~shoulder       = shoulder:body\n~chest          = chest:body\n~torso          = torso:body\n~upper body     = upper_body:body\n~abdomen        = abdomen:body\n~belly          = belly:body\n~waist          = waist:body\n~back           = back:body\n~spine          = spine:body\n\n# Body parts \u2014 arms/hands (side-specific first)\n~left upper arm  = left_upper_arm:arms\n~right upper arm = right_upper_arm:arms\n~left lower arm  = left_lower_arm:arms\n~right lower arm = right_lower_arm:arms\n~left arm        = left_arm:arms\n~right arm       = right_arm:arms\n~left hand       = left_hand:arms\n~right hand      = right_hand:arms\n~left forearm    = left_forearm:arms\n~right forearm   = right_forearm:arms\n~left wrist      = left_wrist:arms\n~right wrist     = right_wrist:arms\n~left elbow      = left_elbow:arms\n~right elbow     = right_elbow:arms\n~arm             = arm:arms\n~hand            = hand:arms\n~forearm         = forearm:arms\n~wrist           = wrist:arms\n~elbow           = elbow:arms\n~fingers         = fingers:arms\n~finger          = finger:arms\n~palm            = palm:arms\n\n# Body parts \u2014 legs/feet (side-specific first)\n~left upper leg  = left_upper_leg:legs\n~right upper leg = right_upper_leg:legs\n~left lower leg  = left_lower_leg:legs\n~right lower leg = right_lower_leg:legs\n~left leg        = left_leg:legs\n~right leg       = right_leg:legs\n~left foot       = left_foot:legs\n~right foot      = right_foot:legs\n~left thigh      = left_thigh:legs\n~right thigh     = right_thigh:legs\n~left calf       = left_calf:legs\n~right calf      = right_calf:legs\n~left knee       = left_knee:legs\n~right knee      = right_knee:legs\n~left ankle      = left_ankle:legs\n~right ankle     = right_ankle:legs\n~leg             = leg:legs\n~foot            = foot:legs\n~thigh           = thigh:legs\n~calf            = calf:legs\n~knee            = knee:legs\n~ankle           = ankle:legs\n~toe             = toe:legs\n~toes            = toes:legs\n\n# Clothing \u2014 skin/body coverings\n~skin           = skin:body\n~body           = body:body\n~nude           = nude:body\n~underwear      = underwear:clothing\n~underpants     = underwear:clothing\n~bra            = bra:clothing\n~panties        = panties:clothing\n~boxer          = boxers:clothing\n~apron          = apron:clothing\n# Footwear \u2014 side-specific first (longer = wins over bare \"shoe\"/\"sneaker\")\n~left sneaker   = left_sneaker:footwear\n~right sneaker  = right_sneaker:footwear\n~left shoe      = left_shoe:footwear\n~right shoe     = right_shoe:footwear\n~left boot      = left_boot:footwear\n~right boot     = right_boot:footwear\n~left sock      = left_sock:footwear\n~right sock     = right_sock:footwear\n~sneaker        = sneaker:footwear\n~shoe           = shoe:footwear\n~boot           = boot:footwear\n~sock           = sock:footwear\n~heel           = heel:footwear\n~sandal         = sandal:footwear\n~slipper        = slipper:footwear\n~kicks          = sneaker:footwear\n\n# Clothing \u2014 upper body\n~jacket         = jacket:clothing\n~coat           = coat:clothing\n~hoodie         = hoodie:clothing\n~sweater        = sweater:clothing\n~sweatshirt     = sweatshirt:clothing\n~shirt          = shirt:clothing\n~blouse         = blouse:clothing\n~top            = top:clothing\n~dress          = dress:clothing\n~skirt          = skirt:clothing\n~vest           = vest:clothing\n~suit           = suit:clothing\n~blazer         = blazer:clothing\n~cardigan       = cardigan:clothing\n~tank           = tank_top:clothing\n\n# Clothing \u2014 lower body (more specific before less specific)\n~denim jean     = jeans:clothing\n~jean           = jeans:clothing\n~denim          = jeans:clothing\n~trouser        = trousers:clothing\n~pant           = pants:clothing\n~short          = shorts:clothing\n~legging        = leggings:clothing\n~skirt          = skirt:clothing\n\n# Lower body \u2014 extra\n~overall        = overalls:clothing\n~swimsuit       = swimsuit:clothing\n~bikini         = bikini:clothing\n~armor          = armor:clothing\n\n# Accessories\n~sunglasses     = sunglasses:accessories\n# Qwen-VL names the part, not the category: billpage's came back as\n# \"black_sunglass_frame\", which ~sunglasses (plural) does not contain. Stem it.\n~sunglass       = sunglasses:accessories\n~eyeglass       = glasses:accessories\n~goggles        = goggles:accessories\n~glasses        = glasses:accessories\n~spectacles     = glasses:accessories\n~watch          = watch:accessories\n~bracelet       = bracelet:accessories\n~necklace       = necklace:accessories\n~chain          = chain:accessories\n~earring        = earring:accessories\n# \"earings\" (one r) is what the VLM writes, and it does not contain \"earring\" --\n# but it DOES contain \"ring\", so without this line every pair of earrings was\n# filed as a finger ring.\n~earings        = earring:accessories\n~earing         = earring:accessories\n~ear ring       = earring:accessories\n~ring           = ring:accessories\n~headphone      = headphones:accessories\n~hat            = hat:accessories\n~cap            = cap:accessories\n~helmet         = helmet:accessories\n~beanie         = beanie:accessories\n~headband       = headband:accessories\n~scarf          = scarf:accessories\n~left glove     = left_glove:accessories\n~right glove    = right_glove:accessories\n~glove          = glove:accessories\n~face mask      = face_mask:accessories\n~bag            = bag:accessories\n~backpack       = backpack:accessories\n~purse          = purse:accessories\n~belt           = belt:accessories\n~tie            = tie:accessories\n~bow tie        = bow_tie:accessories\n",
+      "category_table_path": "",
+      "save_workflow_sidecar": true
+    },
+    "_meta": {
+      "title": "\u2467 Export engine stack"
+    }
+  }
+}
