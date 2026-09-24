@@ -327,6 +327,45 @@ def paint_order(tags, complete, owner, depth_far=None, min_px=30):
     return order, evidence
 
 
+HEADWEAR = ("hat", "helmet", "headband", "headphones", "glasses", "sunglasses")
+
+
+def headwear_over_hair(order):
+    """Head-worn items paint in front of hair. The overlap vote in paint_order flips on near ties (cast run
+    2026-09-24: brick_callahan's beanie, hat 42k px vs hair 47k px, went under the complete hair, which covers it).
+    Safe both ways because visible_wins clips a front part wherever a LOWER part is what the source shows.
+    -> (order, moved)."""
+    order, moved = list(order), []
+    if "hair" in order:
+        for hw in HEADWEAR:
+            if hw in order and order.index(hw) < order.index("hair"):
+                order.remove(hw)
+                order.insert(order.index("hair") + 1, hw)
+                moved.append(hw)
+    return order, moved
+
+
+def visible_wins(front_rgba, own, lower_own, src_rgb, fringe=2):
+    """A FRONT part reproduces the source wherever the source shows it or something below it:
+      * its own visible pixels (own) take the source colours at full alpha - a visible item is always in its layer
+        (cast run: boomboom's complete "mouth" came back as giant lips + eyeliner, her real lips were in no layer);
+      * it is cleared where a part LOWER in the paint order is visible (lower_own, grown by `fringe` px for the
+        antialiased edge) and it is not.
+    -> (RGBA, {"visible_added_px", "clipped_px"})."""
+    F = front_rgba.copy()
+    added = int((own & (F[..., 3] <= 127)).sum())
+    F[own, :3] = src_rgb[own]
+    F[own, 3] = 255
+    below = np.zeros(own.shape, bool)
+    for m in lower_own:
+        below |= m
+    if fringe > 0 and below.any():
+        below = cv2.dilate(below.astype(np.uint8), np.ones((2 * fringe + 1, 2 * fringe + 1), np.uint8)).astype(bool)
+    clip = below & ~own & (F[..., 3] > 0)
+    F[clip, 3] = 0
+    return F, {"visible_added_px": added, "clipped_px": int(clip.sum())}
+
+
 def split_back_front(complete_rgba, skin0):
     """Pixels of a complete layer over bare head skin in the source are BEHIND the head."""
     back = (complete_rgba[..., 3] > 127) & skin0
