@@ -385,10 +385,11 @@ class BD_PartsBuilder2(io.ComfyNode):
 
         ctag2, back_px, wins = {}, {}, {}
         n = max(len(order), 1)
+        own_e = {k: (C.with_interior(R["parts"][k]["own"]) if k == "mouth" else R["parts"][k]["own"]) for k in order}
         if make_complete:
             for i, k in enumerate(order):
                 B, F, back_px[k] = C.split_back_front(complete[k], skin0)
-                F, wins[k] = C.visible_wins(F, R["parts"][k]["own"], [R["parts"][s]["own"] for s in order[:i]], src)
+                F, wins[k] = C.visible_wins(F, own_e[k], [own_e[s] for s in order[:i]], src)
                 common = dict(item=k, paint_index=i, accessory=bool(byk[k]["accessory"]),
                               edit_cover=R["parts"][k]["edit_cover"].astype(np.uint8) * 255)
                 fb = C.part_info(k + "_back", B, 1.0 - (i + 0.5) / (2 * n), near, role="back", **common)

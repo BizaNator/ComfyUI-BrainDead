@@ -345,6 +345,16 @@ def headwear_over_hair(order):
     return order, moved
 
 
+def with_interior(own):
+    """A ring-shaped visible mask filled to its outer contour. The visible mouth is the lips ring only: an open
+    smile's teeth are claimed by no layer (cast run: corey_cortex/front), so the mouth takes what is inside its lips."""
+    ring = own.astype(np.uint8)
+    cs, _ = cv2.findContours(ring, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    filled = np.zeros_like(ring)
+    cv2.drawContours(filled, cs, -1, 1, thickness=-1)
+    return filled > 0
+
+
 def visible_wins(front_rgba, own, lower_own, src_rgb, fringe=2):
     """A FRONT part reproduces the source wherever the source shows it or something below it:
       * its own visible pixels (own) take the source colours at full alpha - a visible item is always in its layer
