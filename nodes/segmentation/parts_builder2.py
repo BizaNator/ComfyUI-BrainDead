@@ -370,6 +370,7 @@ class BD_PartsBuilder2(io.ComfyNode):
             order, evidence = C.paint_order(present, complete, owner, far)
         else:
             order, evidence = sorted(present, key=lambda k: -far[k]), {}
+        order, headwear_moved = C.headwear_over_hair(order)
         dvis = C.order_depths(order)
 
         tag2 = {}
@@ -382,11 +383,12 @@ class BD_PartsBuilder2(io.ComfyNode):
                 tag2[k] = info
         parts = _bundle(tag2, H, W)
 
-        ctag2, back_px = {}, {}
+        ctag2, back_px, wins = {}, {}, {}
         n = max(len(order), 1)
         if make_complete:
             for i, k in enumerate(order):
                 B, F, back_px[k] = C.split_back_front(complete[k], skin0)
+                F, wins[k] = C.visible_wins(F, R["parts"][k]["own"], [R["parts"][s]["own"] for s in order[:i]], src)
                 common = dict(item=k, paint_index=i, accessory=bool(byk[k]["accessory"]),
                               edit_cover=R["parts"][k]["edit_cover"].astype(np.uint8) * 255)
                 fb = C.part_info(k + "_back", B, 1.0 - (i + 0.5) / (2 * n), near, role="back", **common)
@@ -419,7 +421,8 @@ class BD_PartsBuilder2(io.ComfyNode):
 
         prev = [p["visible"] for p in R["parts"].values()] + [complete[k] for k in order if k in complete]
         report = {"node": "BD_PartsBuilder2", "vote": vote, "present": present, "paint_order_back_to_front": order,
-                  "paint_order_evidence": evidence, "edits": q.count, "attention": "cuDNN backend excluded", "colour_retries": retried,
+                  "paint_order_evidence": evidence, "headwear_moved_over_hair": headwear_moved,
+                  "visible_wins": wins, "edits": q.count, "attention": "cuDNN backend excluded", "colour_retries": retried,
                   "unexplained_cover": round(R["unexplained"], 4),
                   "alpha_repaired_px": int((head & ~head0).sum()),
                   "base_frame": base_frame, "base_seed": base_seed,

@@ -692,3 +692,29 @@ def test_even_light_leaves_the_outside_alone():
     head[32:96, 32:96] = True
     out, _ = C.even_light(img, head)
     assert (out[~head] == 255).all()
+
+
+# ── engine-stack order fixes (cast run 2026-09-24) ───────────────────────────
+def test_headwear_goes_in_front_of_hair():
+    order, moved = C.headwear_over_hair(["eyes", "hat", "beard", "hair", "mouth", "glasses"])
+    assert order == ["eyes", "beard", "hair", "hat", "mouth", "glasses"] and moved == ["hat"]
+    assert C.headwear_over_hair(["hair", "hat"]) == (["hair", "hat"], [])
+    assert C.headwear_over_hair(["hat", "eyes"]) == (["hat", "eyes"], [])      # no hair: nothing to reorder
+
+
+def test_visible_wins_adds_own_pixels_and_clears_over_a_lower_visible_part():
+    src = np.zeros((40, 40, 3), np.uint8)
+    src[..., 0] = 200
+    front = np.zeros((40, 40, 4), np.uint8)
+    front[0:20, :, :3] = 50                               # complete layer: garbage over the top half
+    front[0:20, :, 3] = 255
+    own = np.zeros((40, 40), bool)
+    own[25:30, 5:10] = True                               # where the source really shows this item
+    lower = np.zeros((40, 40), bool)
+    lower[0:10, :] = True                                 # a lower part the source shows here
+    F, st = C.visible_wins(front, own, [lower], src, fringe=2)
+    assert (F[own, 3] == 255).all() and (F[own, 0] == 200).all()     # own pixels: source colour, opaque
+    assert st["visible_added_px"] == 25
+    assert (F[0:12, :, 3] == 0).all()                     # cleared over the lower part + 2 px fringe
+    assert (F[13:20, :, 3] == 255).all()                  # hidden completion elsewhere is kept
+    assert st["clipped_px"] == 12 * 40
