@@ -24,6 +24,7 @@ The converter only needs stdlib, so it is imported directly; `object_info` is a
 fixture here, not a live server.
 """
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -324,6 +325,159 @@ class DynamicComboSubWidget(unittest.TestCase):
         ], widgets=["a.png", "image"])], "links": []}
         api = _convert(wf, oi)
         self.assertEqual(api["1"]["inputs"], {"image": "a.png"})
+
+
+class BDSAM3MultiPromptWidgetOrder(unittest.TestCase):
+    """BD_SAM3MultiPrompt node 13: link 16 on `prompts` while widgets_values[0]
+    is still the prompt text. Consuming the queue only for unlinked inputs read
+    every later widget one slot early -- the concrete node from the SBAI-11046
+    ticket report, named so a future regression here greps straight to it."""
+
+    OBJECT_INFO = {
+        "Src": {"input": {"required": {}}, "output": ["STRING"]},
+        "BD_SAM3MultiPrompt": {"input": {
+            "required": {"prompts": ["STRING", {}]},
+            "optional": {"negative_prompts": ["STRING", {}],
+                         "combine_mode": [["union", "isect"], {}],
+                         "vote_threshold": ["FLOAT", {}]},
+        }, "output": ["MASK"]},
+    }
+
+    def test_bd_sam3_multi_prompt_widget_order(self):
+        wf = {
+            "nodes": [
+                _node(1, "Src", [], outputs=[{"name": "s", "type": "STRING", "links": []}]),
+                _node(13, "BD_SAM3MultiPrompt", [
+                    _widget("prompts", "STRING", link=16),
+                    _widget("negative_prompts", "STRING"),
+                    _widget("combine_mode", "COMBO"),
+                    _widget("vote_threshold", "FLOAT"),
+                # `prompts` keeps its widgets_values slot even though it's linked
+                # (widget_values_by_name reads-and-discards it); the ticket's bug
+                # was treating linked-but-widget-typed fields as consuming no slot,
+                # which shifts every value after it by one.
+                ], widgets=["discarded_prompts_text", "negative_text", "union", 0.7]),
+            ],
+            "links": [[16, 1, 0, 13, 0, "STRING"]],
+        }
+        api = _convert(wf, self.OBJECT_INFO)
+        self.assertEqual(api["13"]["inputs"], {
+            "prompts": ["1", 0],
+            "negative_prompts": "negative_text",
+            "combine_mode": "union",
+            "vote_threshold": 0.7,
+        })
+
+
+class BDPartsExportBaseImageWidgetFallback(unittest.TestCase):
+    """BD_PartsExport.base_image arriving as the boolean True: its link was
+    dropped, so the widget queue filled the input instead. Same cause as
+    StaleTargetSlot/PartialInputArray above, asserted directly on the literal
+    value the ticket reported rather than on wiring shape."""
+
+    OBJECT_INFO = {
+        "Src": {"input": {"required": {}}, "output": ["PARTS_BUNDLE"]},
+        "BD_PartsExport": {"input": {
+            # Declaration order matters: widget_values_by_name walks the merged
+            # required-then-optional schema, not the node's `inputs` array.
+            "required": {"parts_bundle": ["PARTS_BUNDLE", {}],
+                         "base_image": ["IMAGE", {}],
+                         "filename": ["STRING", {}]},
+        }, "output": []},
+    }
+
+    def test_bd_parts_export_base_image_widget_fallback(self):
+        wf = {
+            "nodes": [
+                _node(20, "Src", [], outputs=[{"name": "b", "type": "PARTS_BUNDLE", "links": []}]),
+                _node(30, "BD_PartsExport", [
+                    _sock("parts_bundle", "PARTS_BUNDLE", link=40),
+                    # IMAGE is a connection type, so it's only in the widget queue
+                    # at all because the graph marks it `widget` here -- an IMAGE
+                    # input the frontend still exposes as a widget when unwired.
+                    # No `link`: this is the dropped-link case from the ticket.
+                    _widget("base_image", "IMAGE"),
+                    _widget("filename", "STRING"),
+                ], widgets=[True, "my_output.png"]),
+            ],
+            "links": [[40, 20, 0, 30, 0, "PARTS_BUNDLE"]],
+        }
+        api = _convert(wf, self.OBJECT_INFO)
+        self.assertEqual(api["30"]["inputs"]["parts_bundle"], ["20", 0])
+        self.assertEqual(api["30"]["inputs"]["base_image"], True)
+        self.assertEqual(api["30"]["inputs"]["filename"], "my_output.png")
+
+
+class UuidTypedNodeWithoutExpansion(unittest.TestCase):
+    """A subgraph-instance node (type is the definition's UUID) with no
+    matching `definitions.subgraphs` entry can't be expanded or scheduled --
+    flat_to_api's object_info lookup already drops any node with no schema
+    match, which is what actually protects this case, not UUID-specific
+    detection. This locks that fallback in for the subgraph-instance shape
+    specifically, since a change there would silently start emitting
+    unschedulable nodes instead of skipping them."""
+
+    def test_uuid_typed_nodes_skipped_without_expansion(self):
+        wf = {
+            "nodes": [_node("uuid-1234-5678", "aebc74c3-5e6b-4dc3-91f7-81ee51938f19", [
+                _sock("input", "IMAGE", link=1),
+            ])],
+            "links": [[1, 10, 0, "uuid-1234-5678", 0, "IMAGE"]],
+        }
+        # No `definitions.subgraphs` entry for that UUID, and object_info has
+        # no schema for it either -- both true of a saved-but-orphaned instance.
+        api = _convert(wf, object_info={})
+        self.assertNotIn("uuid-1234-5678", api)
+
+
+class PartsBuilderRealWorkflowRegression(unittest.TestCase):
+    """Convert the real BD-parts_builder.json template with the live server's
+    own /object_info and compare shape against BD-parts_builder.api.json --
+    ComfyUI's own frontend export, kept as ground truth. Hermetic tests above
+    cover the wiring rules in isolation; this is the end-to-end check that a
+    real 354-node production graph with real subgraphs converts without
+    dropping or inventing edges."""
+
+    UI_PATH = Path(__file__).resolve().parents[1] / "example_workflows" / "BD-parts_builder.json"
+    API_PATH = Path(__file__).resolve().parents[1] / "api" / "BD-parts_builder.api.json"
+    SERVER = "http://127.0.0.1:8188"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ui = cls.api_oracle = cls.object_info = None
+        if cls.UI_PATH.exists():
+            with open(cls.UI_PATH) as f:
+                cls.ui = json.load(f)
+        if cls.API_PATH.exists():
+            with open(cls.API_PATH) as f:
+                cls.api_oracle = json.load(f)
+        try:
+            cls.object_info = sg.api_get(f"{cls.SERVER}/object_info")
+        except Exception:
+            cls.object_info = None
+
+    def _require_fixtures(self):
+        if not self.ui or not self.api_oracle or not self.object_info:
+            self.skipTest("BD-parts_builder.json/.api.json or a live ComfyUI server is not available")
+
+    def test_parts_builder_node_count(self):
+        self._require_fixtures()
+        converted = sg.workflow_to_api(self.ui, self.object_info)
+        self.assertEqual(len(converted), len(self.api_oracle),
+                          "converted node count should match the frontend-exported ground truth")
+
+    def test_parts_builder_link_integrity(self):
+        self._require_fixtures()
+        converted = sg.workflow_to_api(self.ui, self.object_info)
+        emitted_ids = set(converted.keys())
+        dangling = [
+            (nid, inp, val[0])
+            for nid, node in converted.items()
+            for inp, val in node.get("inputs", {}).items()
+            if isinstance(val, list) and len(val) == 2 and isinstance(val[0], str)
+            and val[0] not in emitted_ids
+        ]
+        self.assertEqual(dangling, [], f"dangling link refs: {dangling[:5]}")
 
 
 if __name__ == "__main__":
